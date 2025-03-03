@@ -2,36 +2,45 @@ import express from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
 import swaggerUi from 'swagger-ui-express';
+import passport from 'passport';
 import { env } from './config/env.js';
 import { log, createRequestLogger } from './utils/logger.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { createRateLimiter } from './middleware/rateLimiter.js';
 import { swaggerSpec } from './config/swagger.js';
 import { setupGlobalErrorHandlers } from './utils/errors.js';
-import healthRoutes from './routes/health.js';
+import { connectToDatabase, disconnectFromDatabase } from './config/database.js';
+import './config/passport.js';
+import healthRoutes from './routes/health.routes.js';
+import authRoutes from './routes/auth.routes.js';
+import userRoutes from './routes/user.routes.js';
 
-// Set up global error handlers for uncaught exceptions
 setupGlobalErrorHandlers();
 
-// Create Express application
+connectToDatabase();
+
 const app = express();
 
-// Apply basic middleware
 app.use(helmet());
-app.use(cors());
+app.use(cors({
+  origin: env.CLIENT_URL,
+  credentials: true,
+}));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(createRequestLogger());
-
 app.use(createRateLimiter());
 
+app.use(passport.initialize());
 
+// Routes
 app.use('/health', healthRoutes);
+app.use('/api/auth', authRoutes);
+app.use('/api/users', userRoutes);
 
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
 app.use(notFoundHandler);
-
 app.use(errorHandler);
 
 const server = app.listen(env.PORT, () => {
@@ -39,16 +48,19 @@ const server = app.listen(env.PORT, () => {
   log.info(`Swagger documentation available at http://localhost:${env.PORT}/api-docs`);
 });
 
-const gracefulShutdown = (signal: string): void => {
+const gracefulShutdown = async (signal: string): Promise<void> => {
   log.info(`Received ${signal}. Shutting down gracefully...`);
   
-  server.close(() => {
+  server.close(async () => {
     log.info('HTTP server closed');
+    
+    await disconnectFromDatabase();
+    
     process.exit(0);
   });
   
   setTimeout(() => {
-    log.error('Could not close connections in time, forcefully shutting down');
+    log.error('Could not close connections in time, forcefully shutting down', { signal });
     process.exit(1);
   }, 10000);
 };

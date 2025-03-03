@@ -28,8 +28,23 @@ const swaggerDefinition = {
       name: 'Health',
       description: 'API health check endpoints',
     },
+    {
+      name: 'Auth',
+      description: 'Authentication endpoints',
+    },
+    {
+      name: 'Users',
+      description: 'User management endpoints',
+    },
   ],
   components: {
+    securitySchemes: {
+      bearerAuth: {
+        type: 'http',
+        scheme: 'bearer',
+        bearerFormat: 'JWT',
+      },
+    },
     schemas: {
       Error: {
         type: 'object',
@@ -67,6 +82,69 @@ const swaggerDefinition = {
           version: {
             type: 'string',
             example: '1.0.0',
+          },
+        },
+      },
+      User: {
+        type: 'object',
+        properties: {
+          id: {
+            type: 'string',
+            example: '60d0fe4f5311236168a109ca',
+          },
+          email: {
+            type: 'string',
+            format: 'email',
+            example: 'user@example.com',
+          },
+          username: {
+            type: 'string',
+            example: 'johndoe',
+          },
+          name: {
+            type: 'string',
+            example: 'John Doe',
+          },
+          profilePicture: {
+            type: 'string',
+            format: 'uri',
+            example: 'https://example.com/profile.jpg',
+          },
+          role: {
+            type: 'string',
+            enum: ['ADMIN', 'USER'],
+            example: 'USER',
+          },
+          status: {
+            type: 'string',
+            enum: ['ACTIVE', 'INACTIVE', 'BANNED'],
+            example: 'ACTIVE',
+          },
+          createdAt: {
+            type: 'string',
+            format: 'date-time',
+            example: '2023-01-01T00:00:00.000Z',
+          },
+          updatedAt: {
+            type: 'string',
+            format: 'date-time',
+            example: '2023-01-01T00:00:00.000Z',
+          },
+        },
+      },
+      AuthResponse: {
+        type: 'object',
+        properties: {
+          user: {
+            $ref: '#/components/schemas/User',
+          },
+          accessToken: {
+            type: 'string',
+            example: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+          },
+          refreshToken: {
+            type: 'string',
+            example: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
           },
         },
       },
