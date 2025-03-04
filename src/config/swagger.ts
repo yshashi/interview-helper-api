@@ -274,4 +274,8 @@ const options = {
   apis: [__dirname + '/../routes/*.js'],
 };
 
-export const swaggerSpec = swaggerJsdoc(options);
+const localOptions = {
+  swaggerDefinition,
+  apis: ['./src/routes/*.ts'],
+}
+export const swaggerSpec = swaggerJsdoc(env.NODE_ENV === 'production' ? options : localOptions);
