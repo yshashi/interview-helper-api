@@ -1,5 +1,7 @@
 import swaggerJsdoc from 'swagger-jsdoc';
 import { env } from './env.js';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
 
 // Swagger definition
 const swaggerDefinition = {
@@ -19,8 +21,12 @@ const swaggerDefinition = {
   },
   servers: [
     {
+      url: env.API_URL,
+      description: 'API server',
+    },
+    {
       url: `http://localhost:${env.PORT}`,
-      description: 'Development server',
+      description: 'Local development server',
     },
   ],
   tags: [
@@ -35,6 +41,10 @@ const swaggerDefinition = {
     {
       name: 'Users',
       description: 'User management endpoints',
+    },
+    {
+      name: 'MCQ',
+      description: 'Multiple Choice Questions endpoints',
     },
   ],
   components: {
@@ -148,6 +158,88 @@ const swaggerDefinition = {
           },
         },
       },
+      Options: {
+        type: 'object',
+        properties: {
+          A: {
+            type: 'string',
+            example: 'First option',
+          },
+          B: {
+            type: 'string',
+            example: 'Second option',
+          },
+          C: {
+            type: 'string',
+            example: 'Third option',
+          },
+          D: {
+            type: 'string',
+            example: 'Fourth option',
+          },
+        },
+      },
+      Question: {
+        type: 'object',
+        properties: {
+          question: {
+            type: 'string',
+            example: 'What is the capital of France?',
+          },
+          options: {
+            $ref: '#/components/schemas/Options',
+          },
+          correct_answer: {
+            type: 'string',
+            example: 'A',
+          },
+          question_id: {
+            type: 'integer',
+            example: 1,
+          },
+          source_file: {
+            type: 'string',
+            example: 'geography.json',
+          },
+        },
+      },
+      MCQ: {
+        type: 'object',
+        properties: {
+          key: {
+            type: 'string',
+            example: 'javascript',
+          },
+          questions: {
+            type: 'array',
+            items: {
+              $ref: '#/components/schemas/Question',
+            },
+          },
+          createdAt: {
+            type: 'string',
+            format: 'date-time',
+            example: '2023-01-01T00:00:00.000Z',
+          },
+          updatedAt: {
+            type: 'string',
+            format: 'date-time',
+            example: '2023-01-01T00:00:00.000Z',
+          },
+        },
+      },
+      MCQKeysResponse: {
+        type: 'object',
+        properties: {
+          keys: {
+            type: 'array',
+            items: {
+              type: 'string',
+              example: 'javascript',
+            },
+          },
+        },
+      },
     },
     responses: {
       NotFound: {
@@ -174,9 +266,12 @@ const swaggerDefinition = {
   },
 };
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
 const options = {
   swaggerDefinition,
-  apis: ['./src/routes/*.ts'],
+  apis: [__dirname + '/../routes/*.js'],
 };
 
 export const swaggerSpec = swaggerJsdoc(options);

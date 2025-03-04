@@ -9,15 +9,19 @@ const router = express.Router();
  *   get:
  *     summary: Get all available MCQ keys
  *     tags: [MCQ]
- *     security:
- *       - bearerAuth: []
  *     responses:
  *       200:
  *         description: List of all MCQ keys
- *       401:
- *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/MCQKeysResponse'
  *       500:
  *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  */
 router.get('/keys', getAllKeys);
 
@@ -27,8 +31,6 @@ router.get('/keys', getAllKeys);
  *   get:
  *     summary: Get MCQ questions by key
  *     tags: [MCQ]
- *     security:
- *       - bearerAuth: []
  *     parameters:
  *       - in: path
  *         name: key
@@ -39,14 +41,28 @@ router.get('/keys', getAllKeys);
  *     responses:
  *       200:
  *         description: MCQ questions retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/MCQ'
  *       400:
  *         description: Invalid input
- *       401:
- *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  *       404:
  *         description: MCQ not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  *       500:
  *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  */
 router.get('/:key', getQuestionsByKey);
 

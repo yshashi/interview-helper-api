@@ -70,11 +70,11 @@ To start the application in development mode:
 npm run dev
 ```
 
-The server will be available at http://localhost:3000.
+The server will be available at http://localhost:5500.
 
 ## API Documentation
 
-Swagger documentation is available at http://localhost:3000/api-docs when the server is running.
+Swagger documentation is available at http://localhost:5500/api-docs when the server is running.
 
 ## Production
 
@@ -87,11 +87,48 @@ npm start
 
 ## Docker
 
-To build and run the application using Docker:
+The application is fully containerized and can be run using Docker. We provide two options for running with Docker:
+
+### Option 1: Using npm scripts
+
+To build and run the application using Docker with npm scripts:
 
 ```bash
 npm run docker:build
 npm run docker:run
+```
+
+### Option 2: Using Docker Compose (Recommended)
+
+We provide a Docker Compose configuration that sets up both the API and MongoDB in a single command:
+
+```bash
+docker-compose up -d
+```
+
+This will:
+- Build the API container using the optimized Dockerfile
+- Start a MongoDB container
+- Configure the network between them
+- Set up persistent volumes for data and logs
+- Configure health checks for both services
+
+To stop the services:
+
+```bash
+docker-compose down
+```
+
+To rebuild and restart the services:
+
+```bash
+docker-compose up -d --build
+```
+
+To view logs:
+
+```bash
+docker-compose logs -f api
 ```
 
 ## Project Structure
@@ -184,6 +221,55 @@ User management endpoints are available at `/api/users`:
 - `PATCH /api/users/:id/role` - Update user role (admin only)
 - `PATCH /api/users/:id/status` - Update user status (admin only)
 - `DELETE /api/users/:id` - Delete user
+
+## CI/CD Pipeline
+
+This project includes a GitHub Actions workflow for continuous integration and deployment to a VPS.
+
+### Workflow Overview
+
+The workflow is defined in `.github/workflows/deploy.yml` and consists of two jobs:
+
+1. **Build Job**:
+   - Checks out the code
+   - Sets up Docker Buildx
+   - Logs in to Docker Hub using secrets
+   - Builds and pushes a multi-platform Docker image to Docker Hub
+
+2. **Deploy Job**:
+   - Runs after the build job completes
+   - Sets up SSH access to the VPS
+   - Connects to the VPS and executes deployment commands:
+     - Pulls the latest Docker image
+     - Creates a Docker network if it doesn't exist
+     - Stops and removes any existing API container
+     - Starts a new API container with the appropriate environment variables
+
+### Required Secrets
+
+The following secrets need to be configured in your GitHub repository:
+
+- `DOCKERHUB_USERNAME`: Your Docker Hub username
+- `DOCKERHUB_PASSWORD`: Your Docker Hub password or access token
+- `SSH_PRIVATE_KEY`: Private SSH key for accessing your VPS
+- `SSH_USER`: Username for SSH access to your VPS
+- `SSH_HOST`: Hostname or IP address of your VPS
+- `API_URL`: Public URL for the API (e.g., https://api.example.com)
+- `CLIENT_URL`: URL for the client application
+- `JWT_SECRET`: Secret for JWT token generation
+- `JWT_EXPIRES_IN`: JWT token expiration time
+- `GOOGLE_CLIENT_ID`: Google OAuth client ID
+- `GOOGLE_CLIENT_SECRET`: Google OAuth client secret
+- `GITHUB_CLIENT_ID`: GitHub OAuth client ID
+- `GITHUB_CLIENT_SECRET`: GitHub OAuth client secret
+
+### Manual Deployment
+
+If you need to deploy manually, you can use Docker Compose:
+
+```bash
+docker-compose up -d --build
+```
 
 ## License
 

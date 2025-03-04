@@ -4,9 +4,9 @@ import { z } from 'zod';
 config();
 
 const envSchema = z.object({
-  PORT: z.string().default('3000'),
+  PORT: z.string().default('5500'),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
-  API_URL: z.string().default('http://localhost:3000'),
+  API_URL: z.string().default('http://localhost:5500'),
   CLIENT_URL: z.string().default('http://localhost:4231'),
   
   DATABASE_URL: z.string().default('mongodb://localhost:27017/interview-helper'),

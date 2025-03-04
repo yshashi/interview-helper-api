@@ -12,7 +12,11 @@
     "lint": "eslint . --ext .ts",
     "format": "prettier --write \"src/**/*.ts\"",
     "docker:build": "docker build -t interview-helper-api .",
-    "docker:run": "docker run -p 3000:3000 interview-helper-api",
+    "docker:run": "docker run -p 5500:5500 interview-helper-api",
+    "docker:compose:up": "docker-compose up -d",
+    "docker:compose:down": "docker-compose down",
+    "docker:compose:build": "docker-compose up -d --build",
+    "docker:compose:logs": "docker-compose logs -f api",
     "db:seed": "tsx prisma/seed.ts",
     "db:push": "prisma db push",
     "db:generate": "prisma generate"

@@ -40,6 +40,11 @@ app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/mcq', mcqRoutes);
 
+// Redirect root to API docs
+app.get('/', (_req, res) => {
+  res.redirect('/api-docs');
+});
+
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
 app.use(notFoundHandler);

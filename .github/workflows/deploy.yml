@@ -1,0 +1,75 @@
+name: Build and Deploy Interview Helper API
+
+on:
+  push:
+    branches:
+      - main
+  release:
+    types: [created]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+
+      - name: Build and push Docker image
+        run: |
+          docker buildx build --platform linux/amd64 -t syadav49/interview-helper-api --push .
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up SSH
+        uses: webfactory/ssh-agent@v0.8.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Deploy to VPS
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} << 'EOF'
+          # Pull the latest image
+          docker pull syadav49/interview-helper-api:latest
+          
+          # Create a network if it doesn't exist
+          docker network create interview-helper-network || true
+          
+          # Stop and remove existing API container
+          docker stop interview-helper-api || true
+          docker rm interview-helper-api || true
+          
+          # Start new API container
+          docker run -d \
+            --name interview-helper-api \
+            --network interview-helper-network \
+            -p 5500:5500 \
+            -e PORT='5500' \
+            -e NODE_ENV='production' \
+            -e API_URL='${{ secrets.API_URL }}' \
+            -e CLIENT_URL='${{ secrets.CLIENT_URL }}' \
+            -e DATABASE_URL='${{ secrets.DATABASE_URL }}' \
+            -e JWT_SECRET='${{ secrets.JWT_SECRET }}' \
+            -e JWT_EXPIRES_IN='${{ secrets.JWT_EXPIRES_IN }}' \
+            -e GOOGLE_CLIENT_ID='${{ secrets.GOOGLE_CLIENT_ID }}' \
+            -e GOOGLE_CLIENT_SECRET='${{ secrets.GOOGLE_CLIENT_SECRET }}' \
+            -e GITHUB_CLIENT_ID='${{ secrets.GITHUB_CLIENT_ID }}' \
+            -e GITHUB_CLIENT_SECRET='${{ secrets.GITHUB_CLIENT_SECRET }}' \
+            --restart unless-stopped \
+            syadav49/interview-helper-api:latest
+          EOF
