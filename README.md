@@ -254,7 +254,7 @@ The following secrets need to be configured in your GitHub repository:
 - `SSH_PRIVATE_KEY`: Private SSH key for accessing your VPS
 - `SSH_USER`: Username for SSH access to your VPS
 - `SSH_HOST`: Hostname or IP address of your VPS
-- `API_URL`: Public URL for the API (e.g., https://api.example.com)
+- `API_URL`: Public URL for the API (e.g., https://api.interviewhelper.in)
 - `CLIENT_URL`: URL for the client application
 - `JWT_SECRET`: Secret for JWT token generation
 - `JWT_EXPIRES_IN`: JWT token expiration time
