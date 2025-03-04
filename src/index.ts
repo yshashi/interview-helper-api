@@ -27,6 +27,7 @@ app.use(cors({
   origin: function(origin, callback) {
     const allowedOrigins = [
       'https://interviewhelper.in',
+      'https://www.interviewhelper.in',
       'http://localhost:4321',
       env.CLIENT_URL
     ].filter(Boolean);
