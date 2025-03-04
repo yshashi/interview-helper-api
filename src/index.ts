@@ -14,6 +14,7 @@ import './config/passport.js';
 import healthRoutes from './routes/health.routes.js';
 import authRoutes from './routes/auth.routes.js';
 import userRoutes from './routes/user.routes.js';
+import mcqRoutes from './routes/mcq.routes.js';
 
 setupGlobalErrorHandlers();
 
@@ -37,6 +38,7 @@ app.use(passport.initialize());
 app.use('/health', healthRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/mcq', mcqRoutes);
 
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 

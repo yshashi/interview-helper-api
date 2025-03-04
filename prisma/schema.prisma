@@ -68,3 +68,25 @@ enum Provider {
   GITHUB
   LOCAL
 }
+
+model MCQ {
+  id            String   @id @default(auto()) @map("_id") @db.ObjectId
+  key           String   @unique
+  questions     Question[]
+  @@map("Mcqs")
+}
+
+type Question {
+  question        String
+  options         Options
+  correct_answer  String
+  question_id     Int
+  source_file     String?
+}
+
+type Options {
+  A String
+  B String
+  C String
+  D String
+}
