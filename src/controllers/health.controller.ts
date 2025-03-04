@@ -4,9 +4,11 @@ import { log } from '../utils/logger.js';
 
 export const checkHealth = async (_req: Request, res: Response): Promise<void> => {
   try {
-    // Check database connection
-    // @ts-ignore - Prisma raw query
-    await prisma.$executeRaw`SELECT 1`;
+    await prisma.$connect();
+    await prisma.user.findFirst({
+      select: { id: true },
+      take: 1
+    });
     
     res.status(200).json({
       status: 'ok',
