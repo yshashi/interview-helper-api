@@ -66,8 +66,8 @@ app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 app.use(notFoundHandler);
 app.use(errorHandler);
 
-const server = app.listen(env.PORT, () => {
-  log.info(`Server started on port ${env.PORT} in ${env.NODE_ENV} mode`);
+const server = app.listen(parseInt(env.PORT), '0.0.0.0', () => {
+  log.info(`Server started on 0.0.0.0:${env.PORT} in ${env.NODE_ENV} mode`);
   log.info(`Swagger documentation available at http://localhost:${env.PORT}/api-docs`);
 });
 
