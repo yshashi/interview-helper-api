@@ -1,5 +1,5 @@
 # Build stage
-FROM node:20-alpine AS builder
+FROM node:22 AS builder
 
 WORKDIR /app
 
@@ -14,7 +14,7 @@ COPY . .
 
 RUN npm run build
 
-FROM node:20-alpine AS production
+FROM node:22 AS production
 
 WORKDIR /app
 
@@ -29,8 +29,6 @@ COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/prisma ./prisma
 
 COPY --from=builder /app/dist ./dist
-
-COPY .env.example ./.env
 
 RUN mkdir -p logs && chown -R node:node logs
 
