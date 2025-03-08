@@ -21,9 +21,6 @@
     "noImplicitReturns": true,
     "allowSyntheticDefaultImports": true,
     "baseUrl": "./src",
-    "paths": {
-      "@/*": ["*"]
-    },
     "verbatimModuleSyntax": true
   },
   "include": ["src/**/*"],

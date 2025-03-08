@@ -5,14 +5,11 @@ import {
   register,
   login,
   refresh,
-  logout
-  // Uncomment if used in routes
-  // googleLogin,
-  // githubLogin
+  logout,
 } from '../controllers/auth.controller.js';
 import { authenticate } from '../middleware/auth.middleware.js';
 import { log } from '../utils/logger.js';
-import { getUserById } from '@/services/user.service.js';
+import { getUserById } from '../services/user.service.js';
 
 const router = express.Router();
 
