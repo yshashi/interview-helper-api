@@ -7,7 +7,7 @@ const envSchema = z.object({
   PORT: z.string().default('5500'),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   API_URL: z.string().default('http://localhost:5500'),
-  CLIENT_URL: z.string().default('http://localhost:4231'),
+  CLIENT_URL: z.string().default('http://localhost:4321'),
   
   DATABASE_URL: z.string().default('mongodb://localhost:27017/interview-helper'),
   
@@ -20,9 +20,9 @@ const envSchema = z.object({
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   GOOGLE_CALLBACK_URL: z.string().default('/api/auth/google/callback'),
   
-  GITHUB_CLIENT_ID: z.string().optional(),
-  GITHUB_CLIENT_SECRET: z.string().optional(),
-  GITHUB_CALLBACK_URL: z.string().default('/api/auth/github/callback'),
+  GIT_CLIENT_ID: z.string().optional(),
+  GIT_CLIENT_SECRET: z.string().optional(),
+  GIT_CALLBACK_URL: z.string().default('/api/auth/github/callback'),
   
   LOG_LEVEL: z.enum(['error', 'warn', 'info', 'http', 'debug']).default('info'),
   LOG_FILE_ENABLED: z.string().transform(val => val === 'true').default('true'),

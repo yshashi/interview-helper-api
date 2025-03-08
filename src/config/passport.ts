@@ -83,13 +83,13 @@ if (env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET) {
 }
 
 // Configure GitHub Strategy for OAuth authentication
-if (env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET) {
+if (env.GIT_CLIENT_ID && env.GIT_CLIENT_SECRET) {
   passport.use(
     new GitHubStrategy(
       {
-        clientID: env.GITHUB_CLIENT_ID,
-        clientSecret: env.GITHUB_CLIENT_SECRET,
-        callbackURL: `${env.API_URL}${env.GITHUB_CALLBACK_URL}`,
+        clientID: env.GIT_CLIENT_ID,
+        clientSecret: env.GIT_CLIENT_SECRET,
+        callbackURL: `${env.API_URL}${env.GIT_CALLBACK_URL}`,
         scope: ['user:email'],
       },
       async (accessToken: string, refreshToken: string, profile: any, done: any) => {

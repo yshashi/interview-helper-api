@@ -49,7 +49,7 @@ Edit the `.env` file to customize your configuration. Make sure to set the follo
 - `JWT_REFRESH_SECRET`: Secret key for JWT refresh token generation
 - For social login, set the OAuth provider credentials:
   - `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` for Google authentication
-  - `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` for GitHub authentication
+  - `GIT_CLIENT_ID` and `GIT_CLIENT_SECRET` for GitHub authentication
 
 ## Available Scripts
 
@@ -260,8 +260,8 @@ The following secrets need to be configured in your GitHub repository:
 - `JWT_EXPIRES_IN`: JWT token expiration time
 - `GOOGLE_CLIENT_ID`: Google OAuth client ID
 - `GOOGLE_CLIENT_SECRET`: Google OAuth client secret
-- `GITHUB_CLIENT_ID`: GitHub OAuth client ID
-- `GITHUB_CLIENT_SECRET`: GitHub OAuth client secret
+- `GIT_CLIENT_ID`: GitHub OAuth client ID
+- `GIT_CLIENT_SECRET`: GitHub OAuth client secret
 
 ### Manual Deployment
 

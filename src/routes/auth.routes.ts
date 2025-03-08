@@ -12,6 +12,7 @@ import {
 } from '../controllers/auth.controller.js';
 import { authenticate } from '../middleware/auth.middleware.js';
 import { log } from '../utils/logger.js';
+import { getUserById } from '@/services/user.service.js';
 
 const router = express.Router();
 
@@ -232,8 +233,8 @@ router.get('/me', authenticate, async (req, res) => {
       res.status(401).json({ message: 'Unauthorized' });
       return;
     }
-    
-    res.status(200).json({ user: req.user });
+    const user = await getUserById((req.user as any).userId);
+    res.status(200).json({ user: {...req.user, name: user?.name, username: user?.username} });
   } catch (error) {
     log.error('Get user error', { error: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ message: 'Internal server error' });

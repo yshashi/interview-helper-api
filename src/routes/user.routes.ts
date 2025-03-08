@@ -117,7 +117,7 @@ router.get('/:id', authenticate, async (req, res) => {
   try {
     // Check if the user is requesting their own data or is an admin
     // @ts-ignore - TokenPayload property access
-    if (req.user?.sub !== req.params.id && req.user?.role !== UserRole.ADMIN) {
+    if (req.user?.userId !== req.params.id && req.user?.role !== UserRole.ADMIN) {
       res.status(403).json({ message: 'Forbidden: Insufficient permissions' });
       return;
     }
@@ -172,7 +172,7 @@ router.patch('/:id', authenticate, async (req, res) => {
   try {
     // Check if the user is updating their own data or is an admin
     // @ts-ignore - TokenPayload property access
-    if (req.user?.sub !== req.params.id && req.user?.role !== UserRole.ADMIN) {
+    if ((req.user as any)?.userId !== req.params.id && (req.user as any)?.role !== UserRole.ADMIN) {
       res.status(403).json({ message: 'Forbidden: Insufficient permissions' });
       return;
     }
@@ -330,7 +330,7 @@ router.delete('/:id', authenticate, async (req, res) => {
   try {
     // Check if the user is deleting their own account or is an admin
     // @ts-ignore - TokenPayload property access
-    if (req.user?.sub !== req.params.id && req.user?.role !== UserRole.ADMIN) {
+    if (req.user?.userId !== req.params.id && req.user?.role !== UserRole.ADMIN) {
       res.status(403).json({ message: 'Forbidden: Insufficient permissions' });
       return;
     }
