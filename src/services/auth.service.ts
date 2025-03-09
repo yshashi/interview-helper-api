@@ -218,6 +218,7 @@ export const socialLogin = async (socialData: SocialLoginInput): Promise<AuthRes
           data: {
             email: socialData.email,
             name: socialData.name,
+            username: socialData.email.split('@')[0],
             profilePicture: socialData.profilePicture,
             socialLogins: {
               create: {
