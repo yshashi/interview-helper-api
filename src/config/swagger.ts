@@ -46,6 +46,10 @@ const swaggerDefinition = {
       name: 'MCQ',
       description: 'Multiple Choice Questions endpoints',
     },
+    {
+      name: 'Quiz Results',
+      description: 'User quiz results endpoints',
+    },
   ],
   components: {
     securitySchemes: {
@@ -236,6 +240,58 @@ const swaggerDefinition = {
             items: {
               type: 'string',
               example: 'javascript',
+            },
+          },
+        },
+      },
+      UserQuizResult: {
+        type: 'object',
+        properties: {
+          id: {
+            type: 'string',
+            example: '60d0fe4f5311236168a109ca',
+          },
+          userId: {
+            type: 'string',
+            example: '60d0fe4f5311236168a109cb',
+          },
+          mcqId: {
+            type: 'string',
+            example: '60d0fe4f5311236168a109cc',
+          },
+          totalTimeTaken: {
+            type: 'integer',
+            example: 300,
+          },
+          correctAnswerCount: {
+            type: 'integer',
+            example: 8,
+          },
+          wrongAnswerCount: {
+            type: 'integer',
+            example: 2,
+          },
+          attemptCount: {
+            type: 'integer',
+            example: 1,
+          },
+          createdAt: {
+            type: 'string',
+            format: 'date-time',
+            example: '2023-01-01T00:00:00.000Z',
+          },
+          updatedAt: {
+            type: 'string',
+            format: 'date-time',
+            example: '2023-01-01T00:00:00.000Z',
+          },
+          mcq: {
+            type: 'object',
+            properties: {
+              key: {
+                type: 'string',
+                example: 'javascript',
+              },
             },
           },
         },
