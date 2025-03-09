@@ -231,7 +231,7 @@ router.get('/me', authenticate, async (req, res) => {
       return;
     }
     const user = await getUserById((req.user as any).userId);
-    res.status(200).json({ user: {...req.user, name: user?.name, username: user?.username} });
+    res.status(200).json({ user: {...req.user, name: user?.name, username: user?.username, profilePicture: user?.profilePicture} });
   } catch (error) {
     log.error('Get user error', { error: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ message: 'Internal server error' });
