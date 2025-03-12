@@ -93,7 +93,7 @@ export const registerUser = async (userData: RegisterUserInput): Promise<AuthRes
     const newUser = await prisma.user.create({
       data: {
         email: userData.email,
-        username: userData.username,
+        username: userData.username || '',
         password: hashedPassword,
         name: userData.name,
         socialLogins: {

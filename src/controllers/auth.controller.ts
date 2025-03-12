@@ -11,8 +11,8 @@ import { log } from '../utils/logger.js';
 
 export const register = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { email, password, name } = req.body;
-    const result = await registerUser({ email, password, name });
+    const { email, password, name, username } = req.body;
+    const result = await registerUser({ email, password, name, username });
     res.status(201).json(result);
   } catch (error) {
     log.error('Error registering user', { error: error instanceof Error ? error.message : String(error) });
