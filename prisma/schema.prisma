@@ -24,6 +24,7 @@ model User {
   socialLogins   SocialLogin[]
   sessions       Session[]
   quizResults    UserQuizResult[]
+  topicwiseQuizResults TopicwiseQuizResult[]
 }
 
 model SocialLogin {
@@ -109,4 +110,32 @@ model UserQuizResult {
   @@index([userId])
   @@index([mcqId])
   @@map("UserQuizResults")
+}
+
+model TopicwiseMcqs {
+  id        String               @id @default(auto()) @map("_id") @db.ObjectId
+  key       String               @unique
+  questions Question[]
+  quizResults TopicwiseQuizResult[]
+  
+  @@map("Topicwise_Mcqs")
+}
+
+model TopicwiseQuizResult {
+  id                 String   @id @default(auto()) @map("_id") @db.ObjectId
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId             String   @db.ObjectId
+  topicwiseMcq       TopicwiseMcqs @relation(fields: [topicwiseMcqId], references: [id], onDelete: Cascade)
+  topicwiseMcqId     String   @db.ObjectId
+  totalTimeTaken     Int
+  correctAnswerCount Int
+  wrongAnswerCount   Int
+  attemptCount       Int
+  questionDetails    Json?    // Store detailed information about each question attempt
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([userId])
+  @@index([topicwiseMcqId])
+  @@map("TopicwiseQuizResults")
 }
