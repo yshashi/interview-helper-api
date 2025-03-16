@@ -18,6 +18,7 @@ import mcqRoutes from './routes/mcq.routes.js';
 import quizResultRoutes from './routes/quiz-result.routes.js';
 import topicwiseMcqRoutes from './routes/topicwise-mcq.routes.js';
 import topicwiseQuizResultRoutes from './routes/topicwise-quiz-result.routes.js';
+import feedbackRoutes from './routes/feedback.routes.js';
 
 setupGlobalErrorHandlers();
 
@@ -61,6 +62,7 @@ app.use('/api/mcq', mcqRoutes);
 app.use('/api/quiz-results', quizResultRoutes);
 app.use('/api/topicwise-mcq', topicwiseMcqRoutes);
 app.use('/api/topicwise-quiz-results', topicwiseQuizResultRoutes);
+app.use('/api/feedback', feedbackRoutes);
 
 // Redirect root to API docs
 app.get('/', (_req, res) => {

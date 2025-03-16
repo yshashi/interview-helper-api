@@ -25,6 +25,7 @@ model User {
   sessions       Session[]
   quizResults    UserQuizResult[]
   topicwiseQuizResults TopicwiseQuizResult[]
+  feedbacks      Feedback[]
 }
 
 model SocialLogin {
@@ -138,4 +139,24 @@ model TopicwiseQuizResult {
   @@index([userId])
   @@index([topicwiseMcqId])
   @@map("TopicwiseQuizResults")
+}
+
+enum FeedbackType {
+  HELPFUL
+  NEEDS_IMPROVEMENT
+}
+
+model Feedback {
+  id          String       @id @default(auto()) @map("_id") @db.ObjectId
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId      String       @db.ObjectId
+  topic       String       // The topic/page the feedback is for
+  type        FeedbackType // Whether it was helpful or needs improvement
+  comment     String?      // Optional feedback text
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@index([userId])
+  @@index([topic])
+  @@map("Feedbacks")
 }
