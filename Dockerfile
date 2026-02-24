@@ -1,43 +1,63 @@
-# Build stage
-FROM node:22 AS builder
+# Build stage - Install dependencies and compile TypeScript
+FROM node:22-slim AS builder
 
 WORKDIR /app
 
-COPY package*.json ./
-# Force install ALL dependencies including devDependencies
-# --production=false explicitly overrides NODE_ENV=production from Coolify
-RUN npm ci
+# Copy package files
+COPY package.json package-lock.json ./
 
+# Install ALL dependencies (including devDependencies) 
+# Use --omit=dev=false to force devDependencies installation even when NODE_ENV=production
+RUN npm ci --omit=dev=false --ignore-scripts
+
+# Copy Prisma schema and generate client
 COPY prisma ./prisma/
-
 RUN npx prisma generate
 
-COPY . .
+# Copy source code
+COPY tsconfig.json ./
+COPY src ./src/
 
-RUN tsc --version
-
+# Verify TypeScript is installed and build
+RUN npx tsc --version
 RUN npm run build
 
-FROM node:22 AS production
+# Production stage - Minimal runtime image
+FROM node:22-slim AS production
 
 WORKDIR /app
 
+# Set production environment
 ENV NODE_ENV=production
 
-COPY package*.json ./
+# Copy package files
+COPY package.json package-lock.json ./
 
-RUN npm install
+# Install only production dependencies
+RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 
+# Copy generated Prisma client from builder
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 
+# Copy Prisma schema (needed for migrations/introspection)
 COPY --from=builder /app/prisma ./prisma
 
+# Copy compiled JavaScript
 COPY --from=builder /app/dist ./dist
 
-RUN mkdir -p logs && chown -R node:node logs
+# Create logs directory with proper permissions
+RUN mkdir -p logs && chown -R node:node /app
 
+# Use non-root user for security
 USER node
 
+# Expose application port
 EXPOSE 5500
 
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD node -e "require('http').get('http://localhost:5500/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
+
+# Start application
 CMD ["node", "dist/index.js"]
