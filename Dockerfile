@@ -1,5 +1,5 @@
 # Build stage - Install dependencies and compile TypeScript
-FROM node:22-slim AS builder
+FROM node:22 AS builder
 
 WORKDIR /app
 
@@ -23,7 +23,7 @@ RUN npx tsc --version
 RUN npm run build
 
 # Production stage - Minimal runtime image
-FROM node:22-slim AS production
+FROM node:22 AS production
 
 WORKDIR /app
 
