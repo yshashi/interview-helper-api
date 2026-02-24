@@ -8,7 +8,7 @@ COPY package.json package-lock.json ./
 
 # Install ALL dependencies (including devDependencies) 
 # Use --omit=dev=false to force devDependencies installation even when NODE_ENV=production
-RUN npm ci --omit=dev=false --ignore-scripts
+RUN npm ci --omit=dev=false
 
 # Copy Prisma schema and generate client
 COPY prisma ./prisma/
@@ -22,7 +22,7 @@ COPY src ./src/
 RUN npx tsc --version
 RUN npm run build
 
-# Production stage - Minimal runtime image
+# Production stage - Runtime image
 FROM node:22 AS production
 
 WORKDIR /app
@@ -33,8 +33,8 @@ ENV NODE_ENV=production
 # Copy package files
 COPY package.json package-lock.json ./
 
-# Install only production dependencies
-RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
+# Install only production dependencies with native module compilation
+RUN npm ci --omit=dev && npm cache clean --force
 
 # Copy generated Prisma client from builder
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
