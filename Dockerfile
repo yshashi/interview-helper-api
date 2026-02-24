@@ -6,7 +6,7 @@ WORKDIR /app
 COPY package*.json ./
 # Force install ALL dependencies including devDependencies
 # --production=false explicitly overrides NODE_ENV=production from Coolify
-RUN npm ci --production=false
+RUN npm ci
 
 COPY prisma ./prisma/
 
