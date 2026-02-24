@@ -3,6 +3,9 @@ FROM node:22 AS builder
 
 WORKDIR /app
 
+# Ensure NODE_ENV is not production during build to install devDependencies
+ENV NODE_ENV=development
+
 COPY package*.json ./
 RUN npm install
 
