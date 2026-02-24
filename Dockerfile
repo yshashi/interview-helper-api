@@ -15,7 +15,7 @@ RUN npx prisma generate
 
 COPY . .
 
-CMD ["tsc", "--version"]
+RUN tsc --version
 
 RUN npm run build
 
