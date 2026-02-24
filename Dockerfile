@@ -3,9 +3,10 @@ FROM node:22 AS builder
 
 WORKDIR /app
 
+# Ensure NODE_ENV is not production during build to install devDependencies
+ENV NODE_ENV=development
+
 COPY package*.json ./
-# Install ALL dependencies (including devDependencies) regardless of NODE_ENV
-# This is critical for TypeScript compilation
 RUN npm install --include=dev
 
 COPY prisma ./prisma/
@@ -13,6 +14,8 @@ COPY prisma ./prisma/
 RUN npx prisma generate
 
 COPY . .
+
+CMD ["tsc", "--version"]
 
 RUN npm run build
 
