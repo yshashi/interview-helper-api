@@ -3,11 +3,10 @@ FROM node:22 AS builder
 
 WORKDIR /app
 
-# Ensure NODE_ENV is not production during build to install devDependencies
-ENV NODE_ENV=development
-
 COPY package*.json ./
-RUN npm install --include=dev
+# Force install ALL dependencies including devDependencies
+# --production=false explicitly overrides NODE_ENV=production from Coolify
+RUN npm ci --production=false
 
 COPY prisma ./prisma/
 
