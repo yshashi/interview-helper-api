@@ -11,21 +11,22 @@ datasource db {
 }
 
 model User {
-  id             String    @id @default(auto()) @map("_id") @db.ObjectId
-  email          String    @unique
-  username       String?   @unique
-  password       String?
-  name           String?
-  profilePicture String?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
-  role           UserRole  @default(USER)
-  status         UserStatus @default(ACTIVE)
-  socialLogins   SocialLogin[]
-  sessions       Session[]
-  quizResults    UserQuizResult[]
+  id                   String                 @id @default(auto()) @map("_id") @db.ObjectId
+  email                String                 @unique
+  username             String?                @unique
+  password             String?
+  name                 String?
+  profilePicture       String?
+  createdAt            DateTime               @default(now())
+  updatedAt            DateTime               @updatedAt
+  role                 UserRole               @default(USER)
+  status               UserStatus             @default(ACTIVE)
+  socialLogins         SocialLogin[]
+  sessions             Session[]
+  quizResults          UserQuizResult[]
   topicwiseQuizResults TopicwiseQuizResult[]
-  feedbacks      Feedback[]
+  feedbacks            Feedback[]
+  contributions        QuestionContribution[]
 }
 
 model SocialLogin {
@@ -73,19 +74,20 @@ enum Provider {
 }
 
 model MCQ {
-  id            String   @id @default(auto()) @map("_id") @db.ObjectId
-  key           String   @unique
-  questions     Question[]
-  quizResults   UserQuizResult[]
+  id          String           @id @default(auto()) @map("_id") @db.ObjectId
+  key         String           @unique
+  questions   Question[]
+  quizResults UserQuizResult[]
+
   @@map("Mcqs")
 }
 
 type Question {
-  question        String
-  options         Options
-  correct_answer  String
-  question_id     Int
-  source_file     String?
+  question       String
+  options        Options
+  correct_answer String
+  question_id    Int
+  source_file    String?
 }
 
 type Options {
@@ -114,27 +116,27 @@ model UserQuizResult {
 }
 
 model TopicwiseMcqs {
-  id        String               @id @default(auto()) @map("_id") @db.ObjectId
-  key       String               @unique
-  questions Question[]
+  id          String                @id @default(auto()) @map("_id") @db.ObjectId
+  key         String                @unique
+  questions   Question[]
   quizResults TopicwiseQuizResult[]
-  
+
   @@map("Topicwise_Mcqs")
 }
 
 model TopicwiseQuizResult {
-  id                 String   @id @default(auto()) @map("_id") @db.ObjectId
-  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userId             String   @db.ObjectId
+  id                 String        @id @default(auto()) @map("_id") @db.ObjectId
+  user               User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId             String        @db.ObjectId
   topicwiseMcq       TopicwiseMcqs @relation(fields: [topicwiseMcqId], references: [id], onDelete: Cascade)
-  topicwiseMcqId     String   @db.ObjectId
+  topicwiseMcqId     String        @db.ObjectId
   totalTimeTaken     Int
   correctAnswerCount Int
   wrongAnswerCount   Int
   attemptCount       Int
-  questionDetails    Json?    // Store detailed information about each question attempt
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  questionDetails    Json? // Store detailed information about each question attempt
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
 
   @@index([userId])
   @@index([topicwiseMcqId])
@@ -147,16 +149,43 @@ enum FeedbackType {
 }
 
 model Feedback {
-  id          String       @id @default(auto()) @map("_id") @db.ObjectId
-  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userId      String       @db.ObjectId
-  topic       String       // The topic/page the feedback is for
-  type        FeedbackType // Whether it was helpful or needs improvement
-  comment     String?      // Optional feedback text
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  id        String       @id @default(auto()) @map("_id") @db.ObjectId
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String       @db.ObjectId
+  topic     String // The topic/page the feedback is for
+  type      FeedbackType // Whether it was helpful or needs improvement
+  comment   String? // Optional feedback text
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
 
   @@index([userId])
   @@index([topic])
   @@map("Feedbacks")
+}
+
+enum ContributionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model QuestionContribution {
+  id          String             @id @default(auto()) @map("_id") @db.ObjectId
+  user        User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId      String             @db.ObjectId
+  techStack   String // The technology/topic area
+  question    String // The actual question text
+  company     String? // Optional company name (free text)
+  difficulty  String? // Beginner, Intermediate, Advanced (dropdown)
+  category    String? // Optional category/subcategory
+  status      ContributionStatus @default(PENDING)
+  reviewedBy  String?            @db.ObjectId // Admin who reviewed
+  reviewNotes String? // Admin notes
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  @@index([userId])
+  @@index([techStack])
+  @@index([status])
+  @@map("QuestionContributions")
 }
