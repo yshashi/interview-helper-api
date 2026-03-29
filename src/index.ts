@@ -22,6 +22,7 @@ import feedbackRoutes from './routes/feedback.routes.js';
 import contributionRoutes from './routes/contribution.routes.js';
 import announcementRoutes from './routes/announcement.routes.js';
 import mcqGeneratorRoutes from './routes/mcq-generator.routes.js';
+import interviewRoutes from './routes/interview.routes.js';
 
 setupGlobalErrorHandlers();
 
@@ -71,6 +72,7 @@ app.use('/api/feedback', feedbackRoutes);
 app.use('/api/contributions', contributionRoutes);
 app.use('/api/announcements', announcementRoutes);
 app.use('/api/mcq-generator', mcqGeneratorRoutes);
+app.use('/api/interviews', interviewRoutes);
 
 // Redirect root to API docs
 app.get('/', (_req, res) => {

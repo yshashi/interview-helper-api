@@ -41,6 +41,10 @@ const envSchema = z.object({
   AZURE_OPENAI_DEPLOYMENT: z.string().default('gpt-5.4-mini'),
   MCQ_CONTENT_DIR: z.string().default('src/mcq-generator/content'),
   MCQ_QUESTIONS_PER_FILE: z.string().transform(Number).default('4'),
+
+  // Azure Speech Services (for AI Interview)
+  AZURE_SPEECH_KEY: z.string().optional(),
+  AZURE_SPEECH_REGION: z.string().default('eastus'),
 });
 
 const parseEnv = (): z.infer<typeof envSchema> => {

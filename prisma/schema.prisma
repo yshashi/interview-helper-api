@@ -27,6 +27,7 @@ model User {
   topicwiseQuizResults TopicwiseQuizResult[]
   feedbacks            Feedback[]
   contributions        QuestionContribution[]
+  interviewSessions    InterviewSession[]
 }
 
 model SocialLogin {
@@ -188,6 +189,51 @@ model QuestionContribution {
   @@index([techStack])
   @@index([status])
   @@map("QuestionContributions")
+}
+
+// AI Interview Sessions
+enum InterviewStatus {
+  WAITING
+  IN_PROGRESS
+  COMPLETED
+  ABANDONED
+}
+
+enum MessageRole {
+  INTERVIEWER
+  CANDIDATE
+}
+
+model InterviewSession {
+  id              String          @id @default(auto()) @map("_id") @db.ObjectId
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId          String          @db.ObjectId
+  topic           String
+  status          InterviewStatus @default(WAITING)
+  durationSeconds Int             @default(900) // 15 minutes
+  startedAt       DateTime?
+  endedAt         DateTime?
+  messages        InterviewMessage[]
+  feedbackSummary Json?
+  overallScore    Int?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@map("InterviewSessions")
+}
+
+model InterviewMessage {
+  id        String           @id @default(auto()) @map("_id") @db.ObjectId
+  session   InterviewSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  sessionId String           @db.ObjectId
+  role      MessageRole
+  content   String
+  timestamp DateTime         @default(now())
+
+  @@index([sessionId])
+  @@map("InterviewMessages")
 }
 
 // Tracks content hashes for incremental MCQ regeneration
