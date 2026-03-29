@@ -1,0 +1,483 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Networking Basics
+---
+
+# Networking Basics
+
+## OSI Model
+
+```javascript
+const osiModel = {
+  layer7: { name: 'Application', protocols: ['HTTP', 'FTP', 'SMTP', 'DNS'], example: 'Web browser' },
+  layer6: { name: 'Presentation', protocols: ['SSL/TLS', 'JPEG', 'MPEG'], example: 'Encryption' },
+  layer5: { name: 'Session', protocols: ['NetBIOS', 'RPC'], example: 'Session management' },
+  layer4: { name: 'Transport', protocols: ['TCP', 'UDP'], example: 'Port numbers' },
+  layer3: { name: 'Network', protocols: ['IP', 'ICMP', 'ARP'], example: 'IP routing' },
+  layer2: { name: 'Data Link', protocols: ['Ethernet', 'Wi-Fi'], example: 'MAC address' },
+  layer1: { name: 'Physical', protocols: ['Cables', 'Hubs'], example: 'Electrical signals' }
+};
+```
+
+## TCP vs UDP
+
+```javascript
+const tcpVsUdp = {
+  tcp: {
+    name: 'Transmission Control Protocol',
+    connectionOriented: true,
+    reliable: true,
+    ordered: true,
+    errorChecking: true,
+    flowControl: true,
+    useCases: ['HTTP', 'HTTPS', 'FTP', 'Email', 'File transfer'],
+    overhead: 'Higher',
+    speed: 'Slower but reliable'
+  },
+  
+  udp: {
+    name: 'User Datagram Protocol',
+    connectionOriented: false,
+    reliable: false,
+    ordered: false,
+    errorChecking: 'Basic',
+    flowControl: false,
+    useCases: ['Video streaming', 'Gaming', 'DNS', 'VoIP'],
+    overhead: 'Lower',
+    speed: 'Faster but unreliable'
+  }
+};
+```
+
+## HTTP/HTTPS
+
+```javascript
+// HTTP Request
+const httpRequest = {
+  method: 'POST',
+  url: 'https://api.example.com/users',
+  headers: {
+    'Content-Type': 'application/json',
+    'Authorization': 'Bearer token',
+    'User-Agent': 'MyApp/1.0',
+    'Accept': 'application/json'
+  },
+  body: JSON.stringify({
+    name: 'John Doe',
+    email: 'john@example.com'
+  })
+};
+
+// HTTP Response
+const httpResponse = {
+  status: 201,
+  statusText: 'Created',
+  headers: {
+    'Content-Type': 'application/json',
+    'Content-Length': '123',
+    'Cache-Control': 'no-cache',
+    'Set-Cookie': 'sessionId=abc123; HttpOnly; Secure'
+  },
+  body: JSON.stringify({
+    id: '123',
+    name: 'John Doe',
+    email: 'john@example.com'
+  })
+};
+```
+
+## HTTP Methods
+
+```javascript
+const httpMethods = {
+  GET: { safe: true, idempotent: true, cacheable: true },
+  POST: { safe: false, idempotent: false, cacheable: false },
+  PUT: { safe: false, idempotent: true, cacheable: false },
+  PATCH: { safe: false, idempotent: true, cacheable: false },
+  DELETE: { safe: false, idempotent: true, cacheable: false },
+  HEAD: { safe: true, idempotent: true, cacheable: true },
+  OPTIONS: { safe: true, idempotent: true, cacheable: false }
+};
+```
+
+## DNS (Domain Name System)
+
+```javascript
+// DNS Resolution Process
+const dnsResolution = {
+  step1: 'Browser cache',
+  step2: 'OS cache',
+  step3: 'Router cache',
+  step4: 'ISP DNS server',
+  step5: 'Root DNS server',
+  step6: 'TLD DNS server (.com)',
+  step7: 'Authoritative DNS server',
+  step8: 'Return IP address'
+};
+
+// DNS Record Types
+const dnsRecords = {
+  A: 'IPv4 address',
+  AAAA: 'IPv6 address',
+  CNAME: 'Canonical name (alias)',
+  MX: 'Mail exchange',
+  TXT: 'Text record',
+  NS: 'Name server',
+  SOA: 'Start of authority'
+};
+
+// Example DNS lookup
+const dns = require('dns');
+
+dns.resolve4('example.com', (err, addresses) => {
+  console.log('IP addresses:', addresses);
+});
+
+dns.resolveCname('www.example.com', (err, addresses) => {
+  console.log('CNAME:', addresses);
+});
+```
+
+## WebSockets
+
+```javascript
+// WebSocket server (Node.js)
+const WebSocket = require('ws');
+const wss = new WebSocket.Server({ port: 8080 });
+
+wss.on('connection', (ws) => {
+  console.log('Client connected');
+  
+  ws.on('message', (message) => {
+    console.log('Received:', message);
+    
+    // Broadcast to all clients
+    wss.clients.forEach((client) => {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(message);
+      }
+    });
+  });
+  
+  ws.on('close', () => {
+    console.log('Client disconnected');
+  });
+});
+
+// WebSocket client
+const ws = new WebSocket('ws://localhost:8080');
+
+ws.on('open', () => {
+  console.log('Connected to server');
+  ws.send('Hello Server!');
+});
+
+ws.on('message', (data) => {
+  console.log('Received:', data);
+});
+```
+
+## Load Balancing Algorithms
+
+```javascript
+class LoadBalancer {
+  constructor(servers) {
+    this.servers = servers;
+    this.currentIndex = 0;
+  }
+  
+  // Round Robin
+  roundRobin() {
+    const server = this.servers[this.currentIndex];
+    this.currentIndex = (this.currentIndex + 1) % this.servers.length;
+    return server;
+  }
+  
+  // Least Connections
+  leastConnections() {
+    return this.servers.reduce((min, server) => 
+      server.connections < min.connections ? server : min
+    );
+  }
+  
+  // IP Hash
+  ipHash(clientIP) {
+    const hash = this.hash(clientIP);
+    return this.servers[hash % this.servers.length];
+  }
+  
+  hash(str) {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      hash = ((hash << 5) - hash) + str.charCodeAt(i);
+    }
+    return Math.abs(hash);
+  }
+}
+```
+
+## Network Protocols
+
+```javascript
+const networkProtocols = {
+  http: {
+    port: 80,
+    secure: false,
+    useCases: ['Web browsing', 'API calls']
+  },
+  
+  https: {
+    port: 443,
+    secure: true,
+    encryption: 'TLS/SSL',
+    useCases: ['Secure web browsing', 'Secure APIs']
+  },
+  
+  ftp: {
+    port: 21,
+    secure: false,
+    useCases: ['File transfer']
+  },
+  
+  ssh: {
+    port: 22,
+    secure: true,
+    useCases: ['Remote server access', 'Secure file transfer']
+  },
+  
+  smtp: {
+    port: 25,
+    secure: false,
+    useCases: ['Email sending']
+  },
+  
+  dns: {
+    port: 53,
+    protocol: 'UDP/TCP',
+    useCases: ['Domain name resolution']
+  }
+};
+```
+
+## IP Addressing
+
+```javascript
+// IPv4
+const ipv4 = {
+  format: '192.168.1.1',
+  bits: 32,
+  addresses: '4.3 billion',
+  classes: {
+    A: '0.0.0.0 to 127.255.255.255',
+    B: '128.0.0.0 to 191.255.255.255',
+    C: '192.0.0.0 to 223.255.255.255'
+  },
+  private: ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16']
+};
+
+// IPv6
+const ipv6 = {
+  format: '2001:0db8:85a3:0000:0000:8a2e:0370:7334',
+  bits: 128,
+  addresses: '340 undecillion',
+  shorthand: '2001:db8:85a3::8a2e:370:7334'
+};
+
+// CIDR notation
+const cidr = {
+  '/24': '256 addresses (192.168.1.0 - 192.168.1.255)',
+  '/16': '65,536 addresses',
+  '/8': '16,777,216 addresses'
+};
+```
+
+## Network Security
+
+```javascript
+// HTTPS/TLS
+const https = require('https');
+const fs = require('fs');
+
+const options = {
+  key: fs.readFileSync('private-key.pem'),
+  cert: fs.readFileSync('certificate.pem')
+};
+
+https.createServer(options, (req, res) => {
+  res.writeHead(200);
+  res.end('Secure connection');
+}).listen(443);
+
+// CORS (Cross-Origin Resource Sharing)
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', 'https://example.com');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  next();
+});
+
+// Rate Limiting
+const rateLimit = require('express-rate-limit');
+
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100 // limit each IP to 100 requests per windowMs
+});
+
+app.use('/api/', limiter);
+```
+
+## Latency and Bandwidth
+
+```javascript
+const networkMetrics = {
+  latency: {
+    definition: 'Time for data to travel from source to destination',
+    measurement: 'Milliseconds (ms)',
+    factors: ['Distance', 'Network congestion', 'Processing time'],
+    typical: {
+      sameDatacenter: '< 1ms',
+      sameRegion: '5-20ms',
+      crossContinent: '100-300ms'
+    }
+  },
+  
+  bandwidth: {
+    definition: 'Amount of data that can be transmitted per unit time',
+    measurement: 'Mbps or Gbps',
+    factors: ['Network capacity', 'Congestion', 'Protocol overhead'],
+    typical: {
+      residential: '100 Mbps',
+      business: '1 Gbps',
+      datacenter: '10-100 Gbps'
+    }
+  },
+  
+  throughput: {
+    definition: 'Actual data transfer rate achieved',
+    measurement: 'Mbps',
+    relationship: 'throughput ≤ bandwidth'
+  }
+};
+
+// Measure latency
+async function measureLatency(url) {
+  const start = Date.now();
+  await fetch(url);
+  const latency = Date.now() - start;
+  console.log(`Latency: ${latency}ms`);
+  return latency;
+}
+```
+
+## Content Negotiation
+
+```javascript
+// Server-side content negotiation
+app.get('/api/data', (req, res) => {
+  const acceptHeader = req.headers.accept;
+  
+  if (acceptHeader.includes('application/json')) {
+    res.json({ data: 'JSON response' });
+  } else if (acceptHeader.includes('application/xml')) {
+    res.type('application/xml');
+    res.send('<data>XML response</data>');
+  } else if (acceptHeader.includes('text/html')) {
+    res.send('<html><body>HTML response</body></html>');
+  } else {
+    res.status(406).send('Not Acceptable');
+  }
+});
+
+// Language negotiation
+app.get('/api/content', (req, res) => {
+  const language = req.headers['accept-language'];
+  
+  if (language.includes('es')) {
+    res.json({ message: 'Hola' });
+  } else if (language.includes('fr')) {
+    res.json({ message: 'Bonjour' });
+  } else {
+    res.json({ message: 'Hello' });
+  }
+});
+```
+
+## .NET Networking
+
+```csharp
+using System.Net.Http;
+using System.Net.WebSockets;
+
+public class NetworkingService
+{
+    private readonly HttpClient _httpClient;
+    
+    public NetworkingService(IHttpClientFactory httpClientFactory)
+    {
+        _httpClient = httpClientFactory.CreateClient();
+    }
+    
+    // HTTP request
+    public async Task<string> GetDataAsync(string url)
+    {
+        var response = await _httpClient.GetAsync(url);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadAsStringAsync();
+    }
+    
+    // WebSocket client
+    public async Task ConnectWebSocket(string url)
+    {
+        using var ws = new ClientWebSocket();
+        await ws.ConnectAsync(new Uri(url), CancellationToken.None);
+        
+        var buffer = new byte[1024];
+        while (ws.State == WebSocketState.Open)
+        {
+            var result = await ws.ReceiveAsync(
+                new ArraySegment<byte>(buffer),
+                CancellationToken.None
+            );
+            
+            var message = Encoding.UTF8.GetString(buffer, 0, result.Count);
+            Console.WriteLine($"Received: {message}");
+        }
+    }
+}
+```
+
+## Network Best Practices
+
+```javascript
+const networkingBestPractices = [
+  'Use HTTPS for all communications',
+  'Implement connection pooling',
+  'Set appropriate timeouts',
+  'Handle network errors gracefully',
+  'Use compression (gzip)',
+  'Implement retry logic with exponential backoff',
+  'Use CDN for static assets',
+  'Minimize DNS lookups',
+  'Use HTTP/2 or HTTP/3',
+  'Implement proper CORS policies',
+  'Use WebSockets for real-time communication',
+  'Monitor network performance',
+  'Implement rate limiting',
+  'Use connection keep-alive'
+];
+```
+
+## Interview Tips
+
+- **Explain OSI model**: 7 layers of networking
+- **Show TCP vs UDP**: Connection-oriented vs connectionless
+- **Demonstrate HTTP**: Request/response cycle
+- **Discuss DNS**: Domain name resolution
+- **Mention protocols**: HTTP, HTTPS, WebSocket
+- **Show security**: TLS/SSL, CORS
+
+## Summary
+
+Networking enables communication between systems. OSI model has 7 layers from physical to application. TCP provides reliable, ordered delivery; UDP is faster but unreliable. HTTP is request-response protocol; HTTPS adds TLS encryption. DNS resolves domain names to IP addresses. WebSockets enable bidirectional real-time communication. Use load balancing to distribute traffic. Implement HTTPS, CORS, and rate limiting for security. Monitor latency and bandwidth. Essential for building distributed systems.

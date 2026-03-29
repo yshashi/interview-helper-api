@@ -1,0 +1,60 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Table Splitting in EF Core
+---
+
+# Table Splitting in EF Core
+
+## What is Table Splitting?
+
+**Table splitting** maps multiple entity types to a single database table. It's useful for separating frequently and infrequently accessed data.
+
+## Basic Configuration
+
+```csharp
+public class Order
+{
+    public int Id { get; set; }
+    public DateTime OrderDate { get; set; }
+    public decimal TotalAmount { get; set; }
+    public OrderDetails Details { get; set; }
+}
+
+public class OrderDetails
+{
+    public int Id { get; set; }
+    public string Notes { get; set; }
+    public string InternalComments { get; set; }
+    public Order Order { get; set; }
+}
+
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    modelBuilder.Entity<Order>()
+        .ToTable("Orders");
+    
+    modelBuilder.Entity<OrderDetails>()
+        .ToTable("Orders");
+    
+    modelBuilder.Entity<Order>()
+        .HasOne(o => o.Details)
+        .WithOne(d => d.Order)
+        .HasForeignKey<OrderDetails>(d => d.Id);
+}
+```
+
+## Usage
+
+```csharp
+// Load only main entity
+var order = await context.Orders.FindAsync(id);
+
+// Load with details
+var orderWithDetails = await context.Orders
+    .Include(o => o.Details)
+    .FirstAsync(o => o.Id == id);
+```
+
+## Summary
+
+Table splitting in EF Core maps multiple entities to one table. Configure using ToTable() with same table name and one-to-one relationship. Useful for performance optimization.

@@ -1,0 +1,310 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Distributed Tracing
+---
+
+# Distributed Tracing
+
+## What is Distributed Tracing?
+
+**Distributed Tracing** tracks requests as they flow through multiple microservices, providing visibility into the entire request lifecycle.
+
+## Basic Concepts
+
+### Trace
+Complete journey of a request through the system.
+
+### Span
+Individual operation within a trace.
+
+### Trace ID
+Unique identifier for the entire trace.
+
+### Span ID
+Unique identifier for each span.
+
+## Implementation with OpenTelemetry
+
+```javascript
+const { trace } = require('@opentelemetry/api');
+const { NodeTracerProvider } = require('@opentelemetry/sdk-trace-node');
+const { JaegerExporter } = require('@opentelemetry/exporter-jaeger');
+const { registerInstrumentations } = require('@opentelemetry/instrumentation');
+const { HttpInstrumentation } = require('@opentelemetry/instrumentation-http');
+const { ExpressInstrumentation } = require('@opentelemetry/instrumentation-express');
+
+// Setup tracer
+const provider = new NodeTracerProvider();
+
+const exporter = new JaegerExporter({
+  endpoint: 'http://jaeger:14268/api/traces'
+});
+
+provider.addSpanProcessor(new BatchSpanProcessor(exporter));
+provider.register();
+
+// Auto-instrument HTTP and Express
+registerInstrumentations({
+  instrumentations: [
+    new HttpInstrumentation(),
+    new ExpressInstrumentation()
+  ]
+});
+
+const tracer = trace.getTracer('user-service');
+```
+
+## Creating Spans
+
+```javascript
+// Order Service
+app.post('/orders', async (req, res) => {
+  const span = tracer.startSpan('create-order');
+  
+  try {
+    span.setAttribute('user.id', req.body.userId);
+    span.setAttribute('order.amount', req.body.amount);
+    
+    // Call user service
+    const userSpan = tracer.startSpan('get-user', {
+      parent: span
+    });
+    
+    const user = await axios.get(`http://user-service/users/${req.body.userId}`, {
+      headers: {
+        'traceparent': createTraceParent(userSpan)
+      }
+    });
+    
+    userSpan.end();
+    
+    // Create order
+    const order = await Order.create(req.body);
+    
+    span.setStatus({ code: SpanStatusCode.OK });
+    res.json(order);
+  } catch (error) {
+    span.recordException(error);
+    span.setStatus({ code: SpanStatusCode.ERROR });
+    res.status(500).json({ error: error.message });
+  } finally {
+    span.end();
+  }
+});
+```
+
+## Propagating Context
+
+```javascript
+// Middleware to extract trace context
+app.use((req, res, next) => {
+  const traceparent = req.headers['traceparent'];
+  
+  if (traceparent) {
+    const context = parseTraceParent(traceparent);
+    req.traceContext = context;
+  }
+  
+  next();
+});
+
+// Propagate to downstream services
+async function callService(url, data, traceContext) {
+  return axios.post(url, data, {
+    headers: {
+      'traceparent': createTraceParent(traceContext)
+    }
+  });
+}
+```
+
+## Custom Spans
+
+```javascript
+async function processOrder(orderId) {
+  const span = tracer.startSpan('process-order');
+  
+  try {
+    // Child span for inventory
+    const inventorySpan = tracer.startSpan('check-inventory', {
+      parent: span
+    });
+    
+    await checkInventory(orderId);
+    inventorySpan.end();
+    
+    // Child span for payment
+    const paymentSpan = tracer.startSpan('process-payment', {
+      parent: span
+    });
+    
+    await processPayment(orderId);
+    paymentSpan.end();
+    
+    span.setStatus({ code: SpanStatusCode.OK });
+  } catch (error) {
+    span.recordException(error);
+    span.setStatus({ code: SpanStatusCode.ERROR });
+    throw error;
+  } finally {
+    span.end();
+  }
+}
+```
+
+## Adding Metadata
+
+```javascript
+span.setAttribute('http.method', 'POST');
+span.setAttribute('http.url', '/orders');
+span.setAttribute('http.status_code', 200);
+span.setAttribute('user.id', userId);
+span.setAttribute('order.id', orderId);
+span.setAttribute('order.amount', 99.99);
+
+// Add events
+span.addEvent('Order validated');
+span.addEvent('Payment processed');
+span.addEvent('Order confirmed');
+```
+
+## Jaeger Integration
+
+```javascript
+const { JaegerExporter } = require('@opentelemetry/exporter-jaeger');
+
+const exporter = new JaegerExporter({
+  serviceName: 'order-service',
+  endpoint: 'http://jaeger:14268/api/traces',
+  tags: {
+    'service.version': '1.0.0',
+    'deployment.environment': 'production'
+  }
+});
+```
+
+## Zipkin Integration
+
+```javascript
+const { ZipkinExporter } = require('@opentelemetry/exporter-zipkin');
+
+const exporter = new ZipkinExporter({
+  serviceName: 'order-service',
+  url: 'http://zipkin:9411/api/v2/spans'
+});
+```
+
+## Sampling
+
+```javascript
+const { TraceIdRatioBasedSampler } = require('@opentelemetry/sdk-trace-base');
+
+// Sample 10% of traces
+const provider = new NodeTracerProvider({
+  sampler: new TraceIdRatioBasedSampler(0.1)
+});
+
+// Custom sampler
+class CustomSampler {
+  shouldSample(context, traceId, spanName) {
+    // Always sample errors
+    if (spanName.includes('error')) {
+      return { decision: SamplingDecision.RECORD_AND_SAMPLED };
+    }
+    
+    // Sample 10% of normal requests
+    return Math.random() < 0.1
+      ? { decision: SamplingDecision.RECORD_AND_SAMPLED }
+      : { decision: SamplingDecision.NOT_RECORD };
+  }
+}
+```
+
+## Complete Example
+
+```javascript
+const express = require('express');
+const { trace } = require('@opentelemetry/api');
+const { NodeTracerProvider } = require('@opentelemetry/sdk-trace-node');
+const { JaegerExporter } = require('@opentelemetry/exporter-jaeger');
+
+// Setup
+const provider = new NodeTracerProvider();
+const exporter = new JaegerExporter({
+  endpoint: 'http://jaeger:14268/api/traces'
+});
+
+provider.addSpanProcessor(new BatchSpanProcessor(exporter));
+provider.register();
+
+const tracer = trace.getTracer('order-service');
+const app = express();
+
+// Middleware
+app.use((req, res, next) => {
+  const span = tracer.startSpan(`${req.method} ${req.path}`);
+  
+  req.span = span;
+  
+  res.on('finish', () => {
+    span.setAttribute('http.status_code', res.statusCode);
+    span.end();
+  });
+  
+  next();
+});
+
+// Routes
+app.post('/orders', async (req, res) => {
+  const span = req.span;
+  
+  try {
+    // Trace user service call
+    const userSpan = tracer.startSpan('get-user', { parent: span });
+    const user = await axios.get(`http://user-service/users/${req.body.userId}`);
+    userSpan.end();
+    
+    // Trace order creation
+    const createSpan = tracer.startSpan('create-order', { parent: span });
+    const order = await Order.create(req.body);
+    createSpan.end();
+    
+    res.json(order);
+  } catch (error) {
+    span.recordException(error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.listen(3000);
+```
+
+## Benefits
+
+1. **End-to-End Visibility**: See complete request flow
+2. **Performance Analysis**: Identify bottlenecks
+3. **Error Tracking**: Trace errors to source
+4. **Dependency Mapping**: Understand service relationships
+5. **Latency Analysis**: Find slow operations
+
+## Best Practices
+
+1. **Use consistent trace IDs**
+2. **Add meaningful attributes**
+3. **Sample appropriately**
+4. **Include error details**
+5. **Propagate context**
+6. **Monitor trace volume**
+
+## Interview Tips
+
+- **Explain tracing**: Track requests across services
+- **Show concepts**: Traces, spans, context propagation
+- **Demonstrate tools**: OpenTelemetry, Jaeger, Zipkin
+- **Discuss sampling**: Control trace volume
+- **Mention benefits**: Visibility, debugging, performance
+- **Show metadata**: Attributes and events
+
+## Summary
+
+Distributed Tracing tracks requests across microservices using traces and spans. Implement with OpenTelemetry and export to Jaeger or Zipkin. Propagate trace context between services. Add attributes and events for metadata. Use sampling to control volume. Essential for debugging and performance analysis in distributed systems.

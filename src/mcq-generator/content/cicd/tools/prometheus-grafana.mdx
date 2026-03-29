@@ -1,0 +1,350 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Prometheus and Grafana
+---
+
+# Prometheus and Grafana
+
+## What are Prometheus and Grafana?
+
+**Prometheus** is a monitoring and alerting toolkit that collects metrics. **Grafana** is a visualization platform that creates dashboards from Prometheus data.
+
+## Prometheus Setup
+
+```yaml
+# docker-compose.yml
+version: '3.8'
+
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+
+volumes:
+  prometheus-data:
+```
+
+```yaml
+# prometheus.yml
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'api'
+    static_configs:
+      - targets: ['api:5000']
+  
+  - job_name: 'service'
+    static_configs:
+      - targets: ['service:3000']
+  
+  - job_name: 'frontend'
+    static_configs:
+      - targets: ['frontend:80']
+```
+
+## Instrumenting Applications
+
+### Node.js
+
+```javascript
+const express = require('express');
+const prometheus = require('prom-client');
+
+const app = express();
+const register = new prometheus.Registry();
+
+// Default metrics
+prometheus.collectDefaultMetrics({ register });
+
+// Custom metrics
+const httpRequestDuration = new prometheus.Histogram({
+  name: 'http_request_duration_seconds',
+  help: 'Duration of HTTP requests in seconds',
+  labelNames: ['method', 'route', 'status'],
+  registers: [register]
+});
+
+const httpRequestsTotal = new prometheus.Counter({
+  name: 'http_requests_total',
+  help: 'Total HTTP requests',
+  labelNames: ['method', 'route', 'status'],
+  registers: [register]
+});
+
+// Middleware
+app.use((req, res, next) => {
+  const start = Date.now();
+  
+  res.on('finish', () => {
+    const duration = (Date.now() - start) / 1000;
+    
+    httpRequestDuration.observe({
+      method: req.method,
+      route: req.route?.path || req.path,
+      status: res.statusCode
+    }, duration);
+    
+    httpRequestsTotal.inc({
+      method: req.method,
+      route: req.route?.path || req.path,
+      status: res.statusCode
+    });
+  });
+  
+  next();
+});
+
+// Metrics endpoint
+app.get('/metrics', async (req, res) => {
+  res.set('Content-Type', register.contentType);
+  res.end(await register.metrics());
+});
+
+app.listen(3000);
+```
+
+### .NET
+
+```csharp
+using Prometheus;
+
+public class Startup
+{
+    public void Configure(IApplicationBuilder app)
+    {
+        // Metrics server
+        app.UseMetricServer();
+        
+        // HTTP metrics
+        app.UseHttpMetrics();
+        
+        app.UseRouting();
+        app.UseEndpoints(endpoints =>
+        {
+            endpoints.MapControllers();
+        });
+    }
+}
+
+// Custom metrics
+public class MetricsService
+{
+    private static readonly Counter OrdersProcessed = Metrics
+        .CreateCounter("orders_processed_total", "Total orders processed");
+    
+    private static readonly Histogram OrderProcessingDuration = Metrics
+        .CreateHistogram("order_processing_duration_seconds", "Order processing duration");
+    
+    public async Task ProcessOrder(Order order)
+    {
+        using (OrderProcessingDuration.NewTimer())
+        {
+            await ProcessOrderInternal(order);
+            OrdersProcessed.Inc();
+        }
+    }
+}
+```
+
+## Grafana Setup
+
+```yaml
+# docker-compose.yml
+services:
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+
+volumes:
+  grafana-data:
+```
+
+## Grafana Data Source
+
+```yaml
+# grafana/provisioning/datasources/prometheus.yml
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+```
+
+## Dashboard Configuration
+
+```json
+{
+  "dashboard": {
+    "title": "Application Metrics",
+    "panels": [
+      {
+        "title": "Request Rate",
+        "targets": [{
+          "expr": "rate(http_requests_total[5m])",
+          "legendFormat": "{{method}} {{route}}"
+        }],
+        "type": "graph"
+      },
+      {
+        "title": "Response Time (p95)",
+        "targets": [{
+          "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))",
+          "legendFormat": "{{route}}"
+        }],
+        "type": "graph"
+      },
+      {
+        "title": "Error Rate",
+        "targets": [{
+          "expr": "rate(http_requests_total{status=~\"5..\"}[5m])",
+          "legendFormat": "{{route}}"
+        }],
+        "type": "graph"
+      },
+      {
+        "title": "CPU Usage",
+        "targets": [{
+          "expr": "rate(process_cpu_seconds_total[5m]) * 100"
+        }],
+        "type": "gauge"
+      },
+      {
+        "title": "Memory Usage",
+        "targets": [{
+          "expr": "process_resident_memory_bytes / 1024 / 1024"
+        }],
+        "type": "gauge"
+      }
+    ]
+  }
+}
+```
+
+## Alerting Rules
+
+```yaml
+# prometheus/alerts.yml
+groups:
+  - name: application_alerts
+    rules:
+      - alert: HighErrorRate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is {{ $value }} requests/sec"
+      
+      - alert: HighLatency
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High latency detected"
+          description: "95th percentile latency is {{ $value }}s"
+      
+      - alert: HighMemoryUsage
+        expr: process_resident_memory_bytes / 1024 / 1024 / 1024 > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage is {{ $value }}GB"
+```
+
+## Alertmanager
+
+```yaml
+# alertmanager.yml
+global:
+  resolve_timeout: 5m
+
+route:
+  group_by: ['alertname']
+  group_wait: 10s
+  group_interval: 10s
+  repeat_interval: 1h
+  receiver: 'slack'
+
+receivers:
+  - name: 'slack'
+    slack_configs:
+      - api_url: 'https://hooks.slack.com/services/YOUR/WEBHOOK/URL'
+        channel: '#alerts'
+        title: 'Alert: {{ .GroupLabels.alertname }}'
+        text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+```
+
+## Kubernetes Integration
+
+```yaml
+# ServiceMonitor for Prometheus Operator
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: myapp
+spec:
+  selector:
+    matchLabels:
+      app: myapp
+  endpoints:
+    - port: metrics
+      interval: 30s
+```
+
+## PromQL Queries
+
+```promql
+# Request rate
+rate(http_requests_total[5m])
+
+# Error rate
+rate(http_requests_total{status=~"5.."}[5m])
+
+# 95th percentile latency
+histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))
+
+# CPU usage
+rate(process_cpu_seconds_total[5m]) * 100
+
+# Memory usage
+process_resident_memory_bytes / 1024 / 1024
+
+# Requests per second by route
+sum(rate(http_requests_total[5m])) by (route)
+
+# Success rate
+sum(rate(http_requests_total{status!~"5.."}[5m])) / sum(rate(http_requests_total[5m]))
+```
+
+## Interview Tips
+
+- **Explain Prometheus**: Metrics collection and storage
+- **Show Grafana**: Visualization and dashboards
+- **Demonstrate instrumentation**: Node.js, .NET examples
+- **Discuss PromQL**: Query language
+- **Mention alerting**: Rules and notifications
+- **Show integration**: Kubernetes monitoring
+
+## Summary
+
+Prometheus collects and stores metrics from applications. Grafana visualizes metrics in dashboards. Instrument applications with client libraries. Define alerting rules for critical conditions. Use PromQL for queries. Integrate with Kubernetes for container monitoring. Essential for observability in DevOps.

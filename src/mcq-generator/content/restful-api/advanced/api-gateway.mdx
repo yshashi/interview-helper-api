@@ -1,0 +1,388 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: API Gateway
+---
+
+# API Gateway
+
+## What is an API Gateway?
+
+An **API Gateway** is a server that acts as a single entry point for all client requests, routing them to appropriate microservices and handling cross-cutting concerns.
+
+## Key Functions
+
+1. **Routing**: Direct requests to services
+2. **Authentication**: Verify user identity
+3. **Rate Limiting**: Control request frequency
+4. **Load Balancing**: Distribute traffic
+5. **Caching**: Store responses
+6. **Logging**: Track requests
+7. **Transformation**: Modify requests/responses
+
+## Architecture
+
+```
+┌────────┐
+│ Client │
+└───┬────┘
+    │
+    ▼
+┌─────────────┐
+│ API Gateway │
+└──┬──┬──┬───┘
+   │  │  │
+   ▼  ▼  ▼
+┌───┐┌───┐┌───┐
+│MS1││MS2││MS3│
+└───┘└───┘└───┘
+```
+
+## Node.js Implementation
+
+```javascript
+const express = require('express');
+const { createProxyMiddleware } = require('http-proxy-middleware');
+
+const app = express();
+
+// Authentication middleware
+const authenticate = (req, res, next) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  // Verify token
+  next();
+};
+
+// Rate limiting
+const rateLimit = require('express-rate-limit');
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100
+});
+
+// Routing to microservices
+app.use('/api/users', authenticate, limiter, createProxyMiddleware({
+  target: 'http://user-service:3001',
+  changeOrigin: true,
+  pathRewrite: { '^/api/users': '' }
+}));
+
+app.use('/api/orders', authenticate, limiter, createProxyMiddleware({
+  target: 'http://order-service:3002',
+  changeOrigin: true,
+  pathRewrite: { '^/api/orders': '' }
+}));
+
+app.use('/api/products', limiter, createProxyMiddleware({
+  target: 'http://product-service:3003',
+  changeOrigin: true,
+  pathRewrite: { '^/api/products': '' }
+}));
+
+app.listen(3000);
+```
+
+## .NET Implementation (Ocelot)
+
+```json
+// ocelot.json
+{
+  "Routes": [
+    {
+      "DownstreamPathTemplate": "/api/users/{everything}",
+      "DownstreamScheme": "http",
+      "DownstreamHostAndPorts": [
+        { "Host": "user-service", "Port": 3001 }
+      ],
+      "UpstreamPathTemplate": "/api/users/{everything}",
+      "UpstreamHttpMethod": [ "GET", "POST", "PUT", "DELETE" ],
+      "AuthenticationOptions": {
+        "AuthenticationProviderKey": "Bearer"
+      },
+      "RateLimitOptions": {
+        "EnableRateLimiting": true,
+        "Period": "1m",
+        "Limit": 100
+      }
+    },
+    {
+      "DownstreamPathTemplate": "/api/orders/{everything}",
+      "DownstreamScheme": "http",
+      "DownstreamHostAndPorts": [
+        { "Host": "order-service", "Port": 3002 }
+      ],
+      "UpstreamPathTemplate": "/api/orders/{everything}",
+      "UpstreamHttpMethod": [ "GET", "POST", "PUT", "DELETE" ],
+      "AuthenticationOptions": {
+        "AuthenticationProviderKey": "Bearer"
+      }
+    }
+  ],
+  "GlobalConfiguration": {
+    "BaseUrl": "http://localhost:3000"
+  }
+}
+```
+
+```csharp
+// Program.cs
+builder.Configuration.AddJsonFile("ocelot.json");
+builder.Services.AddOcelot();
+
+app.UseOcelot().Wait();
+```
+
+## Request Aggregation
+
+```javascript
+// Combine multiple service calls
+app.get('/api/user-dashboard/:userId', async (req, res) => {
+  try {
+    const [user, orders, preferences] = await Promise.all([
+      fetch(`http://user-service:3001/users/${req.params.userId}`),
+      fetch(`http://order-service:3002/orders?userId=${req.params.userId}`),
+      fetch(`http://preference-service:3003/preferences/${req.params.userId}`)
+    ]);
+    
+    res.json({
+      user: await user.json(),
+      orders: await orders.json(),
+      preferences: await preferences.json()
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch dashboard data' });
+  }
+});
+```
+
+## Load Balancing
+
+```javascript
+const services = {
+  users: [
+    'http://user-service-1:3001',
+    'http://user-service-2:3001',
+    'http://user-service-3:3001'
+  ]
+};
+
+let currentIndex = 0;
+
+function getNextService(serviceName) {
+  const instances = services[serviceName];
+  const service = instances[currentIndex % instances.length];
+  currentIndex++;
+  return service;
+}
+
+app.use('/api/users', (req, res, next) => {
+  const target = getNextService('users');
+  createProxyMiddleware({
+    target,
+    changeOrigin: true
+  })(req, res, next);
+});
+```
+
+## Circuit Breaker
+
+```javascript
+const CircuitBreaker = require('opossum');
+
+const options = {
+  timeout: 3000,
+  errorThresholdPercentage: 50,
+  resetTimeout: 30000
+};
+
+const userServiceCall = async (url) => {
+  const response = await fetch(url);
+  return response.json();
+};
+
+const breaker = new CircuitBreaker(userServiceCall, options);
+
+breaker.on('open', () => {
+  console.log('Circuit breaker opened');
+});
+
+app.get('/api/users/:id', async (req, res) => {
+  try {
+    const user = await breaker.fire(`http://user-service:3001/users/${req.params.id}`);
+    res.json(user);
+  } catch (error) {
+    res.status(503).json({ error: 'Service unavailable' });
+  }
+});
+```
+
+## Request/Response Transformation
+
+```javascript
+// Transform request
+app.use('/api/legacy', (req, res, next) => {
+  // Transform old format to new format
+  if (req.body.user_name) {
+    req.body.userName = req.body.user_name;
+    delete req.body.user_name;
+  }
+  next();
+});
+
+// Transform response
+app.use('/api/users', createProxyMiddleware({
+  target: 'http://user-service:3001',
+  onProxyRes: (proxyRes, req, res) => {
+    let body = '';
+    proxyRes.on('data', (chunk) => {
+      body += chunk;
+    });
+    
+    proxyRes.on('end', () => {
+      const data = JSON.parse(body);
+      // Transform response
+      const transformed = {
+        ...data,
+        fullName: `${data.firstName} ${data.lastName}`
+      };
+      res.json(transformed);
+    });
+  }
+}));
+```
+
+## Service Discovery
+
+```javascript
+const Consul = require('consul');
+const consul = new Consul();
+
+async function getServiceUrl(serviceName) {
+  const services = await consul.health.service({
+    service: serviceName,
+    passing: true
+  });
+  
+  if (services.length === 0) {
+    throw new Error(`No healthy instances of ${serviceName}`);
+  }
+  
+  const service = services[Math.floor(Math.random() * services.length)];
+  return `http://${service.Service.Address}:${service.Service.Port}`;
+}
+
+app.use('/api/users', async (req, res, next) => {
+  try {
+    const target = await getServiceUrl('user-service');
+    createProxyMiddleware({
+      target,
+      changeOrigin: true
+    })(req, res, next);
+  } catch (error) {
+    res.status(503).json({ error: 'Service unavailable' });
+  }
+});
+```
+
+## Caching at Gateway
+
+```javascript
+const redis = require('redis');
+const client = redis.createClient();
+
+app.get('/api/products', async (req, res) => {
+  const cacheKey = `products:${JSON.stringify(req.query)}`;
+  
+  // Check cache
+  const cached = await client.get(cacheKey);
+  if (cached) {
+    return res.json(JSON.parse(cached));
+  }
+  
+  // Fetch from service
+  const response = await fetch(`http://product-service:3003/products?${new URLSearchParams(req.query)}`);
+  const data = await response.json();
+  
+  // Cache for 5 minutes
+  await client.setex(cacheKey, 300, JSON.stringify(data));
+  
+  res.json(data);
+});
+```
+
+## API Gateway Patterns
+
+### 1. Backend for Frontend (BFF)
+
+```javascript
+// Mobile API Gateway
+app.use('/mobile/api', createProxyMiddleware({
+  target: 'http://mobile-bff:3001',
+  changeOrigin: true
+}));
+
+// Web API Gateway
+app.use('/web/api', createProxyMiddleware({
+  target: 'http://web-bff:3002',
+  changeOrigin: true
+}));
+```
+
+### 2. GraphQL Gateway
+
+```javascript
+const { ApolloServer } = require('apollo-server-express');
+const { ApolloGateway } = require('@apollo/gateway');
+
+const gateway = new ApolloGateway({
+  serviceList: [
+    { name: 'users', url: 'http://user-service:3001/graphql' },
+    { name: 'orders', url: 'http://order-service:3002/graphql' }
+  ]
+});
+
+const server = new ApolloServer({ gateway });
+server.applyMiddleware({ app });
+```
+
+## Logging and Monitoring
+
+```javascript
+const winston = require('winston');
+
+const logger = winston.createLogger({
+  transports: [new winston.transports.Console()]
+});
+
+app.use((req, res, next) => {
+  const start = Date.now();
+  
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    logger.info({
+      method: req.method,
+      path: req.path,
+      statusCode: res.statusCode,
+      duration,
+      timestamp: new Date().toISOString()
+    });
+  });
+  
+  next();
+});
+```
+
+## Interview Tips
+
+- **Explain API Gateway**: Single entry point for microservices
+- **Show routing**: Direct requests to services
+- **Demonstrate features**: Auth, rate limiting, caching
+- **Discuss patterns**: BFF, aggregation
+- **Mention tools**: Ocelot, Kong, AWS API Gateway
+- **Show implementation**: Node.js, .NET examples
+
+## Summary
+
+API Gateway provides single entry point for microservices architecture. Handles routing, authentication, rate limiting, load balancing, and caching. Aggregates multiple service calls. Implements circuit breaker for resilience. Transforms requests and responses. Integrates with service discovery. Essential for microservices-based REST APIs.

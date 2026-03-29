@@ -1,0 +1,329 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Version Control
+---
+
+# Version Control
+
+## What is Version Control?
+
+**Version Control** (also known as source control) is a system that records changes to files over time, allowing you to recall specific versions later.
+
+## Git Basics
+
+```bash
+# Initialize repository
+git init
+
+# Clone repository
+git clone https://github.com/user/repo.git
+
+# Check status
+git status
+
+# Add files
+git add .
+git add file.js
+
+# Commit changes
+git commit -m "Add new feature"
+
+# Push to remote
+git push origin main
+
+# Pull latest changes
+git pull origin main
+```
+
+## Branching Strategy
+
+### Git Flow
+
+```bash
+# Main branches
+main (production)
+develop (integration)
+
+# Supporting branches
+feature/user-authentication
+hotfix/critical-bug
+release/v1.2.0
+
+# Create feature branch
+git checkout -b feature/user-auth develop
+
+# Work on feature
+git add .
+git commit -m "Implement user authentication"
+
+# Merge to develop
+git checkout develop
+git merge feature/user-auth
+
+# Delete feature branch
+git branch -d feature/user-auth
+```
+
+### Trunk-Based Development
+
+```bash
+# Single main branch
+main
+
+# Short-lived feature branches
+git checkout -b feature/quick-fix
+# Work for < 1 day
+git push origin feature/quick-fix
+# Create PR and merge quickly
+```
+
+## Multi-Stack Examples
+
+### Angular Project
+
+```bash
+# .gitignore for Angular
+node_modules/
+dist/
+.angular/
+*.log
+.env
+
+# Commit Angular changes
+git add src/app/
+git commit -m "feat: add user dashboard component"
+git push origin feature/dashboard
+```
+
+### .NET Project
+
+```bash
+# .gitignore for .NET
+bin/
+obj/
+*.user
+*.suo
+appsettings.Development.json
+
+# Commit .NET changes
+git add Controllers/
+git commit -m "feat: add user controller"
+git push origin feature/user-api
+```
+
+### Node.js Project
+
+```bash
+# .gitignore for Node.js
+node_modules/
+.env
+*.log
+dist/
+
+# Commit Node.js changes
+git add src/
+git commit -m "feat: add authentication middleware"
+git push origin feature/auth
+```
+
+## Commit Messages
+
+### Conventional Commits
+
+```bash
+# Format: <type>(<scope>): <subject>
+
+# Types
+feat: New feature
+fix: Bug fix
+docs: Documentation
+style: Formatting
+refactor: Code restructuring
+test: Adding tests
+chore: Maintenance
+
+# Examples
+git commit -m "feat(auth): add JWT authentication"
+git commit -m "fix(api): resolve null pointer exception"
+git commit -m "docs(readme): update installation steps"
+git commit -m "test(user): add unit tests for user service"
+```
+
+## Pull Requests
+
+```yaml
+# .github/pull_request_template.md
+## Description
+Brief description of changes
+
+## Type of Change
+- [ ] Bug fix
+- [ ] New feature
+- [ ] Breaking change
+- [ ] Documentation update
+
+## Testing
+- [ ] Unit tests pass
+- [ ] Integration tests pass
+- [ ] Manual testing completed
+
+## Checklist
+- [ ] Code follows style guidelines
+- [ ] Self-review completed
+- [ ] Comments added for complex code
+- [ ] Documentation updated
+```
+
+## Code Review
+
+```bash
+# Review process
+1. Create feature branch
+2. Make changes
+3. Push to remote
+4. Create pull request
+5. Code review
+6. Address feedback
+7. Approve and merge
+
+# GitHub CLI for reviews
+gh pr create --title "Add user authentication"
+gh pr review --approve
+gh pr merge
+```
+
+## Merge Strategies
+
+### Merge Commit
+
+```bash
+git checkout main
+git merge feature/new-feature
+# Creates merge commit
+```
+
+### Squash and Merge
+
+```bash
+git checkout main
+git merge --squash feature/new-feature
+git commit -m "feat: add new feature"
+# Combines all commits into one
+```
+
+### Rebase and Merge
+
+```bash
+git checkout feature/new-feature
+git rebase main
+git checkout main
+git merge feature/new-feature
+# Linear history
+```
+
+## Tagging Releases
+
+```bash
+# Create tag
+git tag -a v1.0.0 -m "Release version 1.0.0"
+
+# Push tags
+git push origin v1.0.0
+git push origin --tags
+
+# List tags
+git tag -l
+
+# Checkout tag
+git checkout v1.0.0
+```
+
+## Handling Conflicts
+
+```bash
+# When merge conflict occurs
+git pull origin main
+# CONFLICT in file.js
+
+# Edit file.js to resolve conflicts
+<<<<<<< HEAD
+const version = '1.0.0';
+=======
+const version = '2.0.0';
+>>>>>>> feature/update-version
+
+# Resolve to:
+const version = '2.0.0';
+
+# Mark as resolved
+git add file.js
+git commit -m "resolve: merge conflict in version"
+```
+
+## Git Hooks
+
+```bash
+# .git/hooks/pre-commit
+#!/bin/sh
+npm run lint
+npm test
+
+# Make executable
+chmod +x .git/hooks/pre-commit
+
+# Using Husky
+npm install husky --save-dev
+npx husky install
+
+# .husky/pre-commit
+#!/bin/sh
+npm run lint
+npm test
+```
+
+## Monorepo Management
+
+```bash
+# Structure
+project/
+├── apps/
+│   ├── angular-app/
+│   ├── api/
+│   └── admin/
+├── libs/
+│   ├── shared/
+│   └── ui/
+└── package.json
+
+# Commit specific app
+git add apps/angular-app/
+git commit -m "feat(angular): add dashboard"
+
+# Commit shared library
+git add libs/shared/
+git commit -m "feat(shared): add validation utils"
+```
+
+## Best Practices
+
+1. **Commit often**: Small, focused commits
+2. **Write clear messages**: Descriptive commit messages
+3. **Use branches**: Feature branches for development
+4. **Review code**: Pull request reviews
+5. **Keep history clean**: Rebase or squash when appropriate
+6. **Tag releases**: Version your releases
+7. **Protect main**: Branch protection rules
+8. **Use .gitignore**: Exclude unnecessary files
+
+## Interview Tips
+
+- **Explain version control**: Track changes over time
+- **Show Git commands**: Basic workflow
+- **Demonstrate branching**: Git Flow, trunk-based
+- **Discuss commits**: Conventional commits format
+- **Mention strategies**: Merge, squash, rebase
+- **Show multi-stack**: Angular, .NET, Node.js examples
+
+## Summary
+
+Version Control tracks code changes over time using systems like Git. Use branching strategies like Git Flow or trunk-based development. Write clear commit messages following conventions. Use pull requests for code review. Apply appropriate merge strategies. Tag releases for versioning. Essential foundation for CI/CD and team collaboration.

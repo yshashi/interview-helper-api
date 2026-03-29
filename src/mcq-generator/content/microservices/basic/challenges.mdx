@@ -1,0 +1,339 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Challenges of Microservices
+---
+
+# Challenges of Microservices
+
+## 1. Distributed System Complexity
+
+Managing multiple services increases operational complexity.
+
+```javascript
+// Multiple services to manage
+const services = [
+  'user-service:3001',
+  'order-service:3002',
+  'product-service:3003',
+  'payment-service:3004',
+  'notification-service:3005',
+  'analytics-service:3006'
+];
+
+// Each service needs:
+// - Deployment
+// - Monitoring
+// - Logging
+// - Health checks
+// - Configuration
+```
+
+## 2. Data Consistency
+
+Maintaining consistency across distributed databases.
+
+```javascript
+// Problem: Distributed transaction
+async function createOrder(orderData) {
+  // Step 1: Reserve inventory (Product Service)
+  await productService.reserveInventory(orderData.productId);
+  
+  // Step 2: Process payment (Payment Service)
+  await paymentService.charge(orderData.amount);
+  
+  // Step 3: Create order (Order Service)
+  await orderService.create(orderData);
+  
+  // What if payment fails after inventory is reserved?
+  // What if order creation fails after payment?
+}
+
+// Solution: Saga Pattern
+class OrderSaga {
+  async execute(orderData) {
+    try {
+      const inventory = await this.reserveInventory(orderData);
+      const payment = await this.processPayment(orderData);
+      const order = await this.createOrder(orderData);
+      return order;
+    } catch (error) {
+      await this.compensate(orderData);
+      throw error;
+    }
+  }
+  
+  async compensate(orderData) {
+    await this.releaseInventory(orderData);
+    await this.refundPayment(orderData);
+  }
+}
+```
+
+## 3. Network Latency
+
+Inter-service communication adds latency.
+
+```javascript
+// Multiple network calls
+async function getOrderDetails(orderId) {
+  const order = await orderService.get(orderId);        // 50ms
+  const user = await userService.get(order.userId);     // 50ms
+  const product = await productService.get(order.productId); // 50ms
+  const payment = await paymentService.get(order.paymentId); // 50ms
+  
+  // Total: 200ms vs 10ms in monolith
+  return { order, user, product, payment };
+}
+
+// Solution: Caching
+const cache = new Map();
+
+async function getOrderDetails(orderId) {
+  const cacheKey = `order:${orderId}`;
+  
+  if (cache.has(cacheKey)) {
+    return cache.get(cacheKey);
+  }
+  
+  const details = await fetchOrderDetails(orderId);
+  cache.set(cacheKey, details);
+  return details;
+}
+```
+
+## 4. Testing Complexity
+
+Integration testing requires multiple services.
+
+```javascript
+// Unit test - Easy
+describe('OrderService', () => {
+  it('creates order', async () => {
+    const order = await orderService.create(orderData);
+    expect(order.id).toBeDefined();
+  });
+});
+
+// Integration test - Complex
+describe('Order Flow', () => {
+  beforeAll(async () => {
+    await startUserService();
+    await startProductService();
+    await startPaymentService();
+    await startOrderService();
+  });
+  
+  it('completes order', async () => {
+    const user = await createUser();
+    const product = await createProduct();
+    const order = await placeOrder(user.id, product.id);
+    expect(order.status).toBe('completed');
+  });
+});
+```
+
+## 5. Deployment Complexity
+
+Managing deployments across services.
+
+```yaml
+# Multiple deployment configurations
+# user-service.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-service
+spec:
+  replicas: 3
+
+# order-service.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-service
+spec:
+  replicas: 5
+
+# Need to manage:
+# - Version compatibility
+# - Rolling updates
+# - Rollback strategies
+# - Configuration management
+```
+
+## 6. Monitoring & Debugging
+
+Tracking issues across distributed services.
+
+```javascript
+// Request spans multiple services
+// How to trace this flow?
+
+Client Request
+  → API Gateway (trace-id: abc123)
+    → User Service (trace-id: abc123)
+    → Order Service (trace-id: abc123)
+      → Payment Service (trace-id: abc123)
+      → Inventory Service (trace-id: abc123)
+
+// Solution: Distributed Tracing
+const { trace } = require('@opentelemetry/api');
+
+app.use((req, res, next) => {
+  const span = trace.getTracer('order-service').startSpan('process-order');
+  req.span = span;
+  
+  res.on('finish', () => {
+    span.end();
+  });
+  
+  next();
+});
+```
+
+## 7. Service Discovery
+
+Services need to find each other dynamically.
+
+```javascript
+// Problem: Hardcoded URLs
+const userServiceUrl = 'http://user-service:3001';
+
+// Solution: Service Discovery
+const consul = require('consul')();
+
+async function getUserService() {
+  const services = await consul.health.service('user-service');
+  const service = services[0].Service;
+  return `http://${service.Address}:${service.Port}`;
+}
+```
+
+## 8. Data Duplication
+
+Same data may exist in multiple services.
+
+```javascript
+// User data in multiple services
+// User Service
+{
+  id: 1,
+  name: 'John',
+  email: 'john@example.com',
+  address: '123 Main St'
+}
+
+// Order Service (duplicated)
+{
+  orderId: 100,
+  userId: 1,
+  userName: 'John',  // Duplicated
+  userEmail: 'john@example.com'  // Duplicated
+}
+
+// What if user updates email?
+// Need to sync across services
+```
+
+## 9. Security Challenges
+
+Securing inter-service communication.
+
+```javascript
+// Each service needs authentication
+app.use((req, res, next) => {
+  const token = req.headers.authorization;
+  
+  if (!token) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  
+  // Verify token
+  const user = verifyToken(token);
+  req.user = user;
+  next();
+});
+
+// Service-to-service authentication
+const serviceToken = generateServiceToken();
+await axios.get('http://user-service/users/1', {
+  headers: { 'X-Service-Token': serviceToken }
+});
+```
+
+## 10. Operational Overhead
+
+More services = more operational work.
+
+```
+Per Service:
+- CI/CD pipeline
+- Monitoring dashboards
+- Log aggregation
+- Alerting rules
+- Documentation
+- Health checks
+- Backup strategies
+- Security patches
+
+10 services = 10x operational work
+```
+
+## Mitigation Strategies
+
+### 1. Use API Gateway
+```javascript
+// Centralize routing and authentication
+const gateway = express();
+
+gateway.use('/users', proxy('http://user-service'));
+gateway.use('/orders', proxy('http://order-service'));
+gateway.use('/products', proxy('http://product-service'));
+```
+
+### 2. Implement Circuit Breakers
+```javascript
+const breaker = new CircuitBreaker(callService, {
+  timeout: 3000,
+  errorThresholdPercentage: 50
+});
+```
+
+### 3. Use Containerization
+```dockerfile
+# Standardize deployments
+FROM node:18
+WORKDIR /app
+COPY package*.json ./
+RUN npm install
+COPY . .
+CMD ["npm", "start"]
+```
+
+### 4. Centralized Logging
+```javascript
+const winston = require('winston');
+
+const logger = winston.createLogger({
+  transports: [
+    new winston.transports.Console(),
+    new winston.transports.Http({
+      host: 'log-aggregator',
+      port: 9200
+    })
+  ]
+});
+```
+
+## Interview Tips
+
+- **Explain complexity**: Distributed systems are harder
+- **Show data consistency**: Saga pattern solution
+- **Demonstrate monitoring**: Distributed tracing
+- **Discuss testing**: Integration test challenges
+- **Mention mitigation**: API Gateway, Circuit Breaker
+- **Be honest**: Acknowledge trade-offs
+
+## Summary
+
+Microservices introduce challenges including distributed system complexity, data consistency issues, network latency, testing difficulty, and operational overhead. Solutions include using API Gateways, implementing circuit breakers, distributed tracing, and standardizing with containers. Understanding these challenges is crucial for successful microservices adoption.

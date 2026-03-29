@@ -1,0 +1,390 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: GraphQL vs REST
+---
+
+# GraphQL vs REST
+
+## Comparison Overview
+
+| Aspect | REST | GraphQL |
+|--------|------|---------|
+| **Data Fetching** | Multiple endpoints | Single endpoint |
+| **Over-fetching** | Common | Eliminated |
+| **Under-fetching** | Requires multiple requests | Single request |
+| **Versioning** | URL versioning | Schema evolution |
+| **Caching** | HTTP caching | Complex |
+| **Learning Curve** | Lower | Higher |
+| **Tooling** | Mature | Growing |
+
+## REST Example
+
+```javascript
+// Multiple requests needed
+GET /api/users/123
+{
+  "id": "123",
+  "name": "John Doe",
+  "email": "john@example.com"
+}
+
+GET /api/users/123/orders
+[
+  { "id": "789", "total": 99.99 },
+  { "id": "790", "total": 149.99 }
+]
+
+GET /api/orders/789/items
+[
+  { "id": "1", "name": "Product A", "price": 49.99 },
+  { "id": "2", "name": "Product B", "price": 50.00 }
+]
+
+// Over-fetching: Getting all user fields when only need name
+```
+
+## GraphQL Example
+
+```graphql
+# Single request
+query {
+  user(id: "123") {
+    name
+    orders {
+      id
+      total
+      items {
+        name
+        price
+      }
+    }
+  }
+}
+
+# Response - exactly what was requested
+{
+  "data": {
+    "user": {
+      "name": "John Doe",
+      "orders": [
+        {
+          "id": "789",
+          "total": 99.99,
+          "items": [
+            { "name": "Product A", "price": 49.99 },
+            { "name": "Product B", "price": 50.00 }
+          ]
+        }
+      ]
+    }
+  }
+}
+```
+
+## GraphQL Server (Node.js)
+
+```javascript
+const { ApolloServer, gql } = require('apollo-server-express');
+
+const typeDefs = gql`
+  type User {
+    id: ID!
+    name: String!
+    email: String!
+    orders: [Order!]!
+  }
+  
+  type Order {
+    id: ID!
+    total: Float!
+    items: [OrderItem!]!
+  }
+  
+  type OrderItem {
+    id: ID!
+    name: String!
+    price: Float!
+  }
+  
+  type Query {
+    user(id: ID!): User
+    users: [User!]!
+  }
+  
+  type Mutation {
+    createUser(name: String!, email: String!): User!
+    updateUser(id: ID!, name: String, email: String): User!
+  }
+`;
+
+const resolvers = {
+  Query: {
+    user: async (_, { id }) => {
+      return await User.findById(id);
+    },
+    users: async () => {
+      return await User.find();
+    }
+  },
+  
+  User: {
+    orders: async (user) => {
+      return await Order.find({ userId: user.id });
+    }
+  },
+  
+  Order: {
+    items: async (order) => {
+      return await OrderItem.find({ orderId: order.id });
+    }
+  },
+  
+  Mutation: {
+    createUser: async (_, { name, email }) => {
+      return await User.create({ name, email });
+    },
+    updateUser: async (_, { id, name, email }) => {
+      return await User.findByIdAndUpdate(id, { name, email }, { new: true });
+    }
+  }
+};
+
+const server = new ApolloServer({ typeDefs, resolvers });
+server.applyMiddleware({ app });
+```
+
+## GraphQL Client (Angular)
+
+```typescript
+import { Apollo, gql } from 'apollo-angular';
+
+@Injectable()
+export class UserService {
+  constructor(private apollo: Apollo) {}
+  
+  getUser(id: string) {
+    return this.apollo.query({
+      query: gql`
+        query GetUser($id: ID!) {
+          user(id: $id) {
+            name
+            email
+            orders {
+              id
+              total
+              items {
+                name
+                price
+              }
+            }
+          }
+        }
+      `,
+      variables: { id }
+    });
+  }
+  
+  createUser(name: string, email: string) {
+    return this.apollo.mutate({
+      mutation: gql`
+        mutation CreateUser($name: String!, $email: String!) {
+          createUser(name: $name, email: $email) {
+            id
+            name
+            email
+          }
+        }
+      `,
+      variables: { name, email }
+    });
+  }
+}
+```
+
+## When to Use REST
+
+```
+✅ Use REST when:
+- Simple CRUD operations
+- Public APIs with broad compatibility
+- Caching is critical
+- Team familiar with REST
+- Microservices architecture
+- File uploads/downloads
+
+Examples:
+- Public APIs (Twitter, GitHub)
+- Simple mobile apps
+- Microservices communication
+- File storage services
+```
+
+## When to Use GraphQL
+
+```
+✅ Use GraphQL when:
+- Complex data requirements
+- Multiple client types (web, mobile)
+- Frequent schema changes
+- Need to minimize requests
+- Real-time data (subscriptions)
+- Developer experience priority
+
+Examples:
+- Facebook, GitHub (internal)
+- Mobile apps with limited bandwidth
+- Dashboards with complex data
+- Real-time applications
+```
+
+## REST Advantages
+
+```javascript
+// 1. HTTP Caching
+GET /api/users/123
+Cache-Control: public, max-age=300
+
+// 2. Simple to understand
+GET    /api/users      - List users
+POST   /api/users      - Create user
+GET    /api/users/123  - Get user
+PUT    /api/users/123  - Update user
+DELETE /api/users/123  - Delete user
+
+// 3. Stateless
+// Each request is independent
+
+// 4. Mature tooling
+// Postman, Swagger, curl
+
+// 5. Multiple formats
+// JSON, XML, HTML
+```
+
+## GraphQL Advantages
+
+```graphql
+# 1. Single request for complex data
+query {
+  user(id: "123") {
+    name
+    posts {
+      title
+      comments {
+        text
+        author {
+          name
+        }
+      }
+    }
+  }
+}
+
+# 2. No over-fetching
+query {
+  user(id: "123") {
+    name  # Only get name, not all fields
+  }
+}
+
+# 3. Strong typing
+type User {
+  id: ID!
+  name: String!
+  email: String!
+}
+
+# 4. Real-time subscriptions
+subscription {
+  messageAdded {
+    id
+    text
+    author {
+      name
+    }
+  }
+}
+
+# 5. Introspection
+query {
+  __schema {
+    types {
+      name
+    }
+  }
+}
+```
+
+## Hybrid Approach
+
+```javascript
+// Use REST for simple operations
+app.get('/api/users', async (req, res) => {
+  const users = await User.find();
+  res.json(users);
+});
+
+// Use GraphQL for complex queries
+const server = new ApolloServer({ typeDefs, resolvers });
+server.applyMiddleware({ app, path: '/graphql' });
+
+// Client chooses based on need
+// Simple: GET /api/users
+// Complex: POST /graphql with query
+```
+
+## Performance Comparison
+
+```javascript
+// REST - 3 requests
+GET /api/users/123           // 50ms
+GET /api/users/123/orders    // 100ms
+GET /api/orders/789/items    // 80ms
+// Total: 230ms (sequential)
+
+// GraphQL - 1 request
+POST /graphql
+query { user(id: "123") { ... } }
+// Total: 150ms (parallel resolution)
+
+// But GraphQL has overhead:
+// - Query parsing
+// - Resolver execution
+// - No HTTP caching
+```
+
+## Migration Strategy
+
+```javascript
+// 1. Start with REST
+app.get('/api/users', getUsers);
+app.post('/api/users', createUser);
+
+// 2. Add GraphQL endpoint
+app.use('/graphql', graphqlHTTP({ schema, rootValue: resolvers }));
+
+// 3. Gradually migrate complex queries
+// Keep REST for simple CRUD
+// Use GraphQL for complex data fetching
+
+// 4. Deprecate REST endpoints when ready
+app.get('/api/users', (req, res) => {
+  res.status(410).json({
+    error: 'This endpoint is deprecated. Use GraphQL instead.',
+    graphqlEndpoint: '/graphql'
+  });
+});
+```
+
+## Interview Tips
+
+- **Explain differences**: Multiple endpoints vs single endpoint
+- **Show examples**: REST and GraphQL queries
+- **Discuss trade-offs**: Caching, complexity, learning curve
+- **Mention use cases**: When to use each
+- **Demonstrate implementation**: Node.js, Angular
+- **Show hybrid**: Can use both together
+
+## Summary
+
+REST uses multiple endpoints with fixed responses. GraphQL uses single endpoint with flexible queries. REST better for simple CRUD, caching, and public APIs. GraphQL better for complex data requirements, mobile apps, and real-time updates. REST has mature tooling and lower learning curve. GraphQL eliminates over-fetching and under-fetching. Can use both in hybrid approach. Choose based on specific requirements.

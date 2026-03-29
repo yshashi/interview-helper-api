@@ -1,0 +1,622 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Caching Strategies
+---
+
+# Caching Strategies
+
+## What is Caching?
+
+Caching is a technique to store frequently accessed data in a fast-access storage layer (cache) to reduce latency and database load. A cache hit returns data from cache, while a cache miss requires fetching from the original source.
+
+## Cache Levels
+
+```javascript
+const cacheLevels = {
+  browser: {
+    location: 'Client browser',
+    examples: ['LocalStorage', 'SessionStorage', 'IndexedDB'],
+    ttl: 'Hours to days',
+    scope: 'Single user'
+  },
+  
+  cdn: {
+    location: 'Edge servers',
+    examples: ['CloudFront', 'Cloudflare', 'Akamai'],
+    ttl: 'Minutes to hours',
+    scope: 'Geographic region'
+  },
+  
+  application: {
+    location: 'Application server',
+    examples: ['In-memory cache', 'Redis', 'Memcached'],
+    ttl: 'Seconds to minutes',
+    scope: 'All users'
+  },
+  
+  database: {
+    location: 'Database server',
+    examples: ['Query cache', 'Buffer pool'],
+    ttl: 'Milliseconds to seconds',
+    scope: 'Database queries'
+  }
+};
+```
+
+## Caching Strategies
+
+### 1. Cache-Aside (Lazy Loading)
+
+```javascript
+class CacheAsideStrategy {
+  constructor(cache, database) {
+    this.cache = cache;
+    this.database = database;
+  }
+  
+  async getData(key) {
+    // Try cache first
+    let data = await this.cache.get(key);
+    
+    if (data) {
+      console.log('Cache hit');
+      return JSON.parse(data);
+    }
+    
+    console.log('Cache miss');
+    // Load from database
+    data = await this.database.query(`SELECT * FROM data WHERE id = '${key}'`);
+    
+    if (data) {
+      // Store in cache for future requests
+      await this.cache.setEx(key, 300, JSON.stringify(data));
+    }
+    
+    return data;
+  }
+  
+  async updateData(key, value) {
+    // Update database
+    await this.database.query(`UPDATE data SET value = '${value}' WHERE id = '${key}'`);
+    
+    // Invalidate cache
+    await this.cache.del(key);
+  }
+}
+```
+
+### 2. Write-Through Cache
+
+```javascript
+class WriteThroughCache {
+  constructor(cache, database) {
+    this.cache = cache;
+    this.database = database;
+  }
+  
+  async getData(key) {
+    // Read from cache
+    const data = await this.cache.get(key);
+    return data ? JSON.parse(data) : null;
+  }
+  
+  async setData(key, value) {
+    // Write to database first
+    await this.database.query(`INSERT INTO data VALUES ('${key}', '${value}')`);
+    
+    // Then write to cache
+    await this.cache.setEx(key, 300, JSON.stringify(value));
+    
+    return value;
+  }
+}
+```
+
+### 3. Write-Behind (Write-Back) Cache
+
+```javascript
+class WriteBehindCache {
+  constructor(cache, database) {
+    this.cache = cache;
+    this.database = database;
+    this.writeQueue = [];
+    this.flushInterval = 5000; // 5 seconds
+    
+    this.startFlushTimer();
+  }
+  
+  async getData(key) {
+    const data = await this.cache.get(key);
+    return data ? JSON.parse(data) : null;
+  }
+  
+  async setData(key, value) {
+    // Write to cache immediately
+    await this.cache.setEx(key, 300, JSON.stringify(value));
+    
+    // Queue database write
+    this.writeQueue.push({ key, value, timestamp: Date.now() });
+    
+    return value;
+  }
+  
+  startFlushTimer() {
+    setInterval(async () => {
+      await this.flushToDatabase();
+    }, this.flushInterval);
+  }
+  
+  async flushToDatabase() {
+    if (this.writeQueue.length === 0) return;
+    
+    const batch = this.writeQueue.splice(0, 100);
+    
+    for (const item of batch) {
+      try {
+        await this.database.query(
+          `INSERT INTO data VALUES ('${item.key}', '${item.value}') 
+           ON CONFLICT (key) DO UPDATE SET value = '${item.value}'`
+        );
+      } catch (error) {
+        console.error('Failed to write to database:', error);
+        // Re-queue or handle error
+      }
+    }
+  }
+}
+```
+
+### 4. Read-Through Cache
+
+```javascript
+class ReadThroughCache {
+  constructor(cache, database) {
+    this.cache = cache;
+    this.database = database;
+  }
+  
+  async getData(key) {
+    // Cache handles loading from database
+    return await this.cache.get(key, async () => {
+      // This function is called on cache miss
+      const data = await this.database.query(`SELECT * FROM data WHERE id = '${key}'`);
+      return data;
+    });
+  }
+}
+```
+
+## Cache Eviction Policies
+
+### 1. LRU (Least Recently Used)
+
+```javascript
+class LRUCache {
+  constructor(capacity) {
+    this.capacity = capacity;
+    this.cache = new Map();
+  }
+  
+  get(key) {
+    if (!this.cache.has(key)) {
+      return null;
+    }
+    
+    // Move to end (most recently used)
+    const value = this.cache.get(key);
+    this.cache.delete(key);
+    this.cache.set(key, value);
+    
+    return value;
+  }
+  
+  put(key, value) {
+    // Remove if exists
+    if (this.cache.has(key)) {
+      this.cache.delete(key);
+    }
+    
+    // Add to end
+    this.cache.set(key, value);
+    
+    // Evict least recently used if over capacity
+    if (this.cache.size > this.capacity) {
+      const firstKey = this.cache.keys().next().value;
+      this.cache.delete(firstKey);
+    }
+  }
+}
+
+// Usage
+const lru = new LRUCache(3);
+lru.put('a', 1);
+lru.put('b', 2);
+lru.put('c', 3);
+lru.get('a'); // Access 'a'
+lru.put('d', 4); // Evicts 'b' (least recently used)
+```
+
+### 2. LFU (Least Frequently Used)
+
+```javascript
+class LFUCache {
+  constructor(capacity) {
+    this.capacity = capacity;
+    this.cache = new Map();
+    this.frequencies = new Map();
+  }
+  
+  get(key) {
+    if (!this.cache.has(key)) {
+      return null;
+    }
+    
+    // Increment frequency
+    const freq = this.frequencies.get(key) || 0;
+    this.frequencies.set(key, freq + 1);
+    
+    return this.cache.get(key);
+  }
+  
+  put(key, value) {
+    if (this.cache.size >= this.capacity && !this.cache.has(key)) {
+      // Evict least frequently used
+      let minFreq = Infinity;
+      let minKey = null;
+      
+      for (const [k, freq] of this.frequencies.entries()) {
+        if (freq < minFreq) {
+          minFreq = freq;
+          minKey = k;
+        }
+      }
+      
+      this.cache.delete(minKey);
+      this.frequencies.delete(minKey);
+    }
+    
+    this.cache.set(key, value);
+    this.frequencies.set(key, (this.frequencies.get(key) || 0) + 1);
+  }
+}
+```
+
+### 3. TTL (Time To Live)
+
+```javascript
+class TTLCache {
+  constructor() {
+    this.cache = new Map();
+  }
+  
+  set(key, value, ttlSeconds) {
+    const expiresAt = Date.now() + (ttlSeconds * 1000);
+    this.cache.set(key, { value, expiresAt });
+    
+    // Auto-cleanup
+    setTimeout(() => {
+      this.cache.delete(key);
+    }, ttlSeconds * 1000);
+  }
+  
+  get(key) {
+    const item = this.cache.get(key);
+    
+    if (!item) {
+      return null;
+    }
+    
+    // Check if expired
+    if (Date.now() > item.expiresAt) {
+      this.cache.delete(key);
+      return null;
+    }
+    
+    return item.value;
+  }
+}
+
+// Usage
+const ttlCache = new TTLCache();
+ttlCache.set('user:123', { name: 'John' }, 300); // 5 minutes
+```
+
+## Redis Caching
+
+```javascript
+const redis = require('redis');
+const client = redis.createClient();
+await client.connect();
+
+class RedisCache {
+  constructor(client) {
+    this.client = client;
+  }
+  
+  // Simple key-value
+  async set(key, value, ttl = 300) {
+    await this.client.setEx(key, ttl, JSON.stringify(value));
+  }
+  
+  async get(key) {
+    const value = await this.client.get(key);
+    return value ? JSON.parse(value) : null;
+  }
+  
+  // Hash (for objects)
+  async setHash(key, obj, ttl = 300) {
+    await this.client.hSet(key, obj);
+    await this.client.expire(key, ttl);
+  }
+  
+  async getHash(key) {
+    return await this.client.hGetAll(key);
+  }
+  
+  // List (for arrays)
+  async pushList(key, value) {
+    await this.client.rPush(key, JSON.stringify(value));
+  }
+  
+  async getList(key, start = 0, end = -1) {
+    const values = await this.client.lRange(key, start, end);
+    return values.map(v => JSON.parse(v));
+  }
+  
+  // Set (for unique values)
+  async addToSet(key, value) {
+    await this.client.sAdd(key, value);
+  }
+  
+  async getSet(key) {
+    return await this.client.sMembers(key);
+  }
+  
+  // Invalidation
+  async invalidate(pattern) {
+    const keys = await this.client.keys(pattern);
+    if (keys.length > 0) {
+      await this.client.del(keys);
+    }
+  }
+}
+```
+
+## Cache Invalidation
+
+```javascript
+class CacheInvalidation {
+  constructor(cache) {
+    this.cache = cache;
+  }
+  
+  // Time-based invalidation
+  async setWithTTL(key, value, ttl) {
+    await this.cache.setEx(key, ttl, JSON.stringify(value));
+  }
+  
+  // Event-based invalidation
+  async invalidateOnUpdate(key) {
+    await this.cache.del(key);
+    await this.cache.del(`${key}:*`); // Invalidate related keys
+  }
+  
+  // Tag-based invalidation
+  async setWithTags(key, value, tags) {
+    await this.cache.set(key, JSON.stringify(value));
+    
+    // Store tags
+    for (const tag of tags) {
+      await this.cache.sAdd(`tag:${tag}`, key);
+    }
+  }
+  
+  async invalidateByTag(tag) {
+    const keys = await this.cache.sMembers(`tag:${tag}`);
+    
+    if (keys.length > 0) {
+      await this.cache.del(keys);
+    }
+    
+    await this.cache.del(`tag:${tag}`);
+  }
+  
+  // Version-based invalidation
+  async setWithVersion(key, value, version) {
+    const versionedKey = `${key}:v${version}`;
+    await this.cache.set(versionedKey, JSON.stringify(value));
+    await this.cache.set(`${key}:version`, version);
+  }
+  
+  async getWithVersion(key) {
+    const version = await this.cache.get(`${key}:version`);
+    if (!version) return null;
+    
+    const versionedKey = `${key}:v${version}`;
+    const value = await this.cache.get(versionedKey);
+    return value ? JSON.parse(value) : null;
+  }
+}
+```
+
+## Cache Warming
+
+```javascript
+class CacheWarming {
+  constructor(cache, database) {
+    this.cache = cache;
+    this.database = database;
+  }
+  
+  // Warm cache on startup
+  async warmCache() {
+    console.log('Warming cache...');
+    
+    // Load popular items
+    const popular = await this.database.query(`
+      SELECT id, data FROM items 
+      ORDER BY views DESC 
+      LIMIT 1000
+    `);
+    
+    for (const item of popular) {
+      await this.cache.setEx(
+        `item:${item.id}`,
+        3600,
+        JSON.stringify(item.data)
+      );
+    }
+    
+    console.log(`Warmed ${popular.length} items`);
+  }
+  
+  // Scheduled cache refresh
+  startScheduledRefresh() {
+    setInterval(async () => {
+      await this.warmCache();
+    }, 3600000); // Every hour
+  }
+}
+```
+
+## .NET Caching
+
+```csharp
+using Microsoft.Extensions.Caching.Distributed;
+using Microsoft.Extensions.Caching.Memory;
+
+public class CachingService
+{
+    private readonly IDistributedCache _distributedCache;
+    private readonly IMemoryCache _memoryCache;
+    
+    public CachingService(
+        IDistributedCache distributedCache,
+        IMemoryCache memoryCache)
+    {
+        _distributedCache = distributedCache;
+        _memoryCache = memoryCache;
+    }
+    
+    // Memory cache (in-process)
+    public async Task<T> GetOrCreateMemoryCache<T>(
+        string key,
+        Func<Task<T>> factory,
+        TimeSpan expiration)
+    {
+        return await _memoryCache.GetOrCreateAsync(key, async entry =>
+        {
+            entry.AbsoluteExpirationRelativeToNow = expiration;
+            return await factory();
+        });
+    }
+    
+    // Distributed cache (Redis)
+    public async Task<T> GetOrCreateDistributedCache<T>(
+        string key,
+        Func<Task<T>> factory,
+        TimeSpan expiration)
+    {
+        var cached = await _distributedCache.GetStringAsync(key);
+        
+        if (!string.IsNullOrEmpty(cached))
+        {
+            return JsonSerializer.Deserialize<T>(cached);
+        }
+        
+        var value = await factory();
+        
+        await _distributedCache.SetStringAsync(
+            key,
+            JsonSerializer.Serialize(value),
+            new DistributedCacheEntryOptions
+            {
+                AbsoluteExpirationRelativeToNow = expiration
+            }
+        );
+        
+        return value;
+    }
+    
+    // Invalidate cache
+    public async Task InvalidateCache(string pattern)
+    {
+        // For Redis, use SCAN to find keys
+        // Then delete them
+        await _distributedCache.RemoveAsync(pattern);
+    }
+}
+```
+
+## Caching Best Practices
+
+```javascript
+const cachingBestPractices = [
+  'Cache frequently accessed data',
+  'Set appropriate TTL values',
+  'Implement cache invalidation strategy',
+  'Monitor cache hit/miss ratios',
+  'Use cache-aside for read-heavy workloads',
+  'Use write-through for write-heavy workloads',
+  'Avoid caching user-specific data at CDN level',
+  'Compress large cached values',
+  'Use cache keys with namespaces',
+  'Implement circuit breakers for cache failures',
+  'Warm cache on startup',
+  'Consider cache stampede prevention'
+];
+```
+
+## Cache Stampede Prevention
+
+```javascript
+class CacheStampedePrevention {
+  constructor(cache, database) {
+    this.cache = cache;
+    this.database = database;
+    this.locks = new Map();
+  }
+  
+  async getData(key) {
+    // Try cache
+    let data = await this.cache.get(key);
+    if (data) return JSON.parse(data);
+    
+    // Check if another request is loading
+    if (this.locks.has(key)) {
+      // Wait for the other request
+      return await this.locks.get(key);
+    }
+    
+    // Create promise for this load
+    const loadPromise = this.loadData(key);
+    this.locks.set(key, loadPromise);
+    
+    try {
+      data = await loadPromise;
+      return data;
+    } finally {
+      this.locks.delete(key);
+    }
+  }
+  
+  async loadData(key) {
+    const data = await this.database.query(`SELECT * FROM data WHERE id = '${key}'`);
+    await this.cache.setEx(key, 300, JSON.stringify(data));
+    return data;
+  }
+}
+```
+
+## Interview Tips
+
+- **Explain strategies**: Cache-aside, write-through, write-behind
+- **Show eviction policies**: LRU, LFU, TTL
+- **Demonstrate invalidation**: Time-based, event-based, tag-based
+- **Discuss trade-offs**: Consistency vs performance
+- **Mention cache levels**: Browser, CDN, application, database
+- **Show Redis examples**: Common caching patterns
+
+## Summary
+
+Caching stores frequently accessed data in fast storage to reduce latency and database load. Cache-aside loads data on cache miss. Write-through writes to cache and database together. Write-behind writes to cache immediately, database asynchronously. Use LRU for general purpose, LFU for frequency-based, TTL for time-based eviction. Implement proper invalidation strategies. Use Redis for distributed caching. Monitor cache hit ratios. Prevent cache stampede with locking. Essential for building performant systems.

@@ -1,0 +1,525 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Migration Strategies
+---
+
+# Migration Strategies
+
+## SQL to NoSQL Migration
+
+### Assessment Phase
+
+```javascript
+const migrationAssessment = {
+  dataModel: 'Analyze relationships and access patterns',
+  volume: 'Estimate data size and growth',
+  queries: 'Identify common query patterns',
+  performance: 'Measure current performance',
+  constraints: 'Document business requirements',
+  timeline: 'Plan migration schedule'
+};
+```
+
+### Schema Transformation
+
+```javascript
+// SQL normalized schema
+const sqlSchema = {
+  users: { id, name, email },
+  addresses: { id, user_id, street, city },
+  orders: { id, user_id, total, date }
+};
+
+// NoSQL denormalized schema
+const nosqlSchema = {
+  users: {
+    _id: 'user-id',
+    name: 'John Doe',
+    email: 'john@example.com',
+    address: {
+      street: '123 Main St',
+      city: 'New York'
+    },
+    recentOrders: [
+      { id: 'order-1', total: 99.99, date: '2024-01-01' }
+    ]
+  }
+};
+```
+
+## Migration Strategies
+
+### 1. Big Bang Migration
+
+```javascript
+// Migrate all data at once
+class BigBangMigration {
+  async migrate() {
+    console.log('Starting big bang migration...');
+    
+    // 1. Stop application
+    await this.stopApplication();
+    
+    // 2. Export from SQL
+    const data = await this.exportFromSQL();
+    
+    // 3. Transform data
+    const transformed = await this.transformData(data);
+    
+    // 4. Import to NoSQL
+    await this.importToNoSQL(transformed);
+    
+    // 5. Verify data
+    await this.verifyData();
+    
+    // 6. Start application
+    await this.startApplication();
+    
+    console.log('Migration completed');
+  }
+  
+  async exportFromSQL() {
+    const mysql = require('mysql2/promise');
+    const connection = await mysql.createConnection({
+      host: 'localhost',
+      user: 'root',
+      database: 'myapp'
+    });
+    
+    const [users] = await connection.execute('SELECT * FROM users');
+    const [addresses] = await connection.execute('SELECT * FROM addresses');
+    const [orders] = await connection.execute('SELECT * FROM orders');
+    
+    return { users, addresses, orders };
+  }
+  
+  async transformData(data) {
+    return data.users.map(user => ({
+      _id: user.id,
+      name: user.name,
+      email: user.email,
+      address: data.addresses.find(a => a.user_id === user.id),
+      recentOrders: data.orders
+        .filter(o => o.user_id === user.id)
+        .slice(0, 10)
+    }));
+  }
+  
+  async importToNoSQL(data) {
+    await db.collection('users').insertMany(data);
+  }
+}
+```
+
+### 2. Strangler Fig Pattern
+
+```javascript
+// Gradually migrate functionality
+class StranglerFigMigration {
+  constructor() {
+    this.useNoSQL = new Set(['users', 'products']);
+  }
+  
+  async getUser(userId) {
+    if (this.useNoSQL.has('users')) {
+      // Read from NoSQL
+      return await this.getUserFromNoSQL(userId);
+    } else {
+      // Read from SQL
+      return await this.getUserFromSQL(userId);
+    }
+  }
+  
+  async createUser(userData) {
+    // Write to both during migration
+    const sqlUser = await this.createUserInSQL(userData);
+    const nosqlUser = await this.createUserInNoSQL(userData);
+    
+    return nosqlUser;
+  }
+  
+  async migrateEntity(entityType) {
+    console.log(`Migrating ${entityType}...`);
+    
+    // 1. Dual write (SQL + NoSQL)
+    this.enableDualWrite(entityType);
+    
+    // 2. Backfill existing data
+    await this.backfillData(entityType);
+    
+    // 3. Verify data consistency
+    await this.verifyConsistency(entityType);
+    
+    // 4. Switch reads to NoSQL
+    this.useNoSQL.add(entityType);
+    
+    // 5. Stop writing to SQL
+    this.disableDualWrite(entityType);
+  }
+}
+```
+
+### 3. Dual Write Pattern
+
+```javascript
+// Write to both databases during migration
+class DualWriteService {
+  async createUser(userData) {
+    try {
+      // Write to SQL (primary)
+      const sqlUser = await this.sqlDb.query(
+        'INSERT INTO users (name, email) VALUES (?, ?)',
+        [userData.name, userData.email]
+      );
+      
+      // Write to NoSQL (secondary)
+      try {
+        await this.nosqlDb.collection('users').insertOne({
+          _id: sqlUser.insertId,
+          ...userData,
+          migratedAt: new Date()
+        });
+      } catch (error) {
+        console.error('NoSQL write failed:', error);
+        // Continue - SQL is source of truth
+      }
+      
+      return sqlUser;
+    } catch (error) {
+      throw error;
+    }
+  }
+  
+  async getUser(userId) {
+    // Read from NoSQL if available
+    const nosqlUser = await this.nosqlDb.collection('users').findOne({ _id: userId });
+    
+    if (nosqlUser) {
+      return nosqlUser;
+    }
+    
+    // Fallback to SQL
+    const [sqlUser] = await this.sqlDb.query('SELECT * FROM users WHERE id = ?', [userId]);
+    
+    // Backfill to NoSQL
+    if (sqlUser) {
+      await this.nosqlDb.collection('users').insertOne({
+        _id: sqlUser.id,
+        ...sqlUser,
+        migratedAt: new Date()
+      });
+    }
+    
+    return sqlUser;
+  }
+}
+```
+
+### 4. Event Sourcing Migration
+
+```javascript
+// Capture changes as events
+class EventSourcingMigration {
+  async captureChanges() {
+    // MySQL binlog or triggers
+    const mysql = require('mysql2');
+    const connection = mysql.createConnection({
+      host: 'localhost',
+      user: 'root',
+      database: 'myapp'
+    });
+    
+    // Create trigger to capture changes
+    await connection.query(`
+      CREATE TRIGGER user_changes_trigger
+      AFTER INSERT ON users
+      FOR EACH ROW
+      BEGIN
+        INSERT INTO change_events (entity_type, entity_id, operation, data)
+        VALUES ('user', NEW.id, 'INSERT', JSON_OBJECT('name', NEW.name, 'email', NEW.email));
+      END
+    `);
+  }
+  
+  async processEvents() {
+    const events = await this.sqlDb.query('SELECT * FROM change_events WHERE processed = 0');
+    
+    for (const event of events) {
+      await this.applyEventToNoSQL(event);
+      await this.markEventProcessed(event.id);
+    }
+  }
+  
+  async applyEventToNoSQL(event) {
+    const data = JSON.parse(event.data);
+    
+    switch (event.operation) {
+      case 'INSERT':
+        await db.collection(event.entity_type + 's').insertOne({
+          _id: event.entity_id,
+          ...data
+        });
+        break;
+      case 'UPDATE':
+        await db.collection(event.entity_type + 's').updateOne(
+          { _id: event.entity_id },
+          { $set: data }
+        );
+        break;
+      case 'DELETE':
+        await db.collection(event.entity_type + 's').deleteOne({ _id: event.entity_id });
+        break;
+    }
+  }
+}
+```
+
+## Data Validation
+
+```javascript
+class MigrationValidator {
+  async validateMigration() {
+    console.log('Validating migration...');
+    
+    // 1. Count validation
+    const sqlCount = await this.getSQLCount();
+    const nosqlCount = await this.getNoSQLCount();
+    
+    if (sqlCount !== nosqlCount) {
+      console.error(`Count mismatch: SQL=${sqlCount}, NoSQL=${nosqlCount}`);
+    }
+    
+    // 2. Sample data validation
+    const sampleIds = await this.getSampleIds(100);
+    
+    for (const id of sampleIds) {
+      const sqlData = await this.getFromSQL(id);
+      const nosqlData = await this.getFromNoSQL(id);
+      
+      if (!this.compareData(sqlData, nosqlData)) {
+        console.error(`Data mismatch for ID: ${id}`);
+      }
+    }
+    
+    // 3. Query result validation
+    await this.validateQueryResults();
+    
+    console.log('Validation completed');
+  }
+  
+  compareData(sql, nosql) {
+    return sql.name === nosql.name &&
+           sql.email === nosql.email;
+  }
+  
+  async validateQueryResults() {
+    const sqlResults = await this.sqlDb.query('SELECT * FROM users WHERE status = "active"');
+    const nosqlResults = await db.collection('users').find({ status: 'active' }).toArray();
+    
+    return sqlResults.length === nosqlResults.length;
+  }
+}
+```
+
+## Rollback Strategy
+
+```javascript
+class MigrationRollback {
+  async rollback() {
+    console.log('Rolling back migration...');
+    
+    // 1. Stop application
+    await this.stopApplication();
+    
+    // 2. Switch back to SQL
+    await this.updateConfiguration({ database: 'sql' });
+    
+    // 3. Verify SQL data integrity
+    await this.verifySQLData();
+    
+    // 4. Start application
+    await this.startApplication();
+    
+    // 5. Clean up NoSQL (optional)
+    // await this.cleanupNoSQL();
+    
+    console.log('Rollback completed');
+  }
+  
+  async createRollbackPoint() {
+    // Backup SQL database
+    await this.backupSQL();
+    
+    // Backup NoSQL database
+    await this.backupNoSQL();
+    
+    // Save configuration
+    await this.saveConfiguration();
+  }
+}
+```
+
+## NoSQL to NoSQL Migration
+
+```javascript
+// MongoDB to DynamoDB
+class MongoToDynamoMigration {
+  async migrate() {
+    const cursor = db.collection('users').find();
+    
+    while (await cursor.hasNext()) {
+      const doc = await cursor.next();
+      
+      // Transform document
+      const item = {
+        userId: doc._id.toString(),
+        name: doc.name,
+        email: doc.email,
+        createdAt: doc.createdAt.toISOString()
+      };
+      
+      // Write to DynamoDB
+      await docClient.send(new PutCommand({
+        TableName: 'Users',
+        Item: item
+      }));
+    }
+  }
+}
+
+// Cassandra to MongoDB
+class CassandraToMongoMigration {
+  async migrate() {
+    const result = await cassandraClient.execute('SELECT * FROM users');
+    
+    const documents = result.rows.map(row => ({
+      _id: row.user_id.toString(),
+      name: row.name,
+      email: row.email,
+      createdAt: row.created_at
+    }));
+    
+    await mongoDb.collection('users').insertMany(documents);
+  }
+}
+```
+
+## Schema Evolution
+
+```javascript
+// Gradual schema changes
+class SchemaEvolution {
+  async evolveSchema() {
+    // Version 1: Original schema
+    // { name: "John Doe", email: "john@example.com" }
+    
+    // Version 2: Split name
+    await db.collection('users').updateMany(
+      { version: { $exists: false } },
+      [{
+        $set: {
+          firstName: { $arrayElemAt: [{ $split: ["$name", " "] }, 0] },
+          lastName: { $arrayElemAt: [{ $split: ["$name", " "] }, 1] },
+          version: 2
+        }
+      }]
+    );
+    
+    // Support both versions in application
+    const user = await db.collection('users').findOne({ _id: userId });
+    
+    if (user.version === 2) {
+      return user;
+    } else {
+      // Transform on read
+      const [firstName, lastName] = user.name.split(' ');
+      return { ...user, firstName, lastName, version: 2 };
+    }
+  }
+}
+```
+
+## .NET Migration
+
+```csharp
+using MongoDB.Driver;
+using MySql.Data.MySqlClient;
+
+public class MigrationService
+{
+    private readonly MySqlConnection _sqlConnection;
+    private readonly IMongoDatabase _mongoDatabase;
+    
+    public async Task MigrateUsers()
+    {
+        // Export from SQL
+        var command = new MySqlCommand("SELECT * FROM users", _sqlConnection);
+        var reader = await command.ExecuteReaderAsync();
+        
+        var users = new List<User>();
+        while (await reader.ReadAsync())
+        {
+            users.Add(new User
+            {
+                Id = reader.GetInt32("id").ToString(),
+                Name = reader.GetString("name"),
+                Email = reader.GetString("email")
+            });
+        }
+        
+        // Import to MongoDB
+        var collection = _mongoDatabase.GetCollection<User>("users");
+        await collection.InsertManyAsync(users);
+        
+        Console.WriteLine($"Migrated {users.Count} users");
+    }
+    
+    public async Task ValidateMigration()
+    {
+        var sqlCount = await GetSQLCount();
+        var mongoCount = await _mongoDatabase.GetCollection<User>("users")
+            .CountDocumentsAsync(_ => true);
+        
+        if (sqlCount != mongoCount)
+        {
+            throw new Exception($"Count mismatch: SQL={sqlCount}, Mongo={mongoCount}");
+        }
+    }
+}
+```
+
+## Migration Checklist
+
+```javascript
+const migrationChecklist = [
+  'Assess current system and requirements',
+  'Choose migration strategy',
+  'Design new schema',
+  'Set up NoSQL environment',
+  'Create migration scripts',
+  'Test migration with sample data',
+  'Implement dual-write if needed',
+  'Backfill historical data',
+  'Validate data consistency',
+  'Monitor performance',
+  'Plan rollback strategy',
+  'Train team on new system',
+  'Document migration process',
+  'Schedule maintenance window',
+  'Execute migration',
+  'Verify and monitor'
+];
+```
+
+## Interview Tips
+
+- **Explain strategies**: Big bang, strangler fig, dual write
+- **Show transformation**: SQL to NoSQL schema
+- **Demonstrate validation**: Data consistency checks
+- **Discuss rollback**: Backup and recovery plans
+- **Mention testing**: Sample data validation
+- **Show examples**: Real migration scenarios
+
+## Summary
+
+Migrate from SQL to NoSQL using strategies: big bang (all at once), strangler fig (gradual), dual write (both databases), or event sourcing (change capture). Transform normalized SQL schemas to denormalized NoSQL documents. Validate migration with count checks and sample data comparison. Implement rollback strategy with backups. Support schema evolution for gradual changes. Test thoroughly before production migration. Monitor performance post-migration. Essential for successful database migrations.

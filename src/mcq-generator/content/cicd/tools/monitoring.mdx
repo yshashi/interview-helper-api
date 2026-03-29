@@ -1,0 +1,295 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Monitoring CI/CD Pipelines
+---
+
+# Monitoring CI/CD Pipelines
+
+## Pipeline Metrics
+
+```yaml
+# Track key metrics
+metrics:
+  - Build duration
+  - Test duration
+  - Deployment frequency
+  - Success rate
+  - Failure rate
+  - Mean time to recovery (MTTR)
+```
+
+## GitHub Actions Monitoring
+
+```yaml
+name: Monitor Pipeline
+
+on: [push]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Record start time
+        run: echo "START_TIME=$(date +%s)" >> $GITHUB_ENV
+      
+      - name: Build
+        run: npm run build
+      
+      - name: Record metrics
+        if: always()
+        run: |
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+          
+          curl -X POST ${{ secrets.METRICS_ENDPOINT }} \
+            -d "pipeline=build&duration=$DURATION&status=${{ job.status }}"
+```
+
+## Pipeline Dashboard
+
+```javascript
+// Express metrics endpoint
+const express = require('express');
+const prometheus = require('prom-client');
+
+const app = express();
+const register = new prometheus.Registry();
+
+// Pipeline duration
+const pipelineDuration = new prometheus.Histogram({
+  name: 'pipeline_duration_seconds',
+  help: 'Pipeline execution duration',
+  labelNames: ['pipeline', 'status'],
+  registers: [register]
+});
+
+// Pipeline runs
+const pipelineRuns = new prometheus.Counter({
+  name: 'pipeline_runs_total',
+  help: 'Total pipeline runs',
+  labelNames: ['pipeline', 'status'],
+  registers: [register]
+});
+
+app.post('/metrics/pipeline', (req, res) => {
+  const { pipeline, duration, status } = req.body;
+  
+  pipelineDuration.observe({ pipeline, status }, duration);
+  pipelineRuns.inc({ pipeline, status });
+  
+  res.sendStatus(200);
+});
+
+app.get('/metrics', async (req, res) => {
+  res.set('Content-Type', register.contentType);
+  res.end(await register.metrics());
+});
+
+app.listen(3000);
+```
+
+## Grafana Dashboard
+
+```json
+{
+  "dashboard": {
+    "title": "CI/CD Pipeline Metrics",
+    "panels": [
+      {
+        "title": "Build Duration",
+        "targets": [{
+          "expr": "histogram_quantile(0.95, pipeline_duration_seconds{pipeline=\"build\"})"
+        }]
+      },
+      {
+        "title": "Success Rate",
+        "targets": [{
+          "expr": "rate(pipeline_runs_total{status=\"success\"}[5m]) / rate(pipeline_runs_total[5m])"
+        }]
+      },
+      {
+        "title": "Deployment Frequency",
+        "targets": [{
+          "expr": "rate(pipeline_runs_total{pipeline=\"deploy\"}[1h])"
+        }]
+      }
+    ]
+  }
+}
+```
+
+## Alerting
+
+```yaml
+# Prometheus alerts
+groups:
+  - name: pipeline_alerts
+    rules:
+      - alert: HighFailureRate
+        expr: rate(pipeline_runs_total{status="failure"}[5m]) > 0.1
+        for: 5m
+        annotations:
+          summary: "High pipeline failure rate"
+      
+      - alert: SlowBuild
+        expr: pipeline_duration_seconds{pipeline="build"} > 600
+        for: 5m
+        annotations:
+          summary: "Build taking too long"
+```
+
+## Slack Notifications
+
+```yaml
+# GitHub Actions with Slack
+jobs:
+  deploy:
+    steps:
+      - name: Deploy
+        run: ./deploy.sh
+      
+      - name: Notify success
+        if: success()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: success
+          text: 'Deployment succeeded'
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+      
+      - name: Notify failure
+        if: failure()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: failure
+          text: 'Deployment failed'
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+```
+
+## Log Aggregation
+
+```yaml
+# Fluentd for log collection
+<source>
+  @type forward
+  port 24224
+</source>
+
+<match cicd.**>
+  @type elasticsearch
+  host elasticsearch
+  port 9200
+  logstash_format true
+  logstash_prefix cicd
+</match>
+```
+
+## DORA Metrics
+
+```javascript
+// Track DORA metrics
+class DORAMetrics {
+  async getDeploymentFrequency() {
+    const deployments = await db.query(`
+      SELECT COUNT(*) / 7 as per_day
+      FROM deployments
+      WHERE created_at > NOW() - INTERVAL '7 days'
+    `);
+    return deployments.rows[0].per_day;
+  }
+  
+  async getLeadTime() {
+    const leadTime = await db.query(`
+      SELECT AVG(deployed_at - committed_at) as avg_lead_time
+      FROM deployments
+      WHERE deployed_at > NOW() - INTERVAL '30 days'
+    `);
+    return leadTime.rows[0].avg_lead_time;
+  }
+  
+  async getMTTR() {
+    const mttr = await db.query(`
+      SELECT AVG(resolved_at - detected_at) as avg_mttr
+      FROM incidents
+      WHERE resolved_at > NOW() - INTERVAL '30 days'
+    `);
+    return mttr.rows[0].avg_mttr;
+  }
+  
+  async getChangeFailureRate() {
+    const failures = await db.query(`
+      SELECT 
+        COUNT(CASE WHEN status = 'failed' THEN 1 END)::float / 
+        COUNT(*)::float as failure_rate
+      FROM deployments
+      WHERE deployed_at > NOW() - INTERVAL '30 days'
+    `);
+    return failures.rows[0].failure_rate;
+  }
+}
+```
+
+## Pipeline Health Check
+
+```javascript
+async function checkPipelineHealth() {
+  const metrics = {
+    buildDuration: await getAvgBuildDuration(),
+    successRate: await getSuccessRate(),
+    deploymentFrequency: await getDeploymentFrequency()
+  };
+  
+  const health = {
+    status: 'healthy',
+    issues: []
+  };
+  
+  if (metrics.buildDuration > 600) {
+    health.status = 'degraded';
+    health.issues.push('Build duration too high');
+  }
+  
+  if (metrics.successRate < 0.95) {
+    health.status = 'unhealthy';
+    health.issues.push('Success rate below 95%');
+  }
+  
+  return health;
+}
+```
+
+## Cost Monitoring
+
+```javascript
+// Track CI/CD costs
+class CostMonitor {
+  async calculateCosts() {
+    const buildMinutes = await this.getBuildMinutes();
+    const storageGB = await this.getStorageUsage();
+    
+    const costs = {
+      compute: buildMinutes * 0.008,  // $0.008 per minute
+      storage: storageGB * 0.25,      // $0.25 per GB
+      total: 0
+    };
+    
+    costs.total = costs.compute + costs.storage;
+    
+    return costs;
+  }
+}
+```
+
+## Interview Tips
+
+- **Explain metrics**: Build duration, success rate, DORA
+- **Show monitoring**: Prometheus, Grafana
+- **Demonstrate alerting**: Slack notifications
+- **Discuss logs**: Centralized aggregation
+- **Mention health**: Pipeline health checks
+- **Show costs**: Track CI/CD expenses
+
+## Summary
+
+Monitor CI/CD pipelines with metrics like build duration, success rate, and deployment frequency. Use Prometheus and Grafana for visualization. Implement alerting for failures. Track DORA metrics for performance. Aggregate logs centrally. Monitor pipeline health and costs. Essential for maintaining efficient CI/CD operations.

@@ -1,0 +1,355 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Message Queues
+---
+
+# Message Queues
+
+## What is a Message Queue?
+
+A message queue is an asynchronous communication method where messages are stored in a queue until the receiving application processes them. It decouples producers (senders) from consumers (receivers), enabling scalable and reliable distributed systems.
+
+## Why Use Message Queues?
+
+**Decoupling:** Producers and consumers don't need to know about each other or be available at the same time.
+
+**Scalability:** Add more consumers to process messages faster without changing producers.
+
+**Reliability:** Messages are persisted and won't be lost if a consumer fails.
+
+**Load Leveling:** Queue absorbs traffic spikes, preventing system overload.
+
+**Asynchronous Processing:** Long-running tasks don't block user requests.
+
+## Common Use Cases
+
+- **Order Processing:** E-commerce order → payment → inventory → shipping
+- **Email Notifications:** User action → queue → email service sends later
+- **Image Processing:** Upload image → queue → resize/optimize in background
+- **Log Aggregation:** Multiple services → queue → centralized logging
+- **Event-Driven Architecture:** Service publishes event → multiple services subscribe
+
+## Message Queue Patterns
+
+### 1. Point-to-Point (Queue)
+
+**How it works:** One producer sends messages to a queue. One consumer receives each message.
+
+**Characteristics:**
+- Each message consumed by exactly one consumer
+- Messages removed from queue after processing
+- Multiple consumers compete for messages
+
+**Use Case:** Task distribution among workers (e.g., 5 workers processing image uploads)
+
+### 2. Publish-Subscribe (Topic)
+
+**How it works:** One producer publishes messages to a topic. Multiple subscribers receive copies of each message.
+
+**Characteristics:**
+- Each message delivered to all subscribers
+- Messages not removed after one consumer reads
+- Subscribers receive all messages published after subscription
+
+**Use Case:** Broadcasting events (e.g., user registration triggers email, analytics, CRM update)
+
+### 3. Request-Reply
+
+**How it works:** Producer sends request message, consumer processes and sends reply to a response queue.
+
+**Characteristics:**
+- Synchronous-like behavior over async infrastructure
+- Correlation ID links request to response
+- Timeout handling for lost responses
+
+**Use Case:** Microservice communication with response needed
+
+## Popular Message Queue Systems
+
+### RabbitMQ
+- **Type:** Traditional message broker
+- **Protocol:** AMQP
+- **Features:** Flexible routing, multiple exchange types
+- **Best for:** Complex routing requirements
+
+### Apache Kafka
+- **Type:** Distributed streaming platform
+- **Protocol:** Custom binary protocol
+- **Features:** High throughput, message replay, partitioning
+- **Best for:** Event streaming, log aggregation, real-time analytics
+
+### AWS SQS
+- **Type:** Managed queue service
+- **Protocol:** HTTP/HTTPS
+- **Features:** Fully managed, auto-scaling, dead-letter queues
+- **Best for:** AWS-based applications, simple queuing
+
+### Redis Pub/Sub
+- **Type:** In-memory data store with messaging
+- **Protocol:** Redis protocol
+- **Features:** Very fast, simple pub/sub
+- **Best for:** Real-time notifications, caching + messaging
+
+## Message Queue Implementation Example
+
+### Producer (Sending Messages)
+
+```javascript
+const amqp = require('amqplib');
+
+async function sendMessage(queueName, message) {
+  // Connect to RabbitMQ
+  const connection = await amqp.connect('amqp://localhost');
+  const channel = await connection.createChannel();
+  
+  // Ensure queue exists
+  await channel.assertQueue(queueName, { durable: true });
+  
+  // Send message
+  channel.sendToQueue(
+    queueName,
+    Buffer.from(JSON.stringify(message)),
+    { persistent: true } // Survive broker restart
+  );
+  
+  console.log('Message sent:', message);
+  
+  await channel.close();
+  await connection.close();
+}
+
+// Usage
+await sendMessage('order-processing', {
+  orderId: '12345',
+  userId: 'user-789',
+  items: [{ productId: 'prod-1', quantity: 2 }],
+  total: 99.99
+});
+```
+
+### Consumer (Processing Messages)
+
+```javascript
+async function consumeMessages(queueName) {
+  const connection = await amqp.connect('amqp://localhost');
+  const channel = await connection.createChannel();
+  
+  await channel.assertQueue(queueName, { durable: true });
+  
+  // Limit to 1 unacknowledged message per consumer
+  channel.prefetch(1);
+  
+  console.log('Waiting for messages...');
+  
+  channel.consume(queueName, async (msg) => {
+    if (msg) {
+      const order = JSON.parse(msg.content.toString());
+      console.log('Processing order:', order.orderId);
+      
+      try {
+        // Process the order
+        await processOrder(order);
+        
+        // Acknowledge successful processing
+        channel.ack(msg);
+      } catch (error) {
+        console.error('Processing failed:', error);
+        
+        // Reject and requeue (or send to dead-letter queue)
+        channel.nack(msg, false, false);
+      }
+    }
+  });
+}
+
+async function processOrder(order) {
+  // Simulate processing
+  await new Promise(resolve => setTimeout(resolve, 2000));
+  console.log('Order processed:', order.orderId);
+}
+```
+
+## Message Acknowledgment
+
+**Auto-Acknowledge:** Message removed immediately when delivered (fast but risky - message lost if consumer crashes)
+
+**Manual Acknowledge:** Consumer explicitly confirms processing (slower but reliable - message redelivered if consumer crashes)
+
+**Negative Acknowledge:** Consumer rejects message, can requeue or send to dead-letter queue
+
+## Dead Letter Queues (DLQ)
+
+**Purpose:** Store messages that cannot be processed successfully after multiple attempts.
+
+**When messages go to DLQ:**
+- Processing fails repeatedly (exceeded retry limit)
+- Message expires (TTL exceeded)
+- Queue is full and message rejected
+
+**Benefits:**
+- Prevents poison messages from blocking queue
+- Allows investigation of problematic messages
+- Enables separate handling of failed messages
+
+## Message Ordering
+
+**FIFO Queues:** Messages processed in exact order sent (slower, limited throughput)
+
+**Standard Queues:** Best-effort ordering (faster, higher throughput)
+
+**Partitioned Ordering:** Messages with same partition key processed in order (Kafka approach)
+
+## Kafka Specifics
+
+**Topics:** Categories for messages (like "user-events", "order-events")
+
+**Partitions:** Topics split into partitions for parallel processing
+
+**Consumer Groups:** Multiple consumers share work, each message goes to one consumer in group
+
+**Offset:** Position in partition, allows replay of messages
+
+**Retention:** Messages kept for configured time (default 7 days), not deleted after consumption
+
+```javascript
+// Kafka Producer
+const { Kafka } = require('kafkajs');
+
+const kafka = new Kafka({
+  clientId: 'my-app',
+  brokers: ['localhost:9092']
+});
+
+const producer = kafka.producer();
+
+await producer.connect();
+await producer.send({
+  topic: 'user-events',
+  messages: [
+    {
+      key: 'user-123', // Ensures messages for same user go to same partition
+      value: JSON.stringify({
+        event: 'user-registered',
+        userId: 'user-123',
+        timestamp: Date.now()
+      })
+    }
+  ]
+});
+
+// Kafka Consumer
+const consumer = kafka.consumer({ groupId: 'analytics-group' });
+
+await consumer.connect();
+await consumer.subscribe({ topic: 'user-events', fromBeginning: true });
+
+await consumer.run({
+  eachMessage: async ({ topic, partition, message }) => {
+    const event = JSON.parse(message.value.toString());
+    console.log('Processing event:', event);
+    
+    // Process event
+    await handleUserEvent(event);
+  }
+});
+```
+
+## .NET Message Queue Example
+
+```csharp
+using RabbitMQ.Client;
+using RabbitMQ.Client.Events;
+
+public class MessageQueueService
+{
+    private readonly IConnection _connection;
+    private readonly IModel _channel;
+    
+    public MessageQueueService()
+    {
+        var factory = new ConnectionFactory { HostName = "localhost" };
+        _connection = factory.CreateConnection();
+        _channel = _connection.CreateModel();
+    }
+    
+    // Send message
+    public void SendMessage(string queueName, object message)
+    {
+        _channel.QueueDeclare(
+            queue: queueName,
+            durable: true,
+            exclusive: false,
+            autoDelete: false
+        );
+        
+        var body = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(message));
+        
+        _channel.BasicPublish(
+            exchange: "",
+            routingKey: queueName,
+            basicProperties: null,
+            body: body
+        );
+    }
+    
+    // Consume messages
+    public void ConsumeMessages(string queueName, Action<string> handler)
+    {
+        _channel.QueueDeclare(
+            queue: queueName,
+            durable: true,
+            exclusive: false,
+            autoDelete: false
+        );
+        
+        var consumer = new EventingBasicConsumer(_channel);
+        
+        consumer.Received += (model, ea) =>
+        {
+            var body = ea.Body.ToArray();
+            var message = Encoding.UTF8.GetString(body);
+            
+            try
+            {
+                handler(message);
+                _channel.BasicAck(ea.DeliveryTag, false);
+            }
+            catch (Exception ex)
+            {
+                _channel.BasicNack(ea.DeliveryTag, false, true);
+            }
+        };
+        
+        _channel.BasicConsume(
+            queue: queueName,
+            autoAck: false,
+            consumer: consumer
+        );
+    }
+}
+```
+
+## Best Practices
+
+- **Idempotent Consumers:** Design consumers to handle duplicate messages safely
+- **Message Expiration:** Set TTL to prevent old messages from accumulating
+- **Monitor Queue Depth:** Alert when queue grows too large
+- **Use Dead Letter Queues:** Handle failed messages separately
+- **Batch Processing:** Process multiple messages together for efficiency
+- **Graceful Shutdown:** Finish processing current message before stopping
+- **Connection Pooling:** Reuse connections instead of creating new ones
+- **Message Size Limits:** Keep messages small, store large data elsewhere
+- **Retry with Backoff:** Exponential backoff for failed message processing
+
+## Interview Tips
+
+- **Explain decoupling benefits**: Producers and consumers independent
+- **Show patterns**: Point-to-point vs pub/sub
+- **Discuss reliability**: Acknowledgments, DLQ, persistence
+- **Mention ordering**: FIFO vs standard queues
+- **Compare systems**: RabbitMQ vs Kafka vs SQS
+- **Show use cases**: Async processing, load leveling, event-driven
+
+## Summary
+
+Message queues enable asynchronous communication between services. Producers send messages to queues, consumers process them independently. Use point-to-point for task distribution, pub/sub for event broadcasting. Implement manual acknowledgment for reliability. Use dead letter queues for failed messages. Kafka excels at high-throughput event streaming with message replay. RabbitMQ offers flexible routing. SQS provides managed queuing in AWS. Design idempotent consumers. Monitor queue depth. Essential for building scalable, decoupled systems.

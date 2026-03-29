@@ -1,0 +1,514 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: API Deployment
+---
+
+# API Deployment
+
+## Deployment Strategies
+
+### 1. Blue-Green Deployment
+
+```
+┌──────────┐
+│  Router  │
+└────┬─────┘
+     │
+     ├─────→ ┌──────────┐
+     │       │ Blue (v1)│ ← Current
+     │       └──────────┘
+     │
+     └─────→ ┌──────────┐
+             │Green (v2)│ ← New version
+             └──────────┘
+```
+
+```yaml
+# Kubernetes Blue-Green
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-service
+spec:
+  selector:
+    app: api
+    version: blue  # Switch to 'green' for deployment
+  ports:
+    - port: 80
+      targetPort: 3000
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-blue
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: api
+      version: blue
+  template:
+    metadata:
+      labels:
+        app: api
+        version: blue
+    spec:
+      containers:
+      - name: api
+        image: api:v1.0.0
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-green
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: api
+      version: green
+  template:
+    metadata:
+      labels:
+        app: api
+        version: green
+    spec:
+      containers:
+      - name: api
+        image: api:v2.0.0
+```
+
+### 2. Canary Deployment
+
+```yaml
+# Istio canary deployment
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: api
+spec:
+  hosts:
+  - api.example.com
+  http:
+  - match:
+    - headers:
+        user-type:
+          exact: beta
+    route:
+    - destination:
+        host: api
+        subset: v2
+  - route:
+    - destination:
+        host: api
+        subset: v1
+      weight: 90
+    - destination:
+        host: api
+        subset: v2
+      weight: 10  # 10% traffic to new version
+```
+
+### 3. Rolling Update
+
+```yaml
+# Kubernetes rolling update
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-deployment
+spec:
+  replicas: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1        # Max pods above desired
+      maxUnavailable: 1  # Max pods unavailable
+  template:
+    spec:
+      containers:
+      - name: api
+        image: api:v2.0.0
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+```
+
+## Docker
+
+```dockerfile
+# Multi-stage build
+FROM node:18-alpine AS builder
+
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --only=production
+
+COPY . .
+RUN npm run build
+
+# Production image
+FROM node:18-alpine
+
+WORKDIR /app
+
+# Copy dependencies
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/dist ./dist
+COPY package*.json ./
+
+# Create non-root user
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S nodejs -u 1001
+
+USER nodejs
+
+EXPOSE 3000
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD node healthcheck.js
+
+CMD ["node", "dist/index.js"]
+```
+
+```yaml
+# docker-compose.yml
+version: '3.8'
+
+services:
+  api:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+    depends_on:
+      - postgres
+      - redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "healthcheck.js"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+  
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+  
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis-data:/data
+
+volumes:
+  postgres-data:
+  redis-data:
+```
+
+## CI/CD Pipeline
+
+```yaml
+# GitHub Actions
+name: Deploy API
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Run tests
+        run: npm test
+      
+      - name: Run linter
+        run: npm run lint
+  
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Build Docker image
+        run: docker build -t api:${{ github.sha }} .
+      
+      - name: Push to registry
+        run: |
+          echo ${{ secrets.DOCKER_PASSWORD }} | docker login -u ${{ secrets.DOCKER_USERNAME }} --password-stdin
+          docker tag api:${{ github.sha }} myregistry/api:${{ github.sha }}
+          docker tag api:${{ github.sha }} myregistry/api:latest
+          docker push myregistry/api:${{ github.sha }}
+          docker push myregistry/api:latest
+  
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to Kubernetes
+        run: |
+          kubectl set image deployment/api-deployment \
+            api=myregistry/api:${{ github.sha }}
+          kubectl rollout status deployment/api-deployment
+```
+
+## Environment Configuration
+
+```javascript
+// config.js
+const config = {
+  development: {
+    port: 3000,
+    database: {
+      url: 'mongodb://localhost:27017/dev',
+      poolSize: 5
+    },
+    redis: {
+      url: 'redis://localhost:6379'
+    },
+    logLevel: 'debug'
+  },
+  
+  staging: {
+    port: process.env.PORT || 3000,
+    database: {
+      url: process.env.DATABASE_URL,
+      poolSize: 10
+    },
+    redis: {
+      url: process.env.REDIS_URL
+    },
+    logLevel: 'info'
+  },
+  
+  production: {
+    port: process.env.PORT || 3000,
+    database: {
+      url: process.env.DATABASE_URL,
+      poolSize: 20
+    },
+    redis: {
+      url: process.env.REDIS_URL
+    },
+    logLevel: 'error'
+  }
+};
+
+module.exports = config[process.env.NODE_ENV || 'development'];
+```
+
+## Health Checks
+
+```javascript
+// healthcheck.js
+const http = require('http');
+
+const options = {
+  host: 'localhost',
+  port: 3000,
+  path: '/health',
+  timeout: 2000
+};
+
+const request = http.request(options, (res) => {
+  if (res.statusCode === 200) {
+    process.exit(0);
+  } else {
+    process.exit(1);
+  }
+});
+
+request.on('error', () => {
+  process.exit(1);
+});
+
+request.end();
+```
+
+```javascript
+// Health endpoint
+app.get('/health', async (req, res) => {
+  const health = {
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    checks: {}
+  };
+  
+  try {
+    await db.ping();
+    health.checks.database = 'up';
+  } catch (error) {
+    health.checks.database = 'down';
+    health.status = 'unhealthy';
+  }
+  
+  try {
+    await redis.ping();
+    health.checks.redis = 'up';
+  } catch (error) {
+    health.checks.redis = 'down';
+    health.status = 'degraded';
+  }
+  
+  const statusCode = health.status === 'healthy' ? 200 : 503;
+  res.status(statusCode).json(health);
+});
+```
+
+## Zero-Downtime Deployment
+
+```javascript
+// Graceful shutdown
+process.on('SIGTERM', async () => {
+  console.log('SIGTERM received, shutting down gracefully');
+  
+  // Stop accepting new requests
+  server.close(async () => {
+    console.log('HTTP server closed');
+    
+    // Close database connections
+    await mongoose.connection.close();
+    console.log('Database connection closed');
+    
+    // Close Redis connection
+    await redis.quit();
+    console.log('Redis connection closed');
+    
+    process.exit(0);
+  });
+  
+  // Force shutdown after 30 seconds
+  setTimeout(() => {
+    console.error('Forced shutdown');
+    process.exit(1);
+  }, 30000);
+});
+```
+
+## Database Migrations
+
+```javascript
+// migrations/001_create_users.js
+module.exports = {
+  async up(db) {
+    await db.createCollection('users');
+    await db.collection('users').createIndex({ email: 1 }, { unique: true });
+  },
+  
+  async down(db) {
+    await db.collection('users').drop();
+  }
+};
+
+// Run migrations before deployment
+const migrate = require('migrate');
+
+migrate.load({
+  stateStore: '.migrate'
+}, (err, set) => {
+  if (err) throw err;
+  
+  set.up((err) => {
+    if (err) throw err;
+    console.log('Migrations complete');
+  });
+});
+```
+
+## Monitoring in Production
+
+```javascript
+// Error tracking
+const Sentry = require('@sentry/node');
+
+Sentry.init({
+  dsn: process.env.SENTRY_DSN,
+  environment: process.env.NODE_ENV
+});
+
+app.use(Sentry.Handlers.requestHandler());
+app.use(Sentry.Handlers.errorHandler());
+
+// Performance monitoring
+const apm = require('elastic-apm-node').start({
+  serviceName: 'api',
+  serverUrl: process.env.APM_SERVER_URL
+});
+```
+
+## Deployment Checklist
+
+```javascript
+const deploymentChecklist = {
+  preDeployment: [
+    'Run all tests',
+    'Check code coverage',
+    'Run security scans',
+    'Update documentation',
+    'Create database backups',
+    'Review environment variables'
+  ],
+  
+  deployment: [
+    'Build Docker image',
+    'Push to registry',
+    'Run database migrations',
+    'Deploy to staging',
+    'Run smoke tests',
+    'Deploy to production'
+  ],
+  
+  postDeployment: [
+    'Verify health checks',
+    'Monitor error rates',
+    'Check performance metrics',
+    'Verify database connections',
+    'Test critical endpoints',
+    'Monitor logs'
+  ],
+  
+  rollback: [
+    'Revert to previous version',
+    'Rollback database migrations',
+    'Clear caches',
+    'Notify team',
+    'Investigate issues'
+  ]
+};
+```
+
+## Interview Tips
+
+- **Explain strategies**: Blue-green, canary, rolling
+- **Show Docker**: Multi-stage builds
+- **Demonstrate CI/CD**: GitHub Actions pipeline
+- **Discuss health checks**: Liveness and readiness
+- **Mention zero-downtime**: Graceful shutdown
+- **Show Kubernetes**: Deployment configurations
+
+## Summary
+
+Deploy REST APIs using blue-green, canary, or rolling update strategies. Use Docker for containerization with multi-stage builds. Implement CI/CD pipelines with GitHub Actions. Configure health checks for liveness and readiness. Enable graceful shutdown for zero-downtime deployments. Run database migrations before deployment. Monitor production with APM tools. Use Kubernetes for orchestration. Essential for reliable API deployments.

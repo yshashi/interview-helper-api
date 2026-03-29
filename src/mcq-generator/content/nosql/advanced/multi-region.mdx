@@ -1,0 +1,516 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Multi-Region Deployment
+---
+
+# Multi-Region Deployment
+
+## Why Multi-Region?
+
+```javascript
+const multiRegionBenefits = {
+  lowLatency: 'Serve users from nearest region',
+  highAvailability: 'Survive regional outages',
+  dataLocality: 'Comply with data residency laws',
+  disasterRecovery: 'Geographic redundancy'
+};
+```
+
+## MongoDB Multi-Region
+
+### Global Cluster Setup
+
+```javascript
+// Configure zones for regions
+sh.addShardToZone("shard-us-east", "US");
+sh.addShardToZone("shard-eu-west", "EU");
+sh.addShardToZone("shard-ap-south", "ASIA");
+
+// Define zone ranges
+sh.updateZoneKeyRange(
+  "mydb.users",
+  { country: "US" },
+  { country: "US\uffff" },
+  "US"
+);
+
+sh.updateZoneKeyRange(
+  "mydb.users",
+  { country: "UK" },
+  { country: "UK\uffff" },
+  "EU"
+);
+
+sh.updateZoneKeyRange(
+  "mydb.users",
+  { country: "IN" },
+  { country: "IN\uffff" },
+  "ASIA"
+);
+
+// Data automatically routed to correct region
+```
+
+### Read Preference by Region
+
+```javascript
+const { MongoClient } = require('mongodb');
+
+// Connect to global cluster
+const client = new MongoClient('mongodb://us-east,eu-west,ap-south/mydb?replicaSet=global');
+
+// Read from nearest region
+const db = client.db('mydb');
+const users = await db.collection('users').find().toArray({
+  readPreference: 'nearest'
+});
+
+// Read from specific region
+const usUsers = await db.collection('users').find({ country: 'US' }).toArray({
+  readPreference: {
+    mode: 'nearest',
+    tags: [{ region: 'us-east' }]
+  }
+});
+```
+
+### Write Concern for Multi-Region
+
+```javascript
+// Ensure writes replicated to multiple regions
+await db.collection('users').insertOne(
+  { name: 'John', country: 'US' },
+  {
+    writeConcern: {
+      w: 'majority',
+      j: true,
+      wtimeout: 5000
+    }
+  }
+);
+
+// Write to specific regions
+await db.collection('users').insertOne(
+  { name: 'Jane', country: 'UK' },
+  {
+    writeConcern: {
+      w: 2,  // At least 2 replicas
+      j: true,
+      tags: [{ region: 'eu-west' }]
+    }
+  }
+);
+```
+
+## DynamoDB Global Tables
+
+### Create Global Table
+
+```javascript
+const { DynamoDBClient, CreateGlobalTableCommand } = require('@aws-sdk/client-dynamodb');
+
+const client = new DynamoDBClient({ region: 'us-east-1' });
+
+// Create global table
+const command = new CreateGlobalTableCommand({
+  GlobalTableName: 'Users',
+  ReplicationGroup: [
+    { RegionName: 'us-east-1' },
+    { RegionName: 'eu-west-1' },
+    { RegionName: 'ap-southeast-1' }
+  ]
+});
+
+await client.send(command);
+
+// Automatic bi-directional replication
+// Eventually consistent across regions
+```
+
+### Regional Endpoints
+
+```javascript
+// Write to local region
+const usClient = new DynamoDBClient({ region: 'us-east-1' });
+const euClient = new DynamoDBClient({ region: 'eu-west-1' });
+
+// Write in US
+await usClient.send(new PutCommand({
+  TableName: 'Users',
+  Item: { userId: '123', name: 'John', region: 'US' }
+}));
+
+// Read from EU (eventually consistent)
+const euUser = await euClient.send(new GetCommand({
+  TableName: 'Users',
+  Key: { userId: '123' }
+}));
+
+// Strongly consistent read (same region only)
+const usUser = await usClient.send(new GetCommand({
+  TableName: 'Users',
+  Key: { userId: '123' },
+  ConsistentRead: true
+}));
+```
+
+## Cassandra Multi-DC
+
+### NetworkTopologyStrategy
+
+```sql
+-- Create keyspace with multi-DC replication
+CREATE KEYSPACE myapp
+WITH replication = {
+  'class': 'NetworkTopologyStrategy',
+  'us-east': 3,
+  'eu-west': 3,
+  'ap-south': 2
+};
+
+USE myapp;
+
+CREATE TABLE users (
+  user_id UUID PRIMARY KEY,
+  name TEXT,
+  email TEXT,
+  country TEXT
+);
+```
+
+### Consistency Levels
+
+```javascript
+const cassandra = require('cassandra-driver');
+
+const client = new cassandra.Client({
+  contactPoints: ['us-node1', 'eu-node1', 'ap-node1'],
+  localDataCenter: 'us-east',
+  keyspace: 'myapp'
+});
+
+// Write to local DC
+await client.execute(
+  'INSERT INTO users (user_id, name, email) VALUES (?, ?, ?)',
+  [userId, name, email],
+  { consistency: cassandra.types.consistencies.localQuorum }
+);
+
+// Write to all DCs
+await client.execute(
+  'INSERT INTO users (user_id, name, email) VALUES (?, ?, ?)',
+  [userId, name, email],
+  { consistency: cassandra.types.consistencies.eachQuorum }
+);
+
+// Read from local DC
+const result = await client.execute(
+  'SELECT * FROM users WHERE user_id = ?',
+  [userId],
+  { consistency: cassandra.types.consistencies.localOne }
+);
+```
+
+## Redis Multi-Region
+
+### Active-Active with Redis Enterprise
+
+```javascript
+// Redis Enterprise Cloud with active-active
+const Redis = require('ioredis');
+
+// Connect to nearest endpoint
+const redis = new Redis({
+  host: process.env.REDIS_ENDPOINT,  // Region-specific
+  port: 6379,
+  password: process.env.REDIS_PASSWORD
+});
+
+// Writes replicated to all regions
+await redis.set('user:123', JSON.stringify({ name: 'John' }));
+
+// Reads from local region
+const user = await redis.get('user:123');
+
+// CRDTs for conflict resolution
+await redis.call('CRDT.COUNTER', 'counter:views', 'INCRBY', 1);
+```
+
+### Master-Replica Across Regions
+
+```javascript
+// Primary in US, replica in EU
+const primary = new Redis({
+  host: 'us-redis.example.com',
+  port: 6379
+});
+
+const replica = new Redis({
+  host: 'eu-redis.example.com',
+  port: 6379,
+  readOnly: true
+});
+
+// Write to primary
+await primary.set('key', 'value');
+
+// Read from replica (may be stale)
+const value = await replica.get('key');
+```
+
+## Routing Strategies
+
+### Geographic Routing
+
+```javascript
+// Route to nearest region based on user location
+class RegionRouter {
+  constructor() {
+    this.regions = {
+      'us-east-1': { lat: 39.0, lon: -77.5 },
+      'eu-west-1': { lat: 53.3, lon: -6.3 },
+      'ap-southeast-1': { lat: 1.3, lon: 103.8 }
+    };
+  }
+  
+  getNearestRegion(userLat, userLon) {
+    let nearest = null;
+    let minDistance = Infinity;
+    
+    for (const [region, coords] of Object.entries(this.regions)) {
+      const distance = this.calculateDistance(
+        userLat, userLon,
+        coords.lat, coords.lon
+      );
+      
+      if (distance < minDistance) {
+        minDistance = distance;
+        nearest = region;
+      }
+    }
+    
+    return nearest;
+  }
+  
+  calculateDistance(lat1, lon1, lat2, lon2) {
+    // Haversine formula
+    const R = 6371; // Earth radius in km
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    
+    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+              Math.sin(dLon/2) * Math.sin(dLon/2);
+    
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
+  }
+}
+
+// Usage
+const router = new RegionRouter();
+const region = router.getNearestRegion(userLat, userLon);
+const client = getClientForRegion(region);
+```
+
+### Data Residency
+
+```javascript
+// Ensure data stays in specific region
+class DataResidencyService {
+  async createUser(userData) {
+    const region = this.getRegionForCountry(userData.country);
+    const client = this.getClientForRegion(region);
+    
+    await client.db('myapp').collection('users').insertOne({
+      ...userData,
+      _region: region,
+      createdAt: new Date()
+    });
+  }
+  
+  getRegionForCountry(country) {
+    const regionMap = {
+      'US': 'us-east-1',
+      'CA': 'us-east-1',
+      'UK': 'eu-west-1',
+      'DE': 'eu-west-1',
+      'FR': 'eu-west-1',
+      'IN': 'ap-south-1',
+      'SG': 'ap-southeast-1'
+    };
+    
+    return regionMap[country] || 'us-east-1';
+  }
+}
+```
+
+## Failover Strategies
+
+### Automatic Failover
+
+```javascript
+// MongoDB with automatic failover
+const client = new MongoClient(
+  'mongodb://us-primary,eu-secondary,ap-secondary/mydb?replicaSet=global',
+  {
+    serverSelectionTimeoutMS: 5000,
+    heartbeatFrequencyMS: 10000
+  }
+);
+
+// Automatic failover to secondary if primary fails
+client.on('serverDescriptionChanged', (event) => {
+  console.log('Server changed:', event.newDescription.type);
+});
+
+// DynamoDB automatic failover with Route53
+const getEndpoint = async () => {
+  // Route53 health checks automatically route to healthy region
+  return process.env.DYNAMODB_ENDPOINT;
+};
+```
+
+### Manual Failover
+
+```javascript
+// Switch to backup region
+class FailoverService {
+  constructor() {
+    this.primaryRegion = 'us-east-1';
+    this.backupRegion = 'eu-west-1';
+    this.currentRegion = this.primaryRegion;
+  }
+  
+  async checkHealth() {
+    try {
+      const client = this.getClient(this.currentRegion);
+      await client.db('admin').command({ ping: 1 });
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+  
+  async failover() {
+    console.log(`Failing over from ${this.currentRegion} to ${this.backupRegion}`);
+    this.currentRegion = this.backupRegion;
+    
+    // Update DNS or load balancer
+    await this.updateRouting(this.backupRegion);
+  }
+  
+  async monitorAndFailover() {
+    setInterval(async () => {
+      const healthy = await this.checkHealth();
+      if (!healthy && this.currentRegion === this.primaryRegion) {
+        await this.failover();
+      }
+    }, 30000);
+  }
+}
+```
+
+## Conflict Resolution
+
+```javascript
+// Handle conflicts in multi-region writes
+class MultiRegionConflictResolver {
+  async resolveConflict(documentId) {
+    const regions = ['us-east-1', 'eu-west-1', 'ap-southeast-1'];
+    
+    // Get versions from all regions
+    const versions = await Promise.all(
+      regions.map(region => this.getDocument(region, documentId))
+    );
+    
+    // Use Last-Write-Wins
+    const latest = versions.reduce((latest, current) => {
+      return current.timestamp > latest.timestamp ? current : latest;
+    });
+    
+    // Propagate to all regions
+    await Promise.all(
+      regions.map(region => this.updateDocument(region, documentId, latest))
+    );
+    
+    return latest;
+  }
+}
+```
+
+## .NET Multi-Region
+
+```csharp
+using MongoDB.Driver;
+
+public class MultiRegionService
+{
+    private readonly Dictionary<string, IMongoClient> _clients;
+    
+    public MultiRegionService()
+    {
+        _clients = new Dictionary<string, IMongoClient>
+        {
+            ["us-east"] = new MongoClient("mongodb://us-nodes/mydb"),
+            ["eu-west"] = new MongoClient("mongodb://eu-nodes/mydb"),
+            ["ap-south"] = new MongoClient("mongodb://ap-nodes/mydb")
+        };
+    }
+    
+    public async Task<User> GetUser(string userId, string region)
+    {
+        var client = _clients[region];
+        var db = client.GetDatabase("myapp");
+        var collection = db.GetCollection<User>("users")
+            .WithReadPreference(ReadPreference.Nearest);
+        
+        return await collection.Find(u => u.Id == userId).FirstOrDefaultAsync();
+    }
+    
+    public async Task CreateUser(User user, string region)
+    {
+        var client = _clients[region];
+        var db = client.GetDatabase("myapp");
+        var collection = db.GetCollection<User>("users");
+        
+        await collection.InsertOneAsync(
+            user,
+            new InsertOneOptions
+            {
+                WriteConcern = WriteConcern.WMajority
+            }
+        );
+    }
+}
+```
+
+## Best Practices
+
+```javascript
+const multiRegionBestPractices = [
+  'Use nearest region for reads',
+  'Replicate to multiple regions',
+  'Implement health checks',
+  'Plan for failover scenarios',
+  'Monitor replication lag',
+  'Consider data residency laws',
+  'Use appropriate consistency levels',
+  'Test disaster recovery',
+  'Implement conflict resolution',
+  'Monitor costs across regions'
+];
+```
+
+## Interview Tips
+
+- **Explain benefits**: Low latency, high availability
+- **Show MongoDB**: Zone sharding, read preferences
+- **Demonstrate DynamoDB**: Global tables
+- **Discuss Cassandra**: NetworkTopologyStrategy
+- **Mention routing**: Geographic, data residency
+- **Show failover**: Automatic and manual strategies
+
+## Summary
+
+Multi-region deployment provides low latency, high availability, and data locality. MongoDB uses zone sharding and read preferences. DynamoDB Global Tables offer automatic bi-directional replication. Cassandra uses NetworkTopologyStrategy with per-DC replication factors. Implement geographic routing to nearest region. Plan failover strategies for regional outages. Handle conflicts with LWW or CRDTs. Consider data residency requirements. Monitor replication lag and costs. Essential for global applications requiring high availability.

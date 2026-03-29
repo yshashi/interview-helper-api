@@ -1,0 +1,527 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: WeakMap and WeakSet in JavaScript
+---
+
+# WeakMap and WeakSet in JavaScript
+
+## What are WeakMap and WeakSet?
+
+**WeakMap** and **WeakSet** are special versions of Map and Set that hold "weak" references to their keys/values, allowing garbage collection when there are no other references to the objects. They are designed for specific use cases where you want to associate data with objects without preventing those objects from being garbage collected.
+
+## WeakMap
+
+A **WeakMap** is a collection of key-value pairs where keys must be objects and are held weakly, meaning they can be garbage collected if there are no other references to them.
+
+### Key Characteristics
+
+- **Keys must be objects** (not primitives)
+- **Keys are held weakly** (can be garbage collected)
+- **Not enumerable** (cannot iterate over entries)
+- **No size property** (cannot get the count)
+- **No clear method** (cannot clear all entries at once)
+
+### Creating a WeakMap
+
+```javascript
+const weakMap = new WeakMap();
+
+// Keys must be objects
+const key1 = { id: 1 };
+const key2 = { id: 2 };
+
+weakMap.set(key1, 'value 1');
+weakMap.set(key2, 'value 2');
+
+console.log(weakMap.get(key1)); // 'value 1'
+console.log(weakMap.has(key2)); // true
+
+// This will throw an error - primitives not allowed as keys
+// weakMap.set('string-key', 'value'); // TypeError
+```
+
+### WeakMap Methods
+
+```javascript
+const weakMap = new WeakMap();
+const obj = { name: 'John' };
+
+// set(key, value) - Add or update entry
+weakMap.set(obj, { age: 30, city: 'New York' });
+
+// get(key) - Retrieve value
+console.log(weakMap.get(obj)); // { age: 30, city: 'New York' }
+
+// has(key) - Check if key exists
+console.log(weakMap.has(obj)); // true
+
+// delete(key) - Remove entry
+weakMap.delete(obj);
+console.log(weakMap.has(obj)); // false
+```
+
+### Garbage Collection Example
+
+```javascript
+let user = { name: 'Alice' };
+const userMetadata = new WeakMap();
+
+userMetadata.set(user, {
+  lastLogin: new Date(),
+  preferences: { theme: 'dark' }
+});
+
+console.log(userMetadata.get(user)); // { lastLogin: ..., preferences: ... }
+
+// When user is set to null, the entry in WeakMap can be garbage collected
+user = null;
+// The metadata is automatically removed when user object is garbage collected
+```
+
+### Practical WeakMap Examples
+
+#### 1. Private Data Storage
+
+```javascript
+const privateData = new WeakMap();
+
+class User {
+  constructor(name, password) {
+    this.name = name;
+    // Store password privately
+    privateData.set(this, { password });
+  }
+  
+  authenticate(password) {
+    const data = privateData.get(this);
+    return data.password === password;
+  }
+  
+  changePassword(oldPassword, newPassword) {
+    if (this.authenticate(oldPassword)) {
+      const data = privateData.get(this);
+      data.password = newPassword;
+      return true;
+    }
+    return false;
+  }
+}
+
+const user = new User('john', 'secret123');
+console.log(user.password); // undefined (private)
+console.log(user.authenticate('secret123')); // true
+```
+
+#### 2. DOM Node Metadata
+
+```javascript
+const elementMetadata = new WeakMap();
+
+function attachMetadata(element, data) {
+  elementMetadata.set(element, data);
+}
+
+function getMetadata(element) {
+  return elementMetadata.get(element);
+}
+
+// Usage
+const button = document.createElement('button');
+attachMetadata(button, {
+  clickCount: 0,
+  lastClicked: null,
+  customData: { role: 'submit' }
+});
+
+button.addEventListener('click', () => {
+  const metadata = getMetadata(button);
+  metadata.clickCount++;
+  metadata.lastClicked = new Date();
+});
+
+// When button is removed from DOM and no other references exist,
+// the metadata is automatically garbage collected
+```
+
+#### 3. Caching Computed Values
+
+```javascript
+const computedCache = new WeakMap();
+
+function expensiveComputation(obj) {
+  // Check cache first
+  if (computedCache.has(obj)) {
+    console.log('Returning cached result');
+    return computedCache.get(obj);
+  }
+  
+  console.log('Computing result');
+  // Simulate expensive operation
+  const result = Object.keys(obj).length * 100;
+  
+  // Cache the result
+  computedCache.set(obj, result);
+  return result;
+}
+
+const data1 = { a: 1, b: 2, c: 3 };
+console.log(expensiveComputation(data1)); // Computing result, 300
+console.log(expensiveComputation(data1)); // Returning cached result, 300
+
+// When data1 is garbage collected, cache entry is automatically removed
+```
+
+#### 4. Object Relationship Tracking
+
+```javascript
+const relationships = new WeakMap();
+
+class Graph {
+  addEdge(node1, node2) {
+    if (!relationships.has(node1)) {
+      relationships.set(node1, new Set());
+    }
+    relationships.get(node1).add(node2);
+  }
+  
+  getNeighbors(node) {
+    return relationships.get(node) || new Set();
+  }
+  
+  removeNode(node) {
+    relationships.delete(node);
+    // Also remove from other nodes' neighbor lists
+    for (const [key, neighbors] of relationships) {
+      neighbors.delete(node);
+    }
+  }
+}
+
+const graph = new Graph();
+const nodeA = { id: 'A' };
+const nodeB = { id: 'B' };
+
+graph.addEdge(nodeA, nodeB);
+console.log([...graph.getNeighbors(nodeA)]); // [{ id: 'B' }]
+```
+
+## WeakSet
+
+A **WeakSet** is a collection of objects where the objects are held weakly and can be garbage collected.
+
+### Key Characteristics
+
+- **Values must be objects** (not primitives)
+- **Values are held weakly** (can be garbage collected)
+- **Not enumerable** (cannot iterate over values)
+- **No size property** (cannot get the count)
+- **No clear method** (cannot clear all values at once)
+
+### Creating a WeakSet
+
+```javascript
+const weakSet = new WeakSet();
+
+const obj1 = { id: 1 };
+const obj2 = { id: 2 };
+
+weakSet.add(obj1);
+weakSet.add(obj2);
+
+console.log(weakSet.has(obj1)); // true
+
+// This will throw an error - primitives not allowed
+// weakSet.add('string'); // TypeError
+```
+
+### WeakSet Methods
+
+```javascript
+const weakSet = new WeakSet();
+const obj = { name: 'John' };
+
+// add(value) - Add object to set
+weakSet.add(obj);
+
+// has(value) - Check if object exists
+console.log(weakSet.has(obj)); // true
+
+// delete(value) - Remove object
+weakSet.delete(obj);
+console.log(weakSet.has(obj)); // false
+```
+
+### Practical WeakSet Examples
+
+#### 1. Tracking Object States
+
+```javascript
+const processedItems = new WeakSet();
+
+function processItem(item) {
+  if (processedItems.has(item)) {
+    console.log('Item already processed');
+    return;
+  }
+  
+  console.log('Processing item:', item);
+  // Do processing...
+  
+  processedItems.add(item);
+}
+
+const item1 = { id: 1, data: 'test' };
+processItem(item1); // Processing item: { id: 1, data: 'test' }
+processItem(item1); // Item already processed
+```
+
+#### 2. Marking Objects as Special
+
+```javascript
+const disabledElements = new WeakSet();
+
+function disableElement(element) {
+  element.setAttribute('disabled', 'true');
+  disabledElements.add(element);
+}
+
+function isDisabled(element) {
+  return disabledElements.has(element);
+}
+
+function enableElement(element) {
+  element.removeAttribute('disabled');
+  disabledElements.delete(element);
+}
+
+// Usage
+const button = document.createElement('button');
+disableElement(button);
+console.log(isDisabled(button)); // true
+enableElement(button);
+console.log(isDisabled(button)); // false
+```
+
+#### 3. Preventing Circular References
+
+```javascript
+const visited = new WeakSet();
+
+function traverse(obj) {
+  if (visited.has(obj)) {
+    console.log('Circular reference detected');
+    return;
+  }
+  
+  visited.add(obj);
+  
+  for (const key in obj) {
+    if (typeof obj[key] === 'object' && obj[key] !== null) {
+      traverse(obj[key]);
+    }
+  }
+}
+
+// Create circular reference
+const objA = { name: 'A' };
+const objB = { name: 'B', ref: objA };
+objA.ref = objB;
+
+traverse(objA); // Handles circular reference safely
+```
+
+#### 4. Temporary Object Flags
+
+```javascript
+const lockedObjects = new WeakSet();
+
+class ResourceManager {
+  lock(resource) {
+    if (lockedObjects.has(resource)) {
+      throw new Error('Resource already locked');
+    }
+    lockedObjects.add(resource);
+  }
+  
+  unlock(resource) {
+    if (!lockedObjects.has(resource)) {
+      throw new Error('Resource not locked');
+    }
+    lockedObjects.delete(resource);
+  }
+  
+  isLocked(resource) {
+    return lockedObjects.has(resource);
+  }
+}
+
+const manager = new ResourceManager();
+const resource = { id: 'db-connection' };
+
+manager.lock(resource);
+console.log(manager.isLocked(resource)); // true
+manager.unlock(resource);
+console.log(manager.isLocked(resource)); // false
+```
+
+## WeakMap vs Map
+
+| Feature | WeakMap | Map |
+|---------|---------|-----|
+| **Key Types** | Objects only | Any type |
+| **Garbage Collection** | Keys can be GC'd | Keys retained |
+| **Enumeration** | Not enumerable | Enumerable |
+| **Size** | No size property | Has size property |
+| **Iteration** | Cannot iterate | Can iterate |
+| **Use Case** | Metadata, private data | General key-value storage |
+
+## WeakSet vs Set
+
+| Feature | WeakSet | Set |
+|---------|---------|-----|
+| **Value Types** | Objects only | Any type |
+| **Garbage Collection** | Values can be GC'd | Values retained |
+| **Enumeration** | Not enumerable | Enumerable |
+| **Size** | No size property | Has size property |
+| **Iteration** | Cannot iterate | Can iterate |
+| **Use Case** | Object tagging, flags | General unique collections |
+
+## When to Use WeakMap/WeakSet
+
+### Use WeakMap When:
+- Storing metadata about objects
+- Implementing private properties
+- Caching computed values for objects
+- Avoiding memory leaks with DOM elements
+
+### Use WeakSet When:
+- Marking objects with a flag
+- Tracking object states
+- Detecting circular references
+- Temporary object collections
+
+### Don't Use WeakMap/WeakSet When:
+- You need to iterate over entries
+- You need to know the size
+- Keys/values are primitives
+- You need to persist data
+
+## Memory Management Benefits
+
+```javascript
+// Regular Map - memory leak potential
+const regularMap = new Map();
+
+function createUsers() {
+  for (let i = 0; i < 1000; i++) {
+    const user = { id: i, name: `User ${i}` };
+    regularMap.set(user, { metadata: 'data' });
+  }
+}
+
+createUsers();
+// All user objects remain in memory even if not used elsewhere
+
+// WeakMap - automatic cleanup
+const weakMap = new WeakMap();
+
+function createUsersWeak() {
+  for (let i = 0; i < 1000; i++) {
+    const user = { id: i, name: `User ${i}` };
+    weakMap.set(user, { metadata: 'data' });
+  }
+  // When function ends and user objects go out of scope,
+  // they can be garbage collected along with their WeakMap entries
+}
+
+createUsersWeak();
+```
+
+## Limitations and Gotchas
+
+### 1. Cannot Use Primitives
+
+```javascript
+const weakMap = new WeakMap();
+
+// These will throw TypeError
+// weakMap.set('string', 'value');
+// weakMap.set(123, 'value');
+// weakMap.set(true, 'value');
+
+// Only objects work
+weakMap.set({}, 'value'); // OK
+weakMap.set([], 'value'); // OK
+weakMap.set(() => {}, 'value'); // OK
+```
+
+### 2. No Iteration
+
+```javascript
+const weakMap = new WeakMap();
+const obj = { id: 1 };
+weakMap.set(obj, 'value');
+
+// These don't exist
+// weakMap.forEach(...) // undefined
+// for (const [key, value] of weakMap) {} // TypeError
+// [...weakMap] // TypeError
+// weakMap.keys() // undefined
+// weakMap.values() // undefined
+```
+
+### 3. No Size Property
+
+```javascript
+const weakSet = new WeakSet();
+weakSet.add({});
+weakSet.add({});
+
+console.log(weakSet.size); // undefined
+// No way to know how many items are in the WeakSet
+```
+
+## Browser Support
+
+```javascript
+// WeakMap and WeakSet are supported in:
+// - Chrome 36+
+// - Firefox 6+
+// - Safari 8+
+// - Edge 12+
+// - Node.js 0.12+
+
+// Check for support
+if (typeof WeakMap !== 'undefined') {
+  console.log('WeakMap is supported');
+}
+
+if (typeof WeakSet !== 'undefined') {
+  console.log('WeakSet is supported');
+}
+```
+
+## Best Practices
+
+1. **Use for object metadata**: Store additional data about objects
+2. **Prevent memory leaks**: Especially with DOM elements
+3. **Implement private data**: In classes without closures
+4. **Cache object computations**: Without preventing GC
+5. **Don't rely on size**: Design around not knowing the count
+6. **Document usage**: Make it clear why WeakMap/WeakSet is needed
+7. **Consider alternatives**: Regular Map/Set might be simpler if GC isn't a concern
+
+## Interview Tips
+
+- **Explain weak references**: Keys/values can be garbage collected
+- **Describe key differences**: From regular Map/Set
+- **Show practical use cases**: Private data, DOM metadata, caching
+- **Discuss limitations**: No iteration, no size, objects only
+- **Explain memory benefits**: Automatic cleanup prevents leaks
+- **Mention when to use**: And when not to use
+- **Demonstrate with code**: Private properties, DOM tracking
+- **Discuss garbage collection**: How it works with weak references
+
+## Summary
+
+**WeakMap** and **WeakSet** are specialized collections that hold weak references to objects, allowing them to be garbage collected when no other references exist. WeakMap stores key-value pairs with object keys, while WeakSet stores unique objects. They're ideal for storing metadata, implementing private properties, and preventing memory leaks, but cannot be iterated over and don't provide size information. Use them when you need to associate data with objects without preventing garbage collection.

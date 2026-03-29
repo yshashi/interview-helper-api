@@ -1,0 +1,299 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Continuous Deployment vs Continuous Delivery
+---
+
+# Continuous Deployment vs Continuous Delivery
+
+## Key Difference
+
+**Continuous Delivery**: Code is automatically prepared for release, but deployment to production requires manual approval.
+
+**Continuous Deployment**: Every change that passes tests is automatically deployed to production without manual intervention.
+
+## Continuous Delivery
+
+```yaml
+# Continuous Delivery Pipeline
+name: Continuous Delivery
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Build
+        run: npm run build
+      - name: Test
+        run: npm test
+  
+  deploy-staging:
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to Staging
+        run: |
+          echo "Deploying to staging..."
+          kubectl apply -f k8s/staging/
+  
+  deploy-production:
+    needs: deploy-staging
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      # Manual approval required
+    steps:
+      - name: Deploy to Production
+        run: |
+          echo "Deploying to production..."
+          kubectl apply -f k8s/production/
+```
+
+## Continuous Deployment
+
+```yaml
+# Continuous Deployment Pipeline
+name: Continuous Deployment
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build-test-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Build
+        run: npm run build
+      
+      - name: Test
+        run: npm test
+      
+      - name: Deploy to Production
+        if: success()
+        run: |
+          echo "Auto-deploying to production..."
+          kubectl apply -f k8s/production/
+          # No manual approval - fully automated
+```
+
+## Comparison
+
+| Aspect | Continuous Delivery | Continuous Deployment |
+|--------|-------------------|---------------------|
+| **Automation** | Build & Test | Build, Test & Deploy |
+| **Production Deploy** | Manual | Automatic |
+| **Human Approval** | Required | Not required |
+| **Risk** | Lower | Higher |
+| **Speed** | Slower | Faster |
+| **Control** | More | Less |
+
+## Continuous Delivery Example
+
+### Angular Application
+
+```yaml
+name: Angular CD
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Build
+        run: npm run build --prod
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: dist
+          path: dist/
+  
+  deploy-staging:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v3
+      - name: Deploy to Staging
+        run: firebase deploy --only hosting:staging
+  
+  deploy-production:
+    needs: deploy-staging
+    runs-on: ubuntu-latest
+    environment: production  # Requires approval
+    steps:
+      - uses: actions/download-artifact@v3
+      - name: Deploy to Production
+        run: firebase deploy --only hosting:production
+```
+
+### .NET Application
+
+```yaml
+name: .NET CD
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Build
+        run: dotnet publish -c Release -o ./publish
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: app
+          path: ./publish
+  
+  deploy-staging:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v3
+      - name: Deploy to Azure Staging
+        uses: azure/webapps-deploy@v2
+        with:
+          app-name: myapp-staging
+          slot-name: staging
+  
+  deploy-production:
+    needs: deploy-staging
+    runs-on: ubuntu-latest
+    environment: production  # Manual gate
+    steps:
+      - uses: actions/download-artifact@v3
+      - name: Deploy to Azure Production
+        uses: azure/webapps-deploy@v2
+        with:
+          app-name: myapp-production
+```
+
+## Continuous Deployment Example
+
+### Node.js Microservice
+
+```yaml
+name: Node.js Continuous Deployment
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Run tests
+        run: npm test
+      
+      - name: Build Docker image
+        run: docker build -t myapp:${{ github.sha }} .
+      
+      - name: Push to registry
+        run: |
+          docker login -u ${{ secrets.DOCKER_USER }} -p ${{ secrets.DOCKER_PASS }}
+          docker push myapp:${{ github.sha }}
+      
+      - name: Deploy to Kubernetes
+        run: |
+          kubectl set image deployment/myapp myapp=myapp:${{ github.sha }}
+          kubectl rollout status deployment/myapp
+```
+
+## When to Use Each
+
+### Use Continuous Delivery When:
+- Regulatory compliance requires approval
+- Business needs control over releases
+- High-risk applications (finance, healthcare)
+- Need to coordinate with marketing
+- Multiple stakeholders involved
+
+### Use Continuous Deployment When:
+- Fast feedback is critical
+- Small, frequent changes
+- Strong automated testing
+- Mature DevOps culture
+- SaaS applications
+
+## Deployment Strategies
+
+### Blue-Green Deployment
+
+```yaml
+# Continuous Delivery with Blue-Green
+deploy-production:
+  runs-on: ubuntu-latest
+  environment: production
+  steps:
+    - name: Deploy to Green
+      run: kubectl apply -f k8s/green/
+    
+    - name: Run smoke tests
+      run: npm run test:smoke
+    
+    - name: Switch traffic to Green
+      run: kubectl patch service myapp -p '{"spec":{"selector":{"version":"green"}}}'
+```
+
+### Canary Deployment
+
+```yaml
+# Continuous Deployment with Canary
+deploy:
+  runs-on: ubuntu-latest
+  steps:
+    - name: Deploy canary (10%)
+      run: kubectl set image deployment/myapp-canary myapp=myapp:${{ github.sha }}
+    
+    - name: Monitor metrics
+      run: sleep 300  # 5 minutes
+    
+    - name: Deploy to all
+      if: success()
+      run: kubectl set image deployment/myapp myapp=myapp:${{ github.sha }}
+```
+
+## Best Practices
+
+### Continuous Delivery
+1. **Automate everything except deployment**
+2. **Keep production-ready code in main**
+3. **Use feature flags for incomplete features**
+4. **Maintain staging environment**
+5. **Document approval process**
+
+### Continuous Deployment
+1. **Comprehensive automated testing**
+2. **Monitoring and alerting**
+3. **Automatic rollback capability**
+4. **Feature flags for risk mitigation**
+5. **Small, incremental changes**
+
+## Interview Tips
+
+- **Explain difference**: Manual vs automatic production deploy
+- **Show examples**: Both approaches with code
+- **Discuss use cases**: When to use each
+- **Demonstrate strategies**: Blue-green, canary
+- **Mention trade-offs**: Control vs speed
+- **Show multi-stack**: Angular, .NET, Node.js
+
+## Summary
+
+Continuous Delivery automates build and test but requires manual approval for production deployment. Continuous Deployment fully automates the entire pipeline including production deployment. Choose based on risk tolerance, compliance requirements, and organizational maturity. Both require strong automated testing and monitoring.

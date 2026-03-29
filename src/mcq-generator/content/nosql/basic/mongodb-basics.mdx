@@ -1,0 +1,406 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: MongoDB Basics
+---
+
+# MongoDB Basics
+
+## What is MongoDB?
+
+**MongoDB** is a document-oriented NoSQL database that stores data in flexible, JSON-like documents called BSON (Binary JSON).
+
+## Core Concepts
+
+**Database:** Container for collections (similar to a database in SQL)
+
+**Collection:** Group of documents (similar to a table in SQL)
+
+**Document:** JSON-like record stored in BSON format (similar to a row in SQL)
+
+**Field:** Key-value pair within a document (similar to a column in SQL)
+
+**_id:** Unique identifier automatically created for each document (ObjectId type)
+
+**BSON:** Binary JSON format that extends JSON with additional data types (Date, Binary, ObjectId, etc.)
+
+## Installation and Setup
+
+```bash
+# Install MongoDB
+brew install mongodb-community
+
+# Start MongoDB
+brew services start mongodb-community
+
+# Install Node.js driver
+npm install mongodb
+
+# Install Mongoose (ODM)
+npm install mongoose
+```
+
+## Basic Operations (CRUD)
+
+### Create
+
+```javascript
+// Node.js with MongoDB driver
+const { MongoClient } = require('mongodb');
+
+const client = new MongoClient('mongodb://localhost:27017');
+
+async function createDocument() {
+  await client.connect();
+  const db = client.db('myapp');
+  
+  // Insert one document
+  const result = await db.collection('users').insertOne({
+    name: 'John Doe',
+    email: 'john@example.com',
+    age: 30,
+    createdAt: new Date()
+  });
+  
+  console.log('Inserted ID:', result.insertedId);
+  
+  // Insert multiple documents
+  await db.collection('users').insertMany([
+    { name: 'Jane Smith', email: 'jane@example.com', age: 25 },
+    { name: 'Bob Johnson', email: 'bob@example.com', age: 35 }
+  ]);
+}
+```
+
+### Read
+
+```javascript
+async function readDocuments() {
+  const db = client.db('myapp');
+  
+  // Find one document
+  const user = await db.collection('users').findOne({
+    email: 'john@example.com'
+  });
+  
+  // Find multiple documents
+  const users = await db.collection('users').find({
+    age: { $gte: 25 }
+  }).toArray();
+  
+  // Find with projection (select specific fields)
+  const names = await db.collection('users').find(
+    {},
+    { projection: { name: 1, email: 1, _id: 0 } }
+  ).toArray();
+  
+  // Find with sorting
+  const sorted = await db.collection('users')
+    .find()
+    .sort({ age: -1 })
+    .toArray();
+  
+  // Find with limit and skip (pagination)
+  const page = await db.collection('users')
+    .find()
+    .skip(10)
+    .limit(10)
+    .toArray();
+}
+```
+
+### Update
+
+```javascript
+async function updateDocuments() {
+  const db = client.db('myapp');
+  
+  // Update one document
+  await db.collection('users').updateOne(
+    { email: 'john@example.com' },
+    { $set: { age: 31, updatedAt: new Date() } }
+  );
+  
+  // Update multiple documents
+  await db.collection('users').updateMany(
+    { age: { $lt: 30 } },
+    { $set: { status: 'young' } }
+  );
+  
+  // Replace entire document
+  await db.collection('users').replaceOne(
+    { email: 'john@example.com' },
+    {
+      name: 'John Doe',
+      email: 'john@example.com',
+      age: 31,
+      city: 'New York'
+    }
+  );
+  
+  // Upsert (update or insert)
+  await db.collection('users').updateOne(
+    { email: 'new@example.com' },
+    { $set: { name: 'New User', age: 25 } },
+    { upsert: true }
+  );
+}
+```
+
+### Delete
+
+```javascript
+async function deleteDocuments() {
+  const db = client.db('myapp');
+  
+  // Delete one document
+  await db.collection('users').deleteOne({
+    email: 'john@example.com'
+  });
+  
+  // Delete multiple documents
+  await db.collection('users').deleteMany({
+    age: { $lt: 18 }
+  });
+}
+```
+
+## Query Operators
+
+```javascript
+// Comparison operators
+const queries = {
+  equal: { age: 30 },
+  notEqual: { age: { $ne: 30 } },
+  greaterThan: { age: { $gt: 25 } },
+  greaterOrEqual: { age: { $gte: 25 } },
+  lessThan: { age: { $lt: 35 } },
+  lessOrEqual: { age: { $lte: 35 } },
+  in: { status: { $in: ['active', 'pending'] } },
+  notIn: { status: { $nin: ['deleted', 'banned'] } }
+};
+
+// Logical operators
+const logicalQueries = {
+  and: { $and: [{ age: { $gte: 25 } }, { age: { $lte: 35 } }] },
+  or: { $or: [{ status: 'active' }, { status: 'pending' }] },
+  not: { age: { $not: { $gte: 30 } } },
+  nor: { $nor: [{ status: 'deleted' }, { status: 'banned' }] }
+};
+
+// Element operators
+const elementQueries = {
+  exists: { email: { $exists: true } },
+  type: { age: { $type: 'number' } }
+};
+
+// Array operators
+const arrayQueries = {
+  all: { tags: { $all: ['mongodb', 'database'] } },
+  elemMatch: { scores: { $elemMatch: { $gte: 80, $lt: 90 } } },
+  size: { tags: { $size: 3 } }
+};
+```
+
+## Update Operators
+
+```javascript
+// Field update operators
+await db.collection('users').updateOne(
+  { _id: userId },
+  {
+    $set: { name: 'New Name' },           // Set field value
+    $unset: { tempField: '' },            // Remove field
+    $inc: { age: 1 },                     // Increment by value
+    $mul: { score: 1.5 },                 // Multiply by value
+    $rename: { oldName: 'newName' },      // Rename field
+    $min: { lowestScore: 50 },            // Update if less than
+    $max: { highestScore: 100 },          // Update if greater than
+    $currentDate: { lastModified: true }  // Set to current date
+  }
+);
+
+// Array update operators
+await db.collection('users').updateOne(
+  { _id: userId },
+  {
+    $push: { tags: 'new-tag' },           // Add to array
+    $pull: { tags: 'old-tag' },           // Remove from array
+    $addToSet: { tags: 'unique-tag' },    // Add if not exists
+    $pop: { tags: 1 },                    // Remove first/last
+    $pullAll: { tags: ['tag1', 'tag2'] }  // Remove multiple
+  }
+);
+```
+
+## Mongoose ODM
+
+```javascript
+const mongoose = require('mongoose');
+
+// Connect to MongoDB
+await mongoose.connect('mongodb://localhost:27017/myapp');
+
+// Define schema
+const userSchema = new mongoose.Schema({
+  name: {
+    type: String,
+    required: true,
+    trim: true
+  },
+  email: {
+    type: String,
+    required: true,
+    unique: true,
+    lowercase: true
+  },
+  age: {
+    type: Number,
+    min: 0,
+    max: 150
+  },
+  status: {
+    type: String,
+    enum: ['active', 'inactive', 'pending'],
+    default: 'pending'
+  },
+  tags: [String],
+  createdAt: {
+    type: Date,
+    default: Date.now
+  }
+});
+
+// Add methods
+userSchema.methods.getFullInfo = function() {
+  return `${this.name} (${this.email})`;
+};
+
+// Add static methods
+userSchema.statics.findByEmail = function(email) {
+  return this.findOne({ email });
+};
+
+// Create model
+const User = mongoose.model('User', userSchema);
+
+// CRUD operations with Mongoose
+async function mongooseOperations() {
+  // Create
+  const user = await User.create({
+    name: 'John Doe',
+    email: 'john@example.com',
+    age: 30
+  });
+  
+  // Read
+  const users = await User.find({ age: { $gte: 25 } });
+  const oneUser = await User.findById(userId);
+  const byEmail = await User.findByEmail('john@example.com');
+  
+  // Update
+  await User.findByIdAndUpdate(
+    userId,
+    { $set: { age: 31 } },
+    { new: true }
+  );
+  
+  // Delete
+  await User.findByIdAndDelete(userId);
+}
+```
+
+## .NET with MongoDB
+
+```csharp
+using MongoDB.Driver;
+using MongoDB.Bson;
+using MongoDB.Bson.Serialization.Attributes;
+
+public class User
+{
+    [BsonId]
+    [BsonRepresentation(BsonType.ObjectId)]
+    public string Id { get; set; }
+    
+    [BsonElement("name")]
+    public string Name { get; set; }
+    
+    [BsonElement("email")]
+    public string Email { get; set; }
+    
+    [BsonElement("age")]
+    public int Age { get; set; }
+    
+    [BsonElement("createdAt")]
+    public DateTime CreatedAt { get; set; }
+}
+
+public class MongoService
+{
+    private readonly IMongoCollection<User> _users;
+    
+    public MongoService()
+    {
+        var client = new MongoClient("mongodb://localhost:27017");
+        var database = client.GetDatabase("myapp");
+        _users = database.GetCollection<User>("users");
+    }
+    
+    public async Task<User> CreateUser(User user)
+    {
+        await _users.InsertOneAsync(user);
+        return user;
+    }
+    
+    public async Task<List<User>> GetUsers()
+    {
+        return await _users.Find(_ => true).ToListAsync();
+    }
+    
+    public async Task<User> GetUserByEmail(string email)
+    {
+        return await _users.Find(u => u.Email == email).FirstOrDefaultAsync();
+    }
+    
+    public async Task UpdateUser(string id, User user)
+    {
+        await _users.ReplaceOneAsync(u => u.Id == id, user);
+    }
+    
+    public async Task DeleteUser(string id)
+    {
+        await _users.DeleteOneAsync(u => u.Id == id);
+    }
+}
+```
+
+## Indexes
+
+```javascript
+// Create indexes for better query performance
+await db.collection('users').createIndex({ email: 1 }, { unique: true });
+await db.collection('users').createIndex({ age: 1 });
+await db.collection('users').createIndex({ name: 'text' });
+
+// Compound index
+await db.collection('users').createIndex({ status: 1, createdAt: -1 });
+
+// List indexes
+const indexes = await db.collection('users').indexes();
+
+// Drop index
+await db.collection('users').dropIndex('email_1');
+```
+
+## Interview Tips
+
+- **Explain MongoDB**: Document-oriented NoSQL database
+- **Show CRUD**: Create, read, update, delete operations
+- **Demonstrate queries**: Query and update operators
+- **Discuss Mongoose**: ODM for schema validation
+- **Mention indexes**: Performance optimization
+- **Show examples**: Node.js, .NET implementations
+
+## Summary
+
+MongoDB is a document-oriented NoSQL database storing data in BSON format. Supports flexible schemas, rich queries, and horizontal scaling. CRUD operations use insertOne/Many, find, updateOne/Many, deleteOne/Many. Query operators include comparison, logical, element, and array operators. Mongoose provides schema validation and ODM features. Create indexes for query performance. Essential for modern web applications requiring flexible data models.

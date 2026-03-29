@@ -1,0 +1,393 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Filtering and Sorting
+---
+
+# Filtering and Sorting
+
+## Filtering
+
+### Basic Filtering
+
+```javascript
+// Node.js/Express
+app.get('/api/users', async (req, res) => {
+  const { role, status, city } = req.query;
+  
+  const filter = {};
+  if (role) filter.role = role;
+  if (status) filter.status = status;
+  if (city) filter.city = city;
+  
+  const users = await User.find(filter);
+  res.json(users);
+});
+
+// Usage
+GET /api/users?role=admin
+GET /api/users?status=active
+GET /api/users?role=admin&status=active
+```
+
+```csharp
+// .NET
+[HttpGet]
+public async Task<ActionResult<IEnumerable<User>>> GetUsers(
+    [FromQuery] string? role,
+    [FromQuery] string? status,
+    [FromQuery] string? city)
+{
+    var query = _context.Users.AsQueryable();
+    
+    if (!string.IsNullOrEmpty(role))
+        query = query.Where(u => u.Role == role);
+    
+    if (!string.IsNullOrEmpty(status))
+        query = query.Where(u => u.Status == status);
+    
+    if (!string.IsNullOrEmpty(city))
+        query = query.Where(u => u.City == city);
+    
+    return await query.ToListAsync();
+}
+```
+
+### Range Filtering
+
+```javascript
+// Numeric ranges
+GET /api/products?minPrice=10&maxPrice=100
+GET /api/users?minAge=18&maxAge=65
+
+app.get('/api/products', async (req, res) => {
+  const { minPrice, maxPrice } = req.query;
+  
+  const filter = {};
+  if (minPrice || maxPrice) {
+    filter.price = {};
+    if (minPrice) filter.price.$gte = parseFloat(minPrice);
+    if (maxPrice) filter.price.$lte = parseFloat(maxPrice);
+  }
+  
+  const products = await Product.find(filter);
+  res.json(products);
+});
+
+// Date ranges
+GET /api/orders?startDate=2024-01-01&endDate=2024-12-31
+
+app.get('/api/orders', async (req, res) => {
+  const { startDate, endDate } = req.query;
+  
+  const filter = {};
+  if (startDate || endDate) {
+    filter.createdAt = {};
+    if (startDate) filter.createdAt.$gte = new Date(startDate);
+    if (endDate) filter.createdAt.$lte = new Date(endDate);
+  }
+  
+  const orders = await Order.find(filter);
+  res.json(orders);
+});
+```
+
+### Array Filtering
+
+```javascript
+// Multiple values
+GET /api/products?category=electronics,books,clothing
+
+app.get('/api/products', async (req, res) => {
+  const { category } = req.query;
+  
+  const filter = {};
+  if (category) {
+    const categories = category.split(',');
+    filter.category = { $in: categories };
+  }
+  
+  const products = await Product.find(filter);
+  res.json(products);
+});
+```
+
+### Search/Text Filtering
+
+```javascript
+// Text search
+GET /api/users?search=john
+
+app.get('/api/users', async (req, res) => {
+  const { search } = req.query;
+  
+  const filter = {};
+  if (search) {
+    filter.$or = [
+      { name: { $regex: search, $options: 'i' } },
+      { email: { $regex: search, $options: 'i' } }
+    ];
+  }
+  
+  const users = await User.find(filter);
+  res.json(users);
+});
+```
+
+## Sorting
+
+### Basic Sorting
+
+```javascript
+// Single field sort
+GET /api/users?sort=name
+GET /api/users?sort=-createdAt  // Descending
+
+app.get('/api/users', async (req, res) => {
+  const { sort } = req.query;
+  
+  let sortObj = {};
+  if (sort) {
+    const order = sort.startsWith('-') ? -1 : 1;
+    const field = sort.replace('-', '');
+    sortObj[field] = order;
+  }
+  
+  const users = await User.find().sort(sortObj);
+  res.json(users);
+});
+```
+
+```csharp
+// .NET
+[HttpGet]
+public async Task<ActionResult<IEnumerable<User>>> GetUsers(
+    [FromQuery] string? sort)
+{
+    var query = _context.Users.AsQueryable();
+    
+    if (!string.IsNullOrEmpty(sort))
+    {
+        var descending = sort.StartsWith("-");
+        var field = descending ? sort.Substring(1) : sort;
+        
+        query = field switch
+        {
+            "name" => descending ? query.OrderByDescending(u => u.Name) : query.OrderBy(u => u.Name),
+            "createdAt" => descending ? query.OrderByDescending(u => u.CreatedAt) : query.OrderBy(u => u.CreatedAt),
+            _ => query
+        };
+    }
+    
+    return await query.ToListAsync();
+}
+```
+
+### Multiple Field Sorting
+
+```javascript
+// Multiple sort fields
+GET /api/users?sort=role,-createdAt
+
+app.get('/api/users', async (req, res) => {
+  const { sort } = req.query;
+  
+  const sortObj = {};
+  if (sort) {
+    const fields = sort.split(',');
+    fields.forEach(field => {
+      const order = field.startsWith('-') ? -1 : 1;
+      const fieldName = field.replace('-', '');
+      sortObj[fieldName] = order;
+    });
+  }
+  
+  const users = await User.find().sort(sortObj);
+  res.json(users);
+});
+```
+
+## Combined Filtering and Sorting
+
+```javascript
+// Complete implementation
+app.get('/api/users', async (req, res) => {
+  const {
+    role,
+    status,
+    city,
+    minAge,
+    maxAge,
+    search,
+    sort,
+    page = 1,
+    limit = 10
+  } = req.query;
+  
+  // Build filter
+  const filter = {};
+  
+  if (role) filter.role = role;
+  if (status) filter.status = status;
+  if (city) filter.city = city;
+  
+  if (minAge || maxAge) {
+    filter.age = {};
+    if (minAge) filter.age.$gte = parseInt(minAge);
+    if (maxAge) filter.age.$lte = parseInt(maxAge);
+  }
+  
+  if (search) {
+    filter.$or = [
+      { name: { $regex: search, $options: 'i' } },
+      { email: { $regex: search, $options: 'i' } }
+    ];
+  }
+  
+  // Build sort
+  const sortObj = {};
+  if (sort) {
+    const fields = sort.split(',');
+    fields.forEach(field => {
+      const order = field.startsWith('-') ? -1 : 1;
+      const fieldName = field.replace('-', '');
+      sortObj[fieldName] = order;
+    });
+  }
+  
+  // Execute query
+  const skip = (page - 1) * limit;
+  const users = await User.find(filter)
+    .sort(sortObj)
+    .skip(skip)
+    .limit(parseInt(limit));
+  
+  const total = await User.countDocuments(filter);
+  
+  res.json({
+    data: users,
+    pagination: {
+      page: parseInt(page),
+      limit: parseInt(limit),
+      total,
+      totalPages: Math.ceil(total / limit)
+    }
+  });
+});
+
+// Usage
+GET /api/users?role=admin&status=active&sort=-createdAt&page=1&limit=20
+```
+
+## Angular Service
+
+```typescript
+@Injectable()
+export class UserService {
+  getUsers(filters: {
+    role?: string;
+    status?: string;
+    city?: string;
+    minAge?: number;
+    maxAge?: number;
+    search?: string;
+    sort?: string;
+    page?: number;
+    limit?: number;
+  }): Observable<PaginatedResponse<User>> {
+    let params = new HttpParams();
+    
+    Object.keys(filters).forEach(key => {
+      const value = filters[key];
+      if (value !== undefined && value !== null) {
+        params = params.set(key, value.toString());
+      }
+    });
+    
+    return this.http.get<PaginatedResponse<User>>(
+      `${this.apiUrl}/users`,
+      { params }
+    );
+  }
+}
+
+// Component usage
+this.userService.getUsers({
+  role: 'admin',
+  status: 'active',
+  sort: '-createdAt',
+  page: 1,
+  limit: 20
+}).subscribe(response => {
+  this.users = response.data;
+  this.pagination = response.pagination;
+});
+```
+
+## Advanced Filtering
+
+```javascript
+// Operators in query string
+GET /api/users?age[gte]=18&age[lte]=65
+
+app.get('/api/users', async (req, res) => {
+  const filter = {};
+  
+  // Parse operators
+  Object.keys(req.query).forEach(key => {
+    const value = req.query[key];
+    
+    if (typeof value === 'object') {
+      filter[key] = {};
+      Object.keys(value).forEach(op => {
+        filter[key][`$${op}`] = value[op];
+      });
+    } else {
+      filter[key] = value;
+    }
+  });
+  
+  const users = await User.find(filter);
+  res.json(users);
+});
+```
+
+## Filter Validation
+
+```javascript
+const Joi = require('joi');
+
+const filterSchema = Joi.object({
+  role: Joi.string().valid('admin', 'user', 'moderator'),
+  status: Joi.string().valid('active', 'inactive', 'pending'),
+  minAge: Joi.number().min(0).max(150),
+  maxAge: Joi.number().min(0).max(150),
+  sort: Joi.string().regex(/^-?(name|email|createdAt)$/),
+  page: Joi.number().min(1),
+  limit: Joi.number().min(1).max(100)
+});
+
+app.get('/api/users', async (req, res) => {
+  const { error, value } = filterSchema.validate(req.query);
+  
+  if (error) {
+    return res.status(400).json({ error: error.details[0].message });
+  }
+  
+  // Use validated filters
+  const users = await User.find(buildFilter(value)).sort(buildSort(value));
+  res.json(users);
+});
+```
+
+## Interview Tips
+
+- **Explain filtering**: Query parameters for conditions
+- **Show sorting**: Ascending/descending, multiple fields
+- **Demonstrate ranges**: Min/max, dates
+- **Discuss search**: Text search with regex
+- **Mention validation**: Input validation
+- **Show implementation**: Node.js, .NET, Angular
+
+## Summary
+
+Filtering uses query parameters to narrow results based on conditions. Support exact matches, ranges, arrays, and text search. Sorting orders results by one or more fields using ascending or descending order. Combine filtering, sorting, and pagination for complete data retrieval. Validate filter inputs. Essential for flexible REST APIs.

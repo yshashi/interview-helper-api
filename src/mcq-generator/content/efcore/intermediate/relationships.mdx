@@ -1,0 +1,221 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Configuring Relationships in EF Core
+---
+
+# Configuring Relationships in EF Core
+
+## Relationship Types
+
+EF Core supports three types of relationships:
+1. **One-to-Many**
+2. **One-to-One**
+3. **Many-to-Many**
+
+## One-to-Many Relationship
+
+### Convention-Based
+
+```csharp
+public class Blog
+{
+    public int Id { get; set; }
+    public string Name { get; set; }
+    public ICollection<Post> Posts { get; set; }
+}
+
+public class Post
+{
+    public int Id { get; set; }
+    public string Title { get; set; }
+    public int BlogId { get; set; }
+    public Blog Blog { get; set; }
+}
+```
+
+### Fluent API Configuration
+
+```csharp
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    modelBuilder.Entity<Post>()
+        .HasOne(p => p.Blog)
+        .WithMany(b => b.Posts)
+        .HasForeignKey(p => p.BlogId)
+        .OnDelete(DeleteBehavior.Cascade);
+}
+```
+
+## One-to-One Relationship
+
+```csharp
+public class User
+{
+    public int Id { get; set; }
+    public string Username { get; set; }
+    public UserProfile Profile { get; set; }
+}
+
+public class UserProfile
+{
+    public int Id { get; set; }
+    public string Bio { get; set; }
+    public int UserId { get; set; }
+    public User User { get; set; }
+}
+
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    modelBuilder.Entity<User>()
+        .HasOne(u => u.Profile)
+        .WithOne(p => p.User)
+        .HasForeignKey<UserProfile>(p => p.UserId);
+}
+```
+
+## Many-to-Many Relationship
+
+### EF Core 5.0+ (Automatic Join Table)
+
+```csharp
+public class Student
+{
+    public int Id { get; set; }
+    public string Name { get; set; }
+    public ICollection<Course> Courses { get; set; }
+}
+
+public class Course
+{
+    public int Id { get; set; }
+    public string Title { get; set; }
+    public ICollection<Student> Students { get; set; }
+}
+
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    modelBuilder.Entity<Student>()
+        .HasMany(s => s.Courses)
+        .WithMany(c => c.Students);
+}
+```
+
+### With Explicit Join Entity
+
+```csharp
+public class StudentCourse
+{
+    public int StudentId { get; set; }
+    public Student Student { get; set; }
+    public int CourseId { get; set; }
+    public Course Course { get; set; }
+    public DateTime EnrollmentDate { get; set; }
+    public int Grade { get; set; }
+}
+
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    modelBuilder.Entity<StudentCourse>()
+        .HasKey(sc => new { sc.StudentId, sc.CourseId });
+    
+    modelBuilder.Entity<StudentCourse>()
+        .HasOne(sc => sc.Student)
+        .WithMany(s => s.StudentCourses)
+        .HasForeignKey(sc => sc.StudentId);
+    
+    modelBuilder.Entity<StudentCourse>()
+        .HasOne(sc => sc.Course)
+        .WithMany(c => c.StudentCourses)
+        .HasForeignKey(sc => sc.CourseId);
+}
+```
+
+## Delete Behaviors
+
+```csharp
+// Cascade - Delete related entities
+.OnDelete(DeleteBehavior.Cascade)
+
+// Restrict - Prevent deletion if related entities exist
+.OnDelete(DeleteBehavior.Restrict)
+
+// SetNull - Set foreign key to null
+.OnDelete(DeleteBehavior.SetNull)
+
+// NoAction - No action taken
+.OnDelete(DeleteBehavior.NoAction)
+```
+
+## Required vs Optional Relationships
+
+```csharp
+// Required relationship
+modelBuilder.Entity<Post>()
+    .HasOne(p => p.Blog)
+    .WithMany(b => b.Posts)
+    .HasForeignKey(p => p.BlogId)
+    .IsRequired();
+
+// Optional relationship
+modelBuilder.Entity<Post>()
+    .HasOne(p => p.Blog)
+    .WithMany(b => b.Posts)
+    .HasForeignKey(p => p.BlogId)
+    .IsRequired(false);
+```
+
+## Self-Referencing Relationships
+
+```csharp
+public class Employee
+{
+    public int Id { get; set; }
+    public string Name { get; set; }
+    public int? ManagerId { get; set; }
+    public Employee Manager { get; set; }
+    public ICollection<Employee> Subordinates { get; set; }
+}
+
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    modelBuilder.Entity<Employee>()
+        .HasOne(e => e.Manager)
+        .WithMany(e => e.Subordinates)
+        .HasForeignKey(e => e.ManagerId)
+        .OnDelete(DeleteBehavior.Restrict);
+}
+```
+
+## Multiple Relationships Between Same Entities
+
+```csharp
+public class Order
+{
+    public int Id { get; set; }
+    public int CustomerId { get; set; }
+    public Customer Customer { get; set; }
+    public int? DeliveryAddressId { get; set; }
+    public Address DeliveryAddress { get; set; }
+    public int? BillingAddressId { get; set; }
+    public Address BillingAddress { get; set; }
+}
+
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    modelBuilder.Entity<Order>()
+        .HasOne(o => o.DeliveryAddress)
+        .WithMany()
+        .HasForeignKey(o => o.DeliveryAddressId)
+        .OnDelete(DeleteBehavior.Restrict);
+    
+    modelBuilder.Entity<Order>()
+        .HasOne(o => o.BillingAddress)
+        .WithMany()
+        .HasForeignKey(o => o.BillingAddressId)
+        .OnDelete(DeleteBehavior.Restrict);
+}
+```
+
+## Summary
+
+Relationships in EF Core can be configured using conventions or Fluent API. Support one-to-many, one-to-one, and many-to-many relationships with various delete behaviors and required/optional configurations.

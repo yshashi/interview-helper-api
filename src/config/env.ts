@@ -8,28 +8,39 @@ const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   API_URL: z.string().default('http://localhost:5500'),
   CLIENT_URL: z.string().default('http://localhost:4321'),
-  
+
   DATABASE_URL: z.string().default('mongodb://localhost:27017/interview-helper'),
-  
+
   JWT_SECRET: z.string().default('your_jwt_secret_key'),
   JWT_EXPIRES_IN: z.string().default('7d'),
   JWT_REFRESH_SECRET: z.string().default('your_jwt_refresh_secret_key'),
   JWT_REFRESH_EXPIRES_IN: z.string().default('30d'),
-  
+
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   GOOGLE_CALLBACK_URL: z.string().default('/api/auth/google/callback'),
-  
+
   GIT_CLIENT_ID: z.string().optional(),
   GIT_CLIENT_SECRET: z.string().optional(),
   GIT_CALLBACK_URL: z.string().default('/api/auth/github/callback'),
-  
+
   LOG_LEVEL: z.enum(['error', 'warn', 'info', 'http', 'debug']).default('info'),
-  LOG_FILE_ENABLED: z.string().transform(val => val === 'true').default('true'),
+  LOG_FILE_ENABLED: z
+    .string()
+    .transform((val) => val === 'true')
+    .default('true'),
   LOG_FILE_PATH: z.string().default('logs/app.log'),
-  
+
   RATE_LIMIT_WINDOW_MS: z.string().transform(Number).default('15000'),
   RATE_LIMIT_MAX_REQUESTS: z.string().transform(Number).default('100'),
+
+  // Azure OpenAI & MCQ Generator
+  AZURE_OPENAI_API_KEY: z.string().optional(),
+  AZURE_OPENAI_ENDPOINT: z.string().optional(),
+  AZURE_OPENAI_API_VERSION: z.string().default('2025-04-01-preview'),
+  AZURE_OPENAI_DEPLOYMENT: z.string().default('gpt-5.4-mini'),
+  MCQ_CONTENT_DIR: z.string().default('src/mcq-generator/content'),
+  MCQ_QUESTIONS_PER_FILE: z.string().transform(Number).default('4'),
 });
 
 const parseEnv = (): z.infer<typeof envSchema> => {

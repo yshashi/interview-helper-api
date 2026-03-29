@@ -1,0 +1,403 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Webhooks
+---
+
+# Webhooks
+
+## What are Webhooks?
+
+**Webhooks** are HTTP callbacks that allow servers to send real-time notifications to clients when events occur, eliminating the need for polling.
+
+## Webhooks vs Polling
+
+| Aspect | Webhooks | Polling |
+|--------|----------|---------|
+| **Efficiency** | High | Low |
+| **Real-time** | Yes | Delayed |
+| **Server Load** | Low | High |
+| **Complexity** | Higher | Lower |
+| **Reliability** | Requires retry | Simple |
+
+## Basic Webhook Implementation
+
+```javascript
+// Node.js/Express - Webhook sender
+const axios = require('axios');
+
+async function sendWebhook(url, event, data) {
+  try {
+    await axios.post(url, {
+      event,
+      data,
+      timestamp: new Date().toISOString()
+    }, {
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Webhook-Signature': generateSignature(data)
+      },
+      timeout: 5000
+    });
+    
+    console.log(`Webhook sent to ${url}`);
+  } catch (error) {
+    console.error(`Webhook failed: ${error.message}`);
+    // Queue for retry
+    await queueWebhook(url, event, data);
+  }
+}
+
+// Trigger webhook on event
+app.post('/api/orders', async (req, res) => {
+  const order = await Order.create(req.body);
+  
+  // Send webhook
+  const webhookUrl = await getWebhookUrl(req.user.id, 'order.created');
+  if (webhookUrl) {
+    await sendWebhook(webhookUrl, 'order.created', order);
+  }
+  
+  res.status(201).json(order);
+});
+```
+
+## Webhook Registration
+
+```javascript
+// Register webhook endpoint
+app.post('/api/webhooks', authenticate, async (req, res) => {
+  const { url, events } = req.body;
+  
+  // Validate URL
+  if (!isValidUrl(url)) {
+    return res.status(400).json({ error: 'Invalid URL' });
+  }
+  
+  // Verify endpoint
+  const verified = await verifyWebhookEndpoint(url);
+  if (!verified) {
+    return res.status(400).json({ error: 'Endpoint verification failed' });
+  }
+  
+  const webhook = await Webhook.create({
+    userId: req.user.id,
+    url,
+    events,
+    secret: crypto.randomBytes(32).toString('hex')
+  });
+  
+  res.status(201).json(webhook);
+});
+
+// List webhooks
+app.get('/api/webhooks', authenticate, async (req, res) => {
+  const webhooks = await Webhook.find({ userId: req.user.id });
+  res.json(webhooks);
+});
+
+// Delete webhook
+app.delete('/api/webhooks/:id', authenticate, async (req, res) => {
+  await Webhook.findOneAndDelete({
+    _id: req.params.id,
+    userId: req.user.id
+  });
+  
+  res.status(204).send();
+});
+```
+
+## Webhook Security (HMAC Signature)
+
+```javascript
+const crypto = require('crypto');
+
+function generateSignature(payload, secret) {
+  return crypto
+    .createHmac('sha256', secret)
+    .update(JSON.stringify(payload))
+    .digest('hex');
+}
+
+async function sendWebhook(webhook, event, data) {
+  const payload = { event, data, timestamp: new Date().toISOString() };
+  const signature = generateSignature(payload, webhook.secret);
+  
+  await axios.post(webhook.url, payload, {
+    headers: {
+      'X-Webhook-Signature': signature,
+      'X-Webhook-Event': event
+    }
+  });
+}
+
+// Webhook receiver verification
+app.post('/webhooks/receiver', (req, res) => {
+  const signature = req.headers['x-webhook-signature'];
+  const secret = process.env.WEBHOOK_SECRET;
+  
+  const expectedSignature = generateSignature(req.body, secret);
+  
+  if (signature !== expectedSignature) {
+    return res.status(401).json({ error: 'Invalid signature' });
+  }
+  
+  // Process webhook
+  console.log('Webhook received:', req.body);
+  res.status(200).json({ received: true });
+});
+```
+
+## Retry Logic
+
+```javascript
+const Bull = require('bull');
+const webhookQueue = new Bull('webhooks', {
+  redis: { host: 'localhost', port: 6379 }
+});
+
+webhookQueue.process(async (job) => {
+  const { url, event, data, attempt = 0 } = job.data;
+  
+  try {
+    await axios.post(url, { event, data }, { timeout: 5000 });
+    return { success: true };
+  } catch (error) {
+    if (attempt < 5) {
+      // Exponential backoff
+      const delay = Math.min(1000 * Math.pow(2, attempt), 30000);
+      await webhookQueue.add(
+        { url, event, data, attempt: attempt + 1 },
+        { delay }
+      );
+    } else {
+      // Mark as failed after 5 attempts
+      await WebhookLog.create({
+        url,
+        event,
+        status: 'failed',
+        attempts: attempt + 1
+      });
+    }
+    
+    throw error;
+  }
+});
+
+async function queueWebhook(url, event, data) {
+  await webhookQueue.add({ url, event, data, attempt: 0 });
+}
+```
+
+## Webhook Events
+
+```javascript
+const WEBHOOK_EVENTS = {
+  'order.created': 'Order Created',
+  'order.updated': 'Order Updated',
+  'order.cancelled': 'Order Cancelled',
+  'payment.succeeded': 'Payment Succeeded',
+  'payment.failed': 'Payment Failed',
+  'user.created': 'User Created',
+  'user.updated': 'User Updated'
+};
+
+// Emit webhook event
+async function emitWebhookEvent(userId, event, data) {
+  const webhooks = await Webhook.find({
+    userId,
+    events: event,
+    active: true
+  });
+  
+  for (const webhook of webhooks) {
+    await sendWebhook(webhook, event, data);
+  }
+}
+
+// Usage
+app.post('/api/orders', async (req, res) => {
+  const order = await Order.create(req.body);
+  
+  await emitWebhookEvent(req.user.id, 'order.created', order);
+  
+  res.status(201).json(order);
+});
+```
+
+## .NET Implementation
+
+```csharp
+public class WebhookService
+{
+    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly ILogger<WebhookService> _logger;
+    
+    public async Task SendWebhookAsync(Webhook webhook, string eventType, object data)
+    {
+        var client = _httpClientFactory.CreateClient();
+        
+        var payload = new
+        {
+            @event = eventType,
+            data,
+            timestamp = DateTime.UtcNow
+        };
+        
+        var signature = GenerateSignature(payload, webhook.Secret);
+        
+        var request = new HttpRequestMessage(HttpMethod.Post, webhook.Url)
+        {
+            Content = JsonContent.Create(payload)
+        };
+        
+        request.Headers.Add("X-Webhook-Signature", signature);
+        request.Headers.Add("X-Webhook-Event", eventType);
+        
+        try
+        {
+            var response = await client.SendAsync(request);
+            response.EnsureSuccessStatusCode();
+            
+            _logger.LogInformation("Webhook sent to {Url}", webhook.Url);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Webhook failed for {Url}", webhook.Url);
+            await QueueWebhookRetryAsync(webhook, eventType, data);
+        }
+    }
+    
+    private string GenerateSignature(object payload, string secret)
+    {
+        var json = JsonSerializer.Serialize(payload);
+        var keyBytes = Encoding.UTF8.GetBytes(secret);
+        var messageBytes = Encoding.UTF8.GetBytes(json);
+        
+        using var hmac = new HMACSHA256(keyBytes);
+        var hash = hmac.ComputeHash(messageBytes);
+        return Convert.ToHexString(hash).ToLower();
+    }
+}
+```
+
+## Webhook Receiver (Angular)
+
+```typescript
+// Backend endpoint to receive webhooks
+@Controller('webhooks')
+export class WebhooksController {
+  @Post('stripe')
+  async handleStripeWebhook(@Req() req: Request, @Res() res: Response) {
+    const signature = req.headers['stripe-signature'];
+    
+    try {
+      const event = stripe.webhooks.constructEvent(
+        req.body,
+        signature,
+        process.env.STRIPE_WEBHOOK_SECRET
+      );
+      
+      switch (event.type) {
+        case 'payment_intent.succeeded':
+          await this.handlePaymentSuccess(event.data.object);
+          break;
+        case 'payment_intent.failed':
+          await this.handlePaymentFailure(event.data.object);
+          break;
+      }
+      
+      res.json({ received: true });
+    } catch (err) {
+      res.status(400).send(`Webhook Error: ${err.message}`);
+    }
+  }
+}
+```
+
+## Webhook Logging
+
+```javascript
+const webhookLogSchema = new mongoose.Schema({
+  webhookId: mongoose.Schema.Types.ObjectId,
+  url: String,
+  event: String,
+  status: {
+    type: String,
+    enum: ['success', 'failed', 'pending']
+  },
+  statusCode: Number,
+  attempts: Number,
+  response: String,
+  error: String,
+  createdAt: { type: Date, default: Date.now }
+});
+
+async function sendWebhook(webhook, event, data) {
+  const log = await WebhookLog.create({
+    webhookId: webhook._id,
+    url: webhook.url,
+    event,
+    status: 'pending',
+    attempts: 1
+  });
+  
+  try {
+    const response = await axios.post(webhook.url, { event, data });
+    
+    await WebhookLog.findByIdAndUpdate(log._id, {
+      status: 'success',
+      statusCode: response.status,
+      response: JSON.stringify(response.data)
+    });
+  } catch (error) {
+    await WebhookLog.findByIdAndUpdate(log._id, {
+      status: 'failed',
+      statusCode: error.response?.status,
+      error: error.message
+    });
+    
+    throw error;
+  }
+}
+```
+
+## Webhook Testing
+
+```javascript
+// Test webhook endpoint
+app.post('/api/webhooks/test', authenticate, async (req, res) => {
+  const { webhookId } = req.body;
+  
+  const webhook = await Webhook.findOne({
+    _id: webhookId,
+    userId: req.user.id
+  });
+  
+  if (!webhook) {
+    return res.status(404).json({ error: 'Webhook not found' });
+  }
+  
+  try {
+    await sendWebhook(webhook, 'test.event', {
+      message: 'This is a test webhook'
+    });
+    
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+```
+
+## Interview Tips
+
+- **Explain webhooks**: HTTP callbacks for events
+- **Show vs polling**: Real-time vs periodic checks
+- **Demonstrate security**: HMAC signatures
+- **Discuss retry**: Exponential backoff
+- **Mention logging**: Track webhook deliveries
+- **Show implementation**: Node.js, .NET examples
+
+## Summary
+
+Webhooks provide real-time event notifications via HTTP callbacks. More efficient than polling. Secure with HMAC signatures. Implement retry logic with exponential backoff. Log all webhook attempts. Support multiple events and endpoints. Essential for event-driven architectures and third-party integrations.

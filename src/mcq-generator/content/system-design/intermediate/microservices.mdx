@@ -1,0 +1,358 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Microservices Architecture
+---
+
+# Microservices Architecture
+
+## What are Microservices?
+
+Microservices is an architectural style where an application is built as a collection of small, independent services that communicate over a network. Each service is self-contained, focused on a specific business capability, and can be developed, deployed, and scaled independently.
+
+## Monolithic vs Microservices
+
+### Monolithic Architecture
+- **Structure:** Single codebase, all features in one application
+- **Deployment:** Deploy entire application as one unit
+- **Scaling:** Scale entire application together
+- **Technology:** Single technology stack
+- **Development:** Teams work on same codebase
+- **Failure:** One bug can crash entire application
+
+### Microservices Architecture
+- **Structure:** Multiple small services, each with own codebase
+- **Deployment:** Deploy services independently
+- **Scaling:** Scale individual services based on demand
+- **Technology:** Each service can use different stack
+- **Development:** Teams own specific services
+- **Failure:** Service failures isolated, don't crash entire system
+
+## Microservices Characteristics
+
+**Single Responsibility:** Each service does one thing well (e.g., User Service handles only user management)
+
+**Independent Deployment:** Deploy services without affecting others
+
+**Decentralized Data:** Each service has its own database
+
+**Technology Agnostic:** Services can use different languages/frameworks
+
+**Organized Around Business Capabilities:** Services align with business domains
+
+**Automated Deployment:** CI/CD pipelines for each service
+
+**Failure Isolation:** One service failure doesn't bring down entire system
+
+## When to Use Microservices
+
+**Good Fit:**
+- Large, complex applications
+- Multiple teams working independently
+- Different scaling requirements per feature
+- Need for technology diversity
+- Frequent deployments required
+- Long-term project with evolving requirements
+
+**Not a Good Fit:**
+- Small applications with simple requirements
+- Small team (< 5 developers)
+- Tight deadlines with limited resources
+- Unclear or frequently changing domain boundaries
+- Limited DevOps maturity
+
+## Microservices Communication
+
+### Synchronous Communication (REST/gRPC)
+
+**REST APIs:**
+- Service A calls Service B's HTTP endpoint
+- Waits for response before continuing
+- Simple and widely understood
+- Can create tight coupling
+
+**Example:** User Service calls Order Service to get user's orders
+
+```javascript
+// User Service calls Order Service
+async function getUserWithOrders(userId) {
+  // Get user from own database
+  const user = await userDB.findById(userId);
+  
+  // Call Order Service via HTTP
+  const response = await fetch(`http://order-service/api/orders?userId=${userId}`);
+  const orders = await response.json();
+  
+  return {
+    ...user,
+    orders
+  };
+}
+```
+
+**gRPC:**
+- Binary protocol, faster than REST
+- Strongly typed with Protocol Buffers
+- Supports streaming
+- Better for service-to-service communication
+
+### Asynchronous Communication (Message Queues)
+
+**Event-Driven:**
+- Service publishes events to message broker
+- Other services subscribe to events
+- Loose coupling between services
+- Better for eventual consistency
+
+**Example:** Order created → Inventory Service, Notification Service, Analytics Service all receive event
+
+```javascript
+// Order Service publishes event
+async function createOrder(orderData) {
+  const order = await orderDB.create(orderData);
+  
+  // Publish event to message queue
+  await messageQueue.publish('order.created', {
+    orderId: order.id,
+    userId: order.userId,
+    items: order.items,
+    total: order.total
+  });
+  
+  return order;
+}
+
+// Inventory Service subscribes to event
+messageQueue.subscribe('order.created', async (event) => {
+  await reduceInventory(event.items);
+});
+
+// Notification Service subscribes to event
+messageQueue.subscribe('order.created', async (event) => {
+  await sendOrderConfirmationEmail(event.userId, event.orderId);
+});
+```
+
+## API Gateway Pattern
+
+**Purpose:** Single entry point for all client requests, routes to appropriate microservices
+
+**Responsibilities:**
+- Request routing to correct service
+- Authentication and authorization
+- Rate limiting
+- Request/response transformation
+- Load balancing
+- Caching
+- Logging and monitoring
+
+**Benefits:**
+- Clients don't need to know about multiple services
+- Centralized security
+- Reduced number of client requests (aggregation)
+
+**Example Flow:**
+```
+Mobile App → API Gateway → User Service
+                        → Order Service  
+                        → Product Service
+```
+
+## Service Discovery
+
+**Problem:** Services need to find each other in dynamic environments (IP addresses change)
+
+**Solution:** Service registry where services register themselves and discover others
+
+**Approaches:**
+
+**Client-Side Discovery:**
+- Service queries registry for service location
+- Client chooses instance and makes request
+- Example: Netflix Eureka
+
+**Server-Side Discovery:**
+- Load balancer queries registry
+- Routes request to available instance
+- Example: Kubernetes Service, AWS ELB
+
+## Data Management in Microservices
+
+### Database Per Service Pattern
+
+**Principle:** Each microservice has its own database, no direct database access between services
+
+**Benefits:**
+- Services loosely coupled
+- Choose best database for each service
+- Independent scaling
+
+**Challenges:**
+- Data consistency across services
+- Implementing queries that span services
+- Managing distributed transactions
+
+### Saga Pattern (Distributed Transactions)
+
+**Problem:** Need to maintain data consistency across multiple services without distributed transactions
+
+**Solution:** Sequence of local transactions, each service updates its database and publishes event
+
+**Example: Order Processing Saga**
+
+1. Order Service creates order (status: PENDING)
+2. Payment Service processes payment
+   - Success → publishes PaymentCompleted
+   - Failure → publishes PaymentFailed
+3. Inventory Service reserves items
+   - Success → publishes InventoryReserved
+   - Failure → publishes InventoryFailed (triggers compensation)
+4. Shipping Service creates shipment
+   - Success → Order status = COMPLETED
+
+**Compensation:** If any step fails, previous steps are reversed (e.g., refund payment, release inventory)
+
+## Circuit Breaker Pattern
+
+**Purpose:** Prevent cascading failures when a service is down
+
+**How it Works:**
+
+**Closed State (Normal):**
+- Requests pass through to service
+- Track failures
+
+**Open State (Service Down):**
+- After threshold failures, circuit opens
+- Requests fail immediately without calling service
+- Prevents overwhelming failing service
+
+**Half-Open State (Testing):**
+- After timeout, allow limited requests
+- If successful, close circuit
+- If failed, reopen circuit
+
+```javascript
+class CircuitBreaker {
+  constructor(service, threshold = 5, timeout = 60000) {
+    this.service = service;
+    this.threshold = threshold;
+    this.timeout = timeout;
+    this.failures = 0;
+    this.state = 'CLOSED';
+    this.nextAttempt = Date.now();
+  }
+  
+  async call(method, ...args) {
+    if (this.state === 'OPEN') {
+      if (Date.now() < this.nextAttempt) {
+        throw new Error('Circuit breaker is OPEN');
+      }
+      this.state = 'HALF_OPEN';
+    }
+    
+    try {
+      const result = await this.service[method](...args);
+      this.onSuccess();
+      return result;
+    } catch (error) {
+      this.onFailure();
+      throw error;
+    }
+  }
+  
+  onSuccess() {
+    this.failures = 0;
+    this.state = 'CLOSED';
+  }
+  
+  onFailure() {
+    this.failures++;
+    if (this.failures >= this.threshold) {
+      this.state = 'OPEN';
+      this.nextAttempt = Date.now() + this.timeout;
+    }
+  }
+}
+```
+
+## .NET Microservices Example
+
+```csharp
+// User Service
+[ApiController]
+[Route("api/[controller]")]
+public class UsersController : ControllerBase
+{
+    private readonly IUserRepository _userRepository;
+    private readonly IMessageBus _messageBus;
+    
+    [HttpPost]
+    public async Task<IActionResult> CreateUser([FromBody] CreateUserRequest request)
+    {
+        var user = await _userRepository.CreateAsync(request);
+        
+        // Publish event for other services
+        await _messageBus.PublishAsync("user.created", new UserCreatedEvent
+        {
+            UserId = user.Id,
+            Email = user.Email,
+            CreatedAt = DateTime.UtcNow
+        });
+        
+        return CreatedAtAction(nameof(GetUser), new { id = user.Id }, user);
+    }
+}
+
+// Notification Service subscribes to events
+public class UserEventHandler : IEventHandler<UserCreatedEvent>
+{
+    private readonly IEmailService _emailService;
+    
+    public async Task HandleAsync(UserCreatedEvent @event)
+    {
+        await _emailService.SendWelcomeEmailAsync(@event.Email);
+    }
+}
+```
+
+## Microservices Challenges
+
+**Distributed System Complexity:** Network latency, partial failures, eventual consistency
+
+**Data Consistency:** No ACID transactions across services
+
+**Testing:** Integration testing more complex
+
+**Deployment:** Need robust CI/CD and orchestration
+
+**Monitoring:** Distributed tracing across services required
+
+**Network Overhead:** More inter-service communication
+
+**Operational Overhead:** More services to deploy and monitor
+
+## Best Practices
+
+- **Start with monolith, split when needed** - Don't over-engineer early
+- **Define clear service boundaries** - Align with business domains
+- **Implement comprehensive monitoring** - Distributed tracing, logging
+- **Automate everything** - CI/CD, testing, deployment
+- **Design for failure** - Circuit breakers, retries, timeouts
+- **Use API Gateway** - Single entry point for clients
+- **Implement service discovery** - Dynamic service location
+- **Version APIs carefully** - Backward compatibility
+- **Secure service communication** - mTLS, API keys, OAuth
+- **Document APIs** - OpenAPI/Swagger for each service
+
+## Interview Tips
+
+- **Explain benefits and challenges**: Not a silver bullet
+- **Show communication patterns**: Sync vs async
+- **Demonstrate failure handling**: Circuit breaker, retries
+- **Discuss data management**: Database per service, saga pattern
+- **Mention API Gateway**: Centralized entry point
+- **Show service discovery**: How services find each other
+
+## Summary
+
+Microservices architecture splits applications into small, independent services. Each service owns its business capability and database. Services communicate via REST/gRPC (synchronous) or message queues (asynchronous). Use API Gateway as single entry point. Implement service discovery for dynamic environments. Handle distributed transactions with saga pattern. Prevent cascading failures with circuit breakers. Requires strong DevOps culture and automation. Best for large, complex applications with multiple teams. Start with monolith, split when needed. Essential for building scalable, maintainable distributed systems.

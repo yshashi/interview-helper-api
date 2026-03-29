@@ -1,0 +1,348 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Service Discovery in Microservices
+---
+
+# Service Discovery in Microservices
+
+## What is Service Discovery?
+
+**Service Discovery** is the process of automatically detecting and locating services in a microservices architecture. It enables services to find and communicate with each other without hardcoding network locations.
+
+## Why Service Discovery?
+
+```javascript
+// Problem: Hardcoded URLs
+const userServiceUrl = 'http://192.168.1.10:3001';
+const orderServiceUrl = 'http://192.168.1.11:3002';
+
+// Issues:
+// - IP changes require code updates
+// - Can't scale dynamically
+// - Manual configuration
+// - No load balancing
+```
+
+## Service Discovery Patterns
+
+### 1. Client-Side Discovery
+
+Client queries service registry and selects an instance.
+
+```javascript
+const consul = require('consul')();
+
+async function callUserService(userId) {
+  // Query service registry
+  const services = await consul.health.service('user-service');
+  
+  // Select instance (load balancing)
+  const service = services[Math.floor(Math.random() * services.length)];
+  
+  // Make request
+  const url = `http://${service.Service.Address}:${service.Service.Port}`;
+  const response = await axios.get(`${url}/users/${userId}`);
+  
+  return response.data;
+}
+```
+
+### 2. Server-Side Discovery
+
+Load balancer queries service registry.
+
+```javascript
+// Client makes request to load balancer
+const response = await axios.get('http://load-balancer/users/123');
+
+// Load balancer:
+// 1. Queries service registry
+// 2. Selects instance
+// 3. Forwards request
+// 4. Returns response
+```
+
+## Service Registry Tools
+
+### Consul
+
+```javascript
+const Consul = require('consul');
+const consul = new Consul();
+
+// Register service
+async function registerService() {
+  await consul.agent.service.register({
+    name: 'user-service',
+    address: 'localhost',
+    port: 3001,
+    check: {
+      http: 'http://localhost:3001/health',
+      interval: '10s',
+      timeout: '5s'
+    }
+  });
+}
+
+// Discover service
+async function discoverService(serviceName) {
+  const result = await consul.health.service(serviceName);
+  return result.map(entry => ({
+    address: entry.Service.Address,
+    port: entry.Service.Port
+  }));
+}
+
+// Deregister on shutdown
+process.on('SIGTERM', async () => {
+  await consul.agent.service.deregister('user-service');
+  process.exit(0);
+});
+```
+
+### Eureka (Netflix)
+
+```javascript
+const Eureka = require('eureka-js-client').Eureka;
+
+const client = new Eureka({
+  instance: {
+    app: 'user-service',
+    hostName: 'localhost',
+    ipAddr: '127.0.0.1',
+    port: {
+      '$': 3001,
+      '@enabled': true
+    },
+    vipAddress: 'user-service',
+    dataCenterInfo: {
+      '@class': 'com.netflix.appinfo.InstanceInfo$DefaultDataCenterInfo',
+      name: 'MyOwn'
+    }
+  },
+  eureka: {
+    host: 'eureka-server',
+    port: 8761,
+    servicePath: '/eureka/apps/'
+  }
+});
+
+client.start();
+```
+
+### Kubernetes Service Discovery
+
+```yaml
+# Service definition
+apiVersion: v1
+kind: Service
+metadata:
+  name: user-service
+spec:
+  selector:
+    app: user-service
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 3001
+```
+
+```javascript
+// Access via DNS
+const response = await axios.get('http://user-service/users/123');
+
+// Kubernetes automatically:
+// - Discovers pods
+// - Load balances
+// - Updates on changes
+```
+
+## Health Checks
+
+```javascript
+const express = require('express');
+const app = express();
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+  // Check dependencies
+  const isHealthy = checkDatabase() && checkCache();
+  
+  if (isHealthy) {
+    res.status(200).json({ status: 'UP' });
+  } else {
+    res.status(503).json({ status: 'DOWN' });
+  }
+});
+
+function checkDatabase() {
+  try {
+    // Ping database
+    return db.ping();
+  } catch (error) {
+    return false;
+  }
+}
+```
+
+## Load Balancing Strategies
+
+### Round Robin
+
+```javascript
+class RoundRobinLoadBalancer {
+  constructor() {
+    this.currentIndex = 0;
+  }
+  
+  selectInstance(instances) {
+    const instance = instances[this.currentIndex];
+    this.currentIndex = (this.currentIndex + 1) % instances.length;
+    return instance;
+  }
+}
+```
+
+### Random
+
+```javascript
+function selectRandom(instances) {
+  const index = Math.floor(Math.random() * instances.length);
+  return instances[index];
+}
+```
+
+### Least Connections
+
+```javascript
+class LeastConnectionsLoadBalancer {
+  constructor() {
+    this.connections = new Map();
+  }
+  
+  selectInstance(instances) {
+    let minConnections = Infinity;
+    let selectedInstance = null;
+    
+    for (const instance of instances) {
+      const connections = this.connections.get(instance) || 0;
+      if (connections < minConnections) {
+        minConnections = connections;
+        selectedInstance = instance;
+      }
+    }
+    
+    return selectedInstance;
+  }
+}
+```
+
+## Complete Example
+
+```javascript
+const express = require('express');
+const consul = require('consul')();
+
+const SERVICE_NAME = 'user-service';
+const SERVICE_PORT = 3001;
+
+const app = express();
+
+// Register service on startup
+async function register() {
+  await consul.agent.service.register({
+    name: SERVICE_NAME,
+    address: 'localhost',
+    port: SERVICE_PORT,
+    check: {
+      http: `http://localhost:${SERVICE_PORT}/health`,
+      interval: '10s'
+    }
+  });
+  console.log('Service registered');
+}
+
+// Health check
+app.get('/health', (req, res) => {
+  res.json({ status: 'UP' });
+});
+
+// Business logic
+app.get('/users/:id', async (req, res) => {
+  const user = await User.findById(req.params.id);
+  res.json(user);
+});
+
+// Start server
+app.listen(SERVICE_PORT, async () => {
+  await register();
+  console.log(`Server running on port ${SERVICE_PORT}`);
+});
+
+// Deregister on shutdown
+process.on('SIGTERM', async () => {
+  await consul.agent.service.deregister(SERVICE_NAME);
+  process.exit(0);
+});
+```
+
+## Service Discovery Client
+
+```javascript
+class ServiceDiscoveryClient {
+  constructor(consul) {
+    this.consul = consul;
+    this.cache = new Map();
+  }
+  
+  async getService(serviceName) {
+    // Check cache
+    if (this.cache.has(serviceName)) {
+      const cached = this.cache.get(serviceName);
+      if (Date.now() - cached.timestamp < 30000) {
+        return cached.instances;
+      }
+    }
+    
+    // Query registry
+    const result = await this.consul.health.service(serviceName);
+    const instances = result.map(entry => ({
+      address: entry.Service.Address,
+      port: entry.Service.Port
+    }));
+    
+    // Update cache
+    this.cache.set(serviceName, {
+      instances,
+      timestamp: Date.now()
+    });
+    
+    return instances;
+  }
+  
+  async callService(serviceName, path) {
+    const instances = await this.getService(serviceName);
+    const instance = this.selectInstance(instances);
+    
+    const url = `http://${instance.address}:${instance.port}${path}`;
+    return axios.get(url);
+  }
+  
+  selectInstance(instances) {
+    return instances[Math.floor(Math.random() * instances.length)];
+  }
+}
+```
+
+## Interview Tips
+
+- **Explain purpose**: Automatic service location
+- **Show patterns**: Client-side vs server-side
+- **Demonstrate tools**: Consul, Eureka, Kubernetes
+- **Discuss health checks**: Service availability
+- **Mention load balancing**: Distribution strategies
+- **Show registration**: Service lifecycle
+
+## Summary
+
+Service Discovery automatically detects and locates services in microservices architecture. Use service registries like Consul, Eureka, or Kubernetes DNS. Implement health checks for availability monitoring. Support load balancing strategies like round-robin or least connections. Essential for dynamic, scalable microservices systems.

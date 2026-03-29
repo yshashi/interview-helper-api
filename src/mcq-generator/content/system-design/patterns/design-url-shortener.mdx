@@ -1,0 +1,607 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Design URL Shortener
+---
+
+# Design URL Shortener
+
+## Requirements
+
+### Functional Requirements
+
+- Shorten long URLs to short URLs
+- Redirect short URLs to original URLs
+- Custom short URLs (optional)
+- URL expiration (optional)
+- Analytics (click tracking)
+
+### Non-Functional Requirements
+
+**Scale:**
+- 100 million URLs shortened per month
+- 10:1 read-to-write ratio (more redirects than creates)
+
+**Performance:**
+- Redirect in < 100ms
+- Shorten URL in < 500ms
+
+**Availability:**
+- 99.9% uptime
+- No data loss
+
+## Capacity Estimation
+
+**Storage:**
+- 100M URLs/month × 12 months × 5 years = 6 billion URLs
+- Average URL: 500 bytes
+- Total: 6B × 500 bytes = 3 TB
+
+**Requests:**
+- Writes: 100M/month ÷ 30 days ÷ 86400 seconds = 40 writes/second
+- Reads: 40 × 10 = 400 reads/second
+
+**Short URL Length:**
+- Characters: [a-zA-Z0-9] = 62 characters
+- 6 characters: 62^6 = 56 billion combinations (sufficient)
+- 7 characters: 62^7 = 3.5 trillion combinations
+
+## High-Level Design
+
+```
+┌─────────┐
+│ Client  │
+└────┬────┘
+     │
+┌────▼────────┐
+│ Load        │
+│ Balancer    │
+└────┬────────┘
+     │
+┌────▼────────────────────────┐
+│ API Servers                 │
+│ (Create Short URL, Redirect)│
+└────┬────────────────────────┘
+     │
+     ├──────────┬──────────────┐
+     │          │              │
+┌────▼────┐ ┌──▼──────┐  ┌───▼────────┐
+│ Cache   │ │ Database│  │ Analytics  │
+│ (Redis) │ │ (MySQL) │  │ (Kafka)    │
+└─────────┘ └─────────┘  └────────────┘
+```
+
+## Database Schema
+
+```sql
+CREATE TABLE urls (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  short_code VARCHAR(10) UNIQUE NOT NULL,
+  original_url VARCHAR(2048) NOT NULL,
+  user_id BIGINT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  expires_at TIMESTAMP NULL,
+  click_count INT DEFAULT 0,
+  INDEX idx_short_code (short_code),
+  INDEX idx_user_id (user_id)
+);
+
+CREATE TABLE clicks (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  short_code VARCHAR(10) NOT NULL,
+  clicked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  ip_address VARCHAR(45),
+  user_agent TEXT,
+  referrer VARCHAR(2048),
+  INDEX idx_short_code (short_code),
+  INDEX idx_clicked_at (clicked_at)
+);
+```
+
+## Short Code Generation
+
+### Approach 1: Base62 Encoding (Auto-increment ID)
+
+```javascript
+class Base62Encoder {
+  constructor() {
+    this.chars = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  }
+  
+  encode(num) {
+    if (num === 0) return this.chars[0];
+    
+    let result = '';
+    while (num > 0) {
+      result = this.chars[num % 62] + result;
+      num = Math.floor(num / 62);
+    }
+    
+    return result.padStart(6, this.chars[0]);
+  }
+  
+  decode(str) {
+    let num = 0;
+    for (let i = 0; i < str.length; i++) {
+      num = num * 62 + this.chars.indexOf(str[i]);
+    }
+    return num;
+  }
+}
+
+// Usage
+const encoder = new Base62Encoder();
+
+async function createShortURL(originalUrl) {
+  // Insert into database (auto-increment ID)
+  const result = await db.query(
+    'INSERT INTO urls (original_url) VALUES (?)',
+    [originalUrl]
+  );
+  
+  const id = result.insertId;
+  const shortCode = encoder.encode(id);
+  
+  // Update with short code
+  await db.query(
+    'UPDATE urls SET short_code = ? WHERE id = ?',
+    [shortCode, id]
+  );
+  
+  return `https://short.url/${shortCode}`;
+}
+```
+
+**Pros:** Simple, predictable
+**Cons:** Sequential (predictable), requires database roundtrip
+
+### Approach 2: Random Generation with Collision Check
+
+```javascript
+const crypto = require('crypto');
+
+class RandomShortCodeGenerator {
+  generateShortCode(length = 6) {
+    const chars = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    let result = '';
+    
+    const randomBytes = crypto.randomBytes(length);
+    for (let i = 0; i < length; i++) {
+      result += chars[randomBytes[i] % 62];
+    }
+    
+    return result;
+  }
+  
+  async createShortURL(originalUrl, maxRetries = 5) {
+    for (let i = 0; i < maxRetries; i++) {
+      const shortCode = this.generateShortCode();
+      
+      try {
+        await db.query(
+          'INSERT INTO urls (short_code, original_url) VALUES (?, ?)',
+          [shortCode, originalUrl]
+        );
+        
+        return `https://short.url/${shortCode}`;
+      } catch (error) {
+        if (error.code === 'ER_DUP_ENTRY') {
+          // Collision, retry
+          continue;
+        }
+        throw error;
+      }
+    }
+    
+    throw new Error('Failed to generate unique short code');
+  }
+}
+```
+
+**Pros:** Non-sequential, distributed generation
+**Cons:** Potential collisions, retry logic needed
+
+### Approach 3: Pre-generated Range (Scalable)
+
+```javascript
+class RangeBasedGenerator {
+  constructor(serverId, totalServers) {
+    this.serverId = serverId;
+    this.totalServers = totalServers;
+    this.counter = 0;
+    this.encoder = new Base62Encoder();
+  }
+  
+  generateShortCode() {
+    // Each server gets a range of IDs
+    // Server 1: 0, 10, 20, 30...
+    // Server 2: 1, 11, 21, 31...
+    const id = this.counter * this.totalServers + this.serverId;
+    this.counter++;
+    
+    return this.encoder.encode(id);
+  }
+  
+  async createShortURL(originalUrl) {
+    const shortCode = this.generateShortCode();
+    
+    await db.query(
+      'INSERT INTO urls (short_code, original_url) VALUES (?, ?)',
+      [shortCode, originalUrl]
+    );
+    
+    return `https://short.url/${shortCode}`;
+  }
+}
+
+// Initialize with server ID
+const generator = new RangeBasedGenerator(
+  process.env.SERVER_ID,
+  process.env.TOTAL_SERVERS
+);
+```
+
+**Pros:** No collisions, no database lookup, scalable
+**Cons:** Requires coordination of server IDs
+
+## API Implementation
+
+```javascript
+const express = require('express');
+const app = express();
+
+class URLShortenerService {
+  constructor(db, cache, generator) {
+    this.db = db;
+    this.cache = cache;
+    this.generator = generator;
+  }
+  
+  // Create short URL
+  async createShortURL(originalUrl, userId = null, customCode = null, expiresAt = null) {
+    // Validate URL
+    if (!this.isValidURL(originalUrl)) {
+      throw new Error('Invalid URL');
+    }
+    
+    // Check if custom code already exists
+    if (customCode) {
+      const existing = await this.db.query(
+        'SELECT id FROM urls WHERE short_code = ?',
+        [customCode]
+      );
+      
+      if (existing.length > 0) {
+        throw new Error('Custom code already taken');
+      }
+    }
+    
+    const shortCode = customCode || this.generator.generateShortCode();
+    
+    // Insert into database
+    await this.db.query(
+      'INSERT INTO urls (short_code, original_url, user_id, expires_at) VALUES (?, ?, ?, ?)',
+      [shortCode, originalUrl, userId, expiresAt]
+    );
+    
+    // Cache the mapping
+    await this.cache.setEx(
+      `url:${shortCode}`,
+      3600, // 1 hour
+      originalUrl
+    );
+    
+    return {
+      shortUrl: `https://short.url/${shortCode}`,
+      shortCode,
+      originalUrl
+    };
+  }
+  
+  // Redirect to original URL
+  async redirect(shortCode) {
+    // Try cache first
+    let originalUrl = await this.cache.get(`url:${shortCode}`);
+    
+    if (originalUrl) {
+      // Track click asynchronously
+      this.trackClick(shortCode).catch(console.error);
+      return originalUrl;
+    }
+    
+    // Fetch from database
+    const result = await this.db.query(
+      'SELECT original_url, expires_at FROM urls WHERE short_code = ?',
+      [shortCode]
+    );
+    
+    if (result.length === 0) {
+      throw new Error('URL not found');
+    }
+    
+    const url = result[0];
+    
+    // Check expiration
+    if (url.expires_at && new Date(url.expires_at) < new Date()) {
+      throw new Error('URL expired');
+    }
+    
+    originalUrl = url.original_url;
+    
+    // Cache for future requests
+    await this.cache.setEx(`url:${shortCode}`, 3600, originalUrl);
+    
+    // Track click asynchronously
+    this.trackClick(shortCode).catch(console.error);
+    
+    return originalUrl;
+  }
+  
+  // Track click
+  async trackClick(shortCode, metadata = {}) {
+    // Increment counter in database
+    await this.db.query(
+      'UPDATE urls SET click_count = click_count + 1 WHERE short_code = ?',
+      [shortCode]
+    );
+    
+    // Log detailed click data
+    await this.db.query(
+      'INSERT INTO clicks (short_code, ip_address, user_agent, referrer) VALUES (?, ?, ?, ?)',
+      [shortCode, metadata.ip, metadata.userAgent, metadata.referrer]
+    );
+  }
+  
+  // Get analytics
+  async getAnalytics(shortCode) {
+    const [urlInfo] = await this.db.query(
+      'SELECT original_url, created_at, click_count FROM urls WHERE short_code = ?',
+      [shortCode]
+    );
+    
+    const clicks = await this.db.query(
+      'SELECT DATE(clicked_at) as date, COUNT(*) as count FROM clicks WHERE short_code = ? GROUP BY DATE(clicked_at) ORDER BY date DESC LIMIT 30',
+      [shortCode]
+    );
+    
+    return {
+      ...urlInfo,
+      clicksByDate: clicks
+    };
+  }
+  
+  isValidURL(url) {
+    try {
+      new URL(url);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+// Routes
+const service = new URLShortenerService(db, redis, generator);
+
+app.post('/api/shorten', async (req, res) => {
+  try {
+    const { url, customCode, expiresAt } = req.body;
+    const userId = req.user?.id;
+    
+    const result = await service.createShortURL(url, userId, customCode, expiresAt);
+    
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get('/:shortCode', async (req, res) => {
+  try {
+    const originalUrl = await service.redirect(req.params.shortCode);
+    
+    res.redirect(301, originalUrl);
+  } catch (error) {
+    res.status(404).send('URL not found');
+  }
+});
+
+app.get('/api/analytics/:shortCode', async (req, res) => {
+  try {
+    const analytics = await service.getAnalytics(req.params.shortCode);
+    res.json(analytics);
+  } catch (error) {
+    res.status(404).json({ error: 'URL not found' });
+  }
+});
+```
+
+## Caching Strategy
+
+```javascript
+class CacheManager {
+  constructor(redis) {
+    this.redis = redis;
+  }
+  
+  // Cache with LRU eviction
+  async cacheURL(shortCode, originalUrl) {
+    await this.redis.setEx(
+      `url:${shortCode}`,
+      3600, // 1 hour TTL
+      originalUrl
+    );
+  }
+  
+  // Warm cache with popular URLs
+  async warmCache() {
+    const popular = await db.query(
+      'SELECT short_code, original_url FROM urls ORDER BY click_count DESC LIMIT 10000'
+    );
+    
+    for (const url of popular) {
+      await this.cacheURL(url.short_code, url.original_url);
+    }
+  }
+  
+  // Cache analytics
+  async cacheAnalytics(shortCode, data) {
+    await this.redis.setEx(
+      `analytics:${shortCode}`,
+      300, // 5 minutes
+      JSON.stringify(data)
+    );
+  }
+}
+```
+
+## Database Sharding
+
+```javascript
+// Shard by short code hash
+class ShardedDatabase {
+  constructor(shards) {
+    this.shards = shards;
+  }
+  
+  getShardForCode(shortCode) {
+    const hash = this.hash(shortCode);
+    return this.shards[hash % this.shards.length];
+  }
+  
+  hash(str) {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      hash = ((hash << 5) - hash) + str.charCodeAt(i);
+    }
+    return Math.abs(hash);
+  }
+  
+  async insert(shortCode, originalUrl) {
+    const shard = this.getShardForCode(shortCode);
+    return await shard.query(
+      'INSERT INTO urls (short_code, original_url) VALUES (?, ?)',
+      [shortCode, originalUrl]
+    );
+  }
+  
+  async get(shortCode) {
+    const shard = this.getShardForCode(shortCode);
+    return await shard.query(
+      'SELECT original_url FROM urls WHERE short_code = ?',
+      [shortCode]
+    );
+  }
+}
+```
+
+## .NET Implementation
+
+```csharp
+public class URLShortenerService
+{
+    private readonly IDbConnection _db;
+    private readonly IDistributedCache _cache;
+    private readonly IShortCodeGenerator _generator;
+    
+    public async Task<ShortURLResult> CreateShortURLAsync(
+        string originalUrl,
+        string customCode = null,
+        DateTime? expiresAt = null)
+    {
+        if (!IsValidURL(originalUrl))
+        {
+            throw new ArgumentException("Invalid URL");
+        }
+        
+        var shortCode = customCode ?? _generator.Generate();
+        
+        await _db.ExecuteAsync(
+            "INSERT INTO urls (short_code, original_url, expires_at) VALUES (@ShortCode, @OriginalUrl, @ExpiresAt)",
+            new { ShortCode = shortCode, OriginalUrl = originalUrl, ExpiresAt = expiresAt }
+        );
+        
+        // Cache
+        await _cache.SetStringAsync(
+            $"url:{shortCode}",
+            originalUrl,
+            new DistributedCacheEntryOptions
+            {
+                AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(1)
+            }
+        );
+        
+        return new ShortURLResult
+        {
+            ShortUrl = $"https://short.url/{shortCode}",
+            ShortCode = shortCode,
+            OriginalUrl = originalUrl
+        };
+    }
+    
+    public async Task<string> RedirectAsync(string shortCode)
+    {
+        // Try cache
+        var cached = await _cache.GetStringAsync($"url:{shortCode}");
+        if (cached != null)
+        {
+            _ = TrackClickAsync(shortCode); // Fire and forget
+            return cached;
+        }
+        
+        // Fetch from database
+        var url = await _db.QueryFirstOrDefaultAsync<URLRecord>(
+            "SELECT original_url, expires_at FROM urls WHERE short_code = @ShortCode",
+            new { ShortCode = shortCode }
+        );
+        
+        if (url == null)
+        {
+            throw new NotFoundException("URL not found");
+        }
+        
+        if (url.ExpiresAt.HasValue && url.ExpiresAt < DateTime.UtcNow)
+        {
+            throw new ExpiredException("URL expired");
+        }
+        
+        // Cache
+        await _cache.SetStringAsync($"url:{shortCode}", url.OriginalUrl);
+        
+        _ = TrackClickAsync(shortCode);
+        
+        return url.OriginalUrl;
+    }
+}
+```
+
+## Scaling Considerations
+
+**Horizontal Scaling:**
+- Stateless API servers
+- Database sharding by short code
+- Cache distributed across nodes
+
+**Performance Optimization:**
+- Cache hot URLs (80/20 rule)
+- Use CDN for static assets
+- Connection pooling
+- Async click tracking
+
+**High Availability:**
+- Multiple API servers
+- Database replication
+- Redis cluster
+- Health checks and auto-scaling
+
+## Interview Tips
+
+- **Start with requirements** - Functional and scale
+- **Estimate capacity** - Storage and requests
+- **Design short code generation** - Base62, random, or range-based
+- **Implement caching** - Redis for hot URLs
+- **Discuss sharding** - Scale database horizontally
+- **Show analytics** - Click tracking and reporting
+
+## Summary
+
+URL shortener converts long URLs to short codes. Use Base62 encoding of auto-increment IDs, random generation with collision check, or range-based generation for scalability. Store mappings in MySQL with sharding by short code. Cache hot URLs in Redis (80/20 rule). Implement 301 redirects for SEO. Track clicks asynchronously for analytics. Support custom codes and expiration. Handle 40 writes/second and 400 reads/second. Essential pattern for understanding encoding, caching, and database design.

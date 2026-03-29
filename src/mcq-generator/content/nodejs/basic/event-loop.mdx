@@ -1,0 +1,240 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Event Loop in Node.js
+---
+
+# Event Loop in Node.js
+
+## What is the Event Loop?
+
+The **Event Loop** is the mechanism that allows Node.js to perform non-blocking I/O operations despite JavaScript being single-threaded. It continuously checks for and executes callbacks from the event queue.
+
+## Event Loop Phases
+
+```
+   ┌───────────────────────────┐
+┌─>│           timers          │
+│  └─────────────┬─────────────┘
+│  ┌─────────────┴─────────────┐
+│  │     pending callbacks     │
+│  └─────────────┬─────────────┘
+│  ┌─────────────┴─────────────┐
+│  │       idle, prepare       │
+│  └─────────────┬─────────────┘      ┌───────────────┐
+│  ┌─────────────┴─────────────┐      │   incoming:   │
+│  │           poll            │<─────┤  connections, │
+│  └─────────────┬─────────────┘      │   data, etc.  │
+│  ┌─────────────┴─────────────┐      └───────────────┘
+│  │           check           │
+│  └─────────────┬─────────────┘
+│  ┌─────────────┴─────────────┐
+└──┤      close callbacks      │
+   └───────────────────────────┘
+```
+
+### 1. Timers Phase
+
+Executes callbacks scheduled by `setTimeout()` and `setInterval()`.
+
+```javascript
+setTimeout(() => {
+  console.log('Timeout callback');
+}, 1000);
+
+setInterval(() => {
+  console.log('Interval callback');
+}, 2000);
+```
+
+### 2. Pending Callbacks Phase
+
+Executes I/O callbacks deferred to the next loop iteration.
+
+### 3. Poll Phase
+
+Retrieves new I/O events and executes I/O related callbacks.
+
+```javascript
+const fs = require('fs');
+
+fs.readFile('file.txt', (err, data) => {
+  console.log('File read complete'); // Poll phase
+});
+```
+
+### 4. Check Phase
+
+Executes `setImmediate()` callbacks.
+
+```javascript
+setImmediate(() => {
+  console.log('Immediate callback');
+});
+```
+
+### 5. Close Callbacks Phase
+
+Executes close event callbacks.
+
+```javascript
+const server = require('http').createServer();
+
+server.on('close', () => {
+  console.log('Server closed'); // Close callbacks phase
+});
+```
+
+## Microtasks vs Macrotasks
+
+### Microtasks (Higher Priority)
+
+```javascript
+// Promise callbacks
+Promise.resolve().then(() => {
+  console.log('Promise 1');
+});
+
+// process.nextTick (highest priority)
+process.nextTick(() => {
+  console.log('nextTick');
+});
+
+// Output:
+// nextTick
+// Promise 1
+```
+
+### Macrotasks
+
+```javascript
+setTimeout(() => {
+  console.log('setTimeout');
+}, 0);
+
+setImmediate(() => {
+  console.log('setImmediate');
+});
+
+// Output order may vary
+```
+
+## Execution Order Example
+
+```javascript
+console.log('1. Start');
+
+setTimeout(() => {
+  console.log('2. setTimeout');
+}, 0);
+
+setImmediate(() => {
+  console.log('3. setImmediate');
+});
+
+Promise.resolve().then(() => {
+  console.log('4. Promise');
+});
+
+process.nextTick(() => {
+  console.log('5. nextTick');
+});
+
+console.log('6. End');
+
+// Output:
+// 1. Start
+// 6. End
+// 5. nextTick
+// 4. Promise
+// 2. setTimeout
+// 3. setImmediate
+```
+
+## process.nextTick()
+
+Executes callback after current operation completes, before event loop continues.
+
+```javascript
+console.log('Start');
+
+process.nextTick(() => {
+  console.log('nextTick 1');
+  process.nextTick(() => {
+    console.log('nextTick 2');
+  });
+});
+
+Promise.resolve().then(() => {
+  console.log('Promise');
+});
+
+console.log('End');
+
+// Output:
+// Start
+// End
+// nextTick 1
+// nextTick 2
+// Promise
+```
+
+## setImmediate() vs setTimeout()
+
+```javascript
+// In I/O cycle, setImmediate is always first
+const fs = require('fs');
+
+fs.readFile('file.txt', () => {
+  setTimeout(() => {
+    console.log('setTimeout');
+  }, 0);
+  
+  setImmediate(() => {
+    console.log('setImmediate');
+  });
+});
+
+// Output:
+// setImmediate
+// setTimeout
+```
+
+## Blocking the Event Loop
+
+```javascript
+// BAD - Blocks event loop
+function fibonacci(n) {
+  if (n <= 1) return n;
+  return fibonacci(n - 1) + fibonacci(n - 2);
+}
+
+app.get('/fib/:n', (req, res) => {
+  const result = fibonacci(req.params.n); // Blocks!
+  res.send(result.toString());
+});
+
+// GOOD - Non-blocking
+app.get('/fib/:n', async (req, res) => {
+  const result = await calculateFibonacci(req.params.n);
+  res.send(result.toString());
+});
+```
+
+## Best Practices
+
+1. **Avoid blocking operations** in the event loop
+2. **Use async operations** for I/O
+3. **Break up CPU-intensive tasks** using setImmediate
+4. **Use worker threads** for heavy computation
+
+## Interview Tips
+
+- **Explain event loop phases**: Timers, poll, check, close
+- **Describe execution order**: Microtasks before macrotasks
+- **Show nextTick vs setImmediate**: Priority differences
+- **Discuss blocking**: How to avoid blocking event loop
+- **Mention single-threaded**: How Node handles concurrency
+
+## Summary
+
+The Event Loop enables Node.js to perform non-blocking I/O operations by offloading operations to the system kernel. It processes callbacks in phases: timers, pending callbacks, poll, check, and close callbacks. Microtasks (process.nextTick, Promises) execute before macrotasks (setTimeout, setImmediate).

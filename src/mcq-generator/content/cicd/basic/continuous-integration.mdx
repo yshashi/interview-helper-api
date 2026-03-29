@@ -1,0 +1,290 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Continuous Integration
+---
+
+# Continuous Integration
+
+## What is Continuous Integration?
+
+**Continuous Integration (CI)** is a development practice where developers integrate code into a shared repository frequently, with each integration verified by automated build and tests.
+
+## Core Principles
+
+1. **Frequent Commits**: Integrate code multiple times per day
+2. **Automated Build**: Every commit triggers a build
+3. **Automated Testing**: Tests run on every build
+4. **Fast Feedback**: Developers know immediately if something breaks
+
+## CI Workflow
+
+```
+Developer → Write Code → Commit → Push to Repository
+                                        ↓
+                                  CI Server Detects Change
+                                        ↓
+                              ┌─────────┴─────────┐
+                              ↓                   ↓
+                         Pull Code           Build Application
+                              ↓                   ↓
+                         Run Tests          Run Linters
+                              ↓                   ↓
+                         ┌────┴────┐
+                         ↓         ↓
+                    Success    Failure
+                         ↓         ↓
+                    Notify    Notify & Stop
+```
+
+## Angular CI Example
+
+```yaml
+# .github/workflows/angular-ci.yml
+name: Angular CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        node-version: [16.x, 18.x]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v3
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Lint
+        run: npm run lint
+      
+      - name: Unit tests
+        run: npm run test:ci
+      
+      - name: Build
+        run: npm run build --prod
+      
+      - name: E2E tests
+        run: npm run e2e
+```
+
+## .NET CI Example
+
+```yaml
+# .github/workflows/dotnet-ci.yml
+name: .NET CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v3
+        with:
+          dotnet-version: '8.0.x'
+      
+      - name: Restore dependencies
+        run: dotnet restore
+      
+      - name: Build
+        run: dotnet build --no-restore --configuration Release
+      
+      - name: Test
+        run: dotnet test --no-build --verbosity normal --configuration Release
+      
+      - name: Code coverage
+        run: dotnet test --collect:"XPlat Code Coverage"
+      
+      - name: Upload coverage
+        uses: codecov/codecov-action@v3
+```
+
+## Node.js CI Example
+
+```yaml
+# .github/workflows/nodejs-ci.yml
+name: Node.js CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        node-version: [16.x, 18.x, 20.x]
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v3
+        with:
+          node-version: ${{ matrix.node-version }}
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Lint
+        run: npm run lint
+      
+      - name: Test
+        run: npm test
+      
+      - name: Build
+        run: npm run build
+```
+
+## Database CI Example
+
+```yaml
+# Test with multiple databases
+name: Database CI
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      
+      mongodb:
+        image: mongo:6
+        ports:
+          - 27017:27017
+      
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Run database migrations
+        run: npm run migrate
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test
+      
+      - name: Run tests
+        run: npm test
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test
+          MONGODB_URL: mongodb://localhost:27017/test
+          REDIS_URL: redis://localhost:6379
+```
+
+## Automated Testing
+
+```javascript
+// Jest configuration
+module.exports = {
+  preset: 'ts-jest',
+  testEnvironment: 'node',
+  collectCoverage: true,
+  coverageThreshold: {
+    global: {
+      branches: 80,
+      functions: 80,
+      lines: 80,
+      statements: 80
+    }
+  }
+};
+
+// Example test
+describe('UserService', () => {
+  it('should create user', async () => {
+    const user = await userService.create({
+      email: 'test@example.com',
+      name: 'Test User'
+    });
+    
+    expect(user.id).toBeDefined();
+    expect(user.email).toBe('test@example.com');
+  });
+});
+```
+
+## Build Automation
+
+```json
+{
+  "scripts": {
+    "lint": "eslint src/",
+    "test": "jest",
+    "test:ci": "jest --ci --coverage",
+    "build": "tsc && webpack",
+    "prebuild": "npm run lint && npm run test"
+  }
+}
+```
+
+## Benefits
+
+1. **Early Bug Detection**: Find issues quickly
+2. **Reduced Integration Risk**: Small, frequent merges
+3. **Better Code Quality**: Automated checks
+4. **Faster Development**: Quick feedback
+5. **Team Collaboration**: Shared codebase
+
+## Best Practices
+
+1. **Commit frequently**: At least daily
+2. **Keep builds fast**: Under 10 minutes
+3. **Fix broken builds immediately**: Top priority
+4. **Test in clone of production**: Realistic environment
+5. **Make it easy to get latest**: One command
+6. **Everyone can see results**: Transparency
+7. **Automate deployment**: To test environment
+
+## Interview Tips
+
+- **Explain CI**: Frequent integration with automated testing
+- **Show workflow**: Commit, build, test, feedback
+- **Demonstrate examples**: Angular, .NET, Node.js
+- **Discuss benefits**: Early detection, quality
+- **Mention tools**: GitHub Actions, Jenkins, GitLab CI
+- **Show best practices**: Fast builds, fix immediately
+
+## Summary
+
+Continuous Integration automates building and testing code with every commit. Developers integrate frequently, triggering automated builds and tests. Provides fast feedback on code quality. Works across all tech stacks. Essential for maintaining code quality and enabling rapid development.

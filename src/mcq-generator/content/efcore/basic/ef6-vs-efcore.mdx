@@ -1,0 +1,389 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Why EF Core? — EF6 vs EF Core
+---
+
+# Why EF Core? — Understanding the Transition from EF6
+
+## Overview
+
+Entity Framework 6 (EF6) is the legacy ORM for .NET Framework. Entity Framework Core (EF Core) is its modern, cross-platform successor for .NET 5+. As of 2026, **EF6 is in maintenance-only mode** — all new features land exclusively in EF Core (currently EF Core 9 / 10). New projects should always use EF Core.
+
+## Key Differences
+
+| Feature                  | EF6                 | EF Core                             |
+| ------------------------ | ------------------- | ----------------------------------- |
+| **Platform**             | .NET Framework only | Cross-platform (.NET Core, .NET 5+) |
+| **Performance**          | Good                | Better (optimized)                  |
+| **Size**                 | Larger footprint    | Lightweight                         |
+| **LINQ Provider**        | Complex             | Simplified, rewritten               |
+| **Database Providers**   | Limited             | Extensible, many providers          |
+| **Lazy Loading**         | Enabled by default  | Opt-in, requires proxy              |
+| **GroupBy Translation**  | Limited             | Full support                        |
+| **Batch Operations**     | Not supported       | Supported                           |
+| **Global Query Filters** | Not available       | Available                           |
+| **Shadow Properties**    | Not available       | Available                           |
+| **Owned Entities**       | Complex types       | First-class support                 |
+
+## Platform Support
+
+### EF6
+
+```csharp
+// Windows only, .NET Framework
+// Requires full .NET Framework
+public class MyContext : DbContext
+{
+    // EF6 code
+}
+```
+
+### EF Core
+
+```csharp
+// Cross-platform: Windows, Linux, macOS
+// Works with .NET Core, .NET 5+, .NET Framework
+public class MyContext : DbContext
+{
+    // EF Core code - runs anywhere
+}
+```
+
+## Performance Improvements
+
+### Query Performance
+
+```csharp
+// EF Core generates more efficient SQL
+var result = context.Products
+    .Where(p => p.Price > 100)
+    .OrderBy(p => p.Name)
+    .Take(10)
+    .ToList();
+
+// EF Core: Better query translation and execution
+// EF6: May generate less optimal SQL in complex scenarios
+```
+
+### Batch Operations
+
+```csharp
+// EF Core - Batch updates/deletes
+context.Products
+    .Where(p => p.IsDiscontinued)
+    .ExecuteDelete();
+
+context.Products
+    .Where(p => p.CategoryId == 5)
+    .ExecuteUpdate(p => p.SetProperty(x => x.Price, x => x.Price * 0.9m));
+
+// EF6 - Not supported, requires manual implementation
+```
+
+## Feature Comparison
+
+### 1. Lazy Loading
+
+**EF6:**
+
+```csharp
+// Enabled by default
+public class Blog
+{
+    public virtual ICollection<Post> Posts { get; set; }
+}
+
+var blog = context.Blogs.Find(1);
+var posts = blog.Posts; // Automatically loaded
+```
+
+**EF Core:**
+
+```csharp
+// Requires explicit configuration
+services.AddDbContext<MyContext>(options =>
+    options.UseLazyLoadingProxies());
+
+public class Blog
+{
+    public virtual ICollection<Post> Posts { get; set; }
+}
+```
+
+### 2. Global Query Filters
+
+**EF Core Only:**
+
+```csharp
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    modelBuilder.Entity<Product>()
+        .HasQueryFilter(p => !p.IsDeleted);
+}
+
+// Automatically applied to all queries
+var products = context.Products.ToList(); // Only non-deleted
+```
+
+### 3. Shadow Properties
+
+**EF Core Only:**
+
+```csharp
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    modelBuilder.Entity<Product>()
+        .Property<DateTime>("LastModified");
+}
+
+// Access shadow properties
+context.Entry(product).Property("LastModified").CurrentValue = DateTime.Now;
+```
+
+### 4. Owned Entities
+
+**EF6 (Complex Types):**
+
+```csharp
+[ComplexType]
+public class Address
+{
+    public string Street { get; set; }
+    public string City { get; set; }
+}
+```
+
+**EF Core (Owned Entities):**
+
+```csharp
+public class Customer
+{
+    public int Id { get; set; }
+    public Address ShippingAddress { get; set; }
+    public Address BillingAddress { get; set; }
+}
+
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    modelBuilder.Entity<Customer>().OwnsOne(c => c.ShippingAddress);
+    modelBuilder.Entity<Customer>().OwnsOne(c => c.BillingAddress);
+}
+```
+
+## Migration Differences
+
+### EF6
+
+```bash
+# Package Manager Console
+Enable-Migrations
+Add-Migration InitialCreate
+Update-Database
+```
+
+### EF Core
+
+```bash
+# .NET CLI
+dotnet ef migrations add InitialCreate
+dotnet ef database update
+
+# Package Manager Console
+Add-Migration InitialCreate
+Update-Database
+```
+
+## LINQ Query Translation
+
+### GroupBy Support
+
+**EF6:**
+
+```csharp
+// Limited GroupBy translation
+var query = context.Orders
+    .GroupBy(o => o.CustomerId)
+    .Select(g => new { CustomerId = g.Key, Count = g.Count() });
+// May not translate to SQL in complex scenarios
+```
+
+**EF Core:**
+
+```csharp
+// Full GroupBy support
+var query = context.Orders
+    .GroupBy(o => o.CustomerId)
+    .Select(g => new
+    {
+        CustomerId = g.Key,
+        Count = g.Count(),
+        TotalAmount = g.Sum(o => o.Amount),
+        AvgAmount = g.Average(o => o.Amount)
+    });
+// Translates to efficient SQL
+```
+
+## Database Provider Ecosystem
+
+### EF6
+
+- SQL Server
+- MySQL (limited)
+- PostgreSQL (community)
+- Oracle (limited)
+
+### EF Core
+
+- SQL Server
+- PostgreSQL (Npgsql)
+- MySQL (Pomelo, Official)
+- SQLite
+- Cosmos DB
+- In-Memory
+- Oracle
+- Many community providers
+
+## Configuration API
+
+### EF6
+
+```csharp
+protected override void OnModelCreating(DbModelBuilder modelBuilder)
+{
+    modelBuilder.Entity<Product>()
+        .HasKey(p => p.Id);
+
+    modelBuilder.Entity<Product>()
+        .Property(p => p.Name)
+        .IsRequired()
+        .HasMaxLength(100);
+}
+```
+
+### EF Core
+
+```csharp
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    modelBuilder.Entity<Product>(entity =>
+    {
+        entity.HasKey(p => p.Id);
+
+        entity.Property(p => p.Name)
+            .IsRequired()
+            .HasMaxLength(100);
+    });
+}
+```
+
+## When to Use Each
+
+### Use EF6 When:
+
+- Working with legacy .NET Framework applications
+- Need features not yet in EF Core (rare now)
+- Existing large codebase using EF6
+- Team expertise is in EF6
+
+### Use EF Core When:
+
+- Starting new projects
+- Need cross-platform support
+- Want better performance
+- Need modern features (global filters, owned entities)
+- Building microservices
+- Using .NET 5+ or .NET Core
+
+## Migration Path
+
+### From EF6 to EF Core
+
+```csharp
+// 1. Update packages
+// Remove: EntityFramework
+// Add: Microsoft.EntityFrameworkCore.SqlServer
+
+// 2. Update DbContext
+// EF6
+public class MyContext : DbContext
+{
+    public MyContext() : base("name=MyConnection") { }
+}
+
+// EF Core
+public class MyContext : DbContext
+{
+    protected override void OnConfiguring(DbContextOptionsBuilder options)
+    {
+        options.UseSqlServer(connectionString);
+    }
+}
+
+// 3. Update configurations
+// EF6: DbModelBuilder
+// EF Core: ModelBuilder
+
+// 4. Handle breaking changes
+// - Lazy loading configuration
+// - Complex types → Owned entities
+// - Update LINQ queries if needed
+```
+
+## Performance Benchmarks
+
+```csharp
+// Typical performance improvements in EF Core:
+// - Query execution: 20-50% faster
+// - SaveChanges: 10-30% faster
+// - Memory usage: 30-40% lower
+// - Startup time: 50-70% faster
+
+// Example: Bulk insert
+// EF6: ~1000 records/second
+// EF Core: ~2000-3000 records/second
+```
+
+## Feature Parity Status
+
+### Features in Both
+
+- Code First, Database First
+- Migrations
+- LINQ queries
+- Change tracking
+- Relationships (1:1, 1:N, N:N)
+- Inheritance (TPH, TPT)
+- Stored procedures
+- Raw SQL queries
+
+### EF Core Exclusive
+
+- Global query filters
+- Shadow properties
+- Owned entity types
+- Table splitting
+- Keyless entity types
+- Compiled queries
+- Batch operations
+- Better GroupBy support
+- Cosmos DB provider
+
+### EF6 Exclusive (Legacy)
+
+- Automatic migrations (removed in EF Core)
+- EDMX designer support
+- ObjectContext API
+
+## Interview Tips
+
+- **Explain platform differences**: EF6 is .NET Framework only, EF Core is cross-platform
+- **Discuss performance**: EF Core is generally faster and more efficient
+- **Mention new features**: Global filters, shadow properties, owned entities
+- **Show migration knowledge**: How to move from EF6 to EF Core
+- **Explain use cases**: When to choose each version
+- **Discuss LINQ improvements**: Better query translation in EF Core
+- **Mention provider ecosystem**: EF Core has more database providers
+
+## Summary
+
+EF Core is the modern, cross-platform successor to EF6, offering better performance, smaller footprint, and new features like global query filters and owned entities. While EF6 remains supported for .NET Framework applications, EF Core is recommended for all new development and provides a clear migration path for existing applications.

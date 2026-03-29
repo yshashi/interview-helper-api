@@ -1,0 +1,405 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Automated Testing in CI/CD
+---
+
+# Automated Testing in CI/CD
+
+## Testing Pyramid
+
+```
+        ┌─────────┐
+        │   E2E   │  Few, slow, expensive
+        ├─────────┤
+        │Integration│  Some, moderate
+        ├─────────┤
+        │  Unit   │  Many, fast, cheap
+        └─────────┘
+```
+
+## Unit Tests
+
+### Angular
+
+```typescript
+// user.service.spec.ts
+import { TestBed } from '@angular/core/testing';
+import { UserService } from './user.service';
+
+describe('UserService', () => {
+  let service: UserService;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    service = TestBed.inject(UserService);
+  });
+
+  it('should create user', async () => {
+    const user = await service.createUser({
+      email: 'test@example.com',
+      name: 'Test User'
+    });
+    
+    expect(user.id).toBeDefined();
+    expect(user.email).toBe('test@example.com');
+  });
+});
+```
+
+### .NET
+
+```csharp
+// UserServiceTests.cs
+using Xunit;
+
+public class UserServiceTests
+{
+    [Fact]
+    public async Task CreateUser_ShouldReturnUser()
+    {
+        // Arrange
+        var service = new UserService();
+        var userData = new CreateUserDto
+        {
+            Email = "test@example.com",
+            Name = "Test User"
+        };
+
+        // Act
+        var user = await service.CreateUser(userData);
+
+        // Assert
+        Assert.NotNull(user.Id);
+        Assert.Equal("test@example.com", user.Email);
+    }
+}
+```
+
+### Node.js
+
+```javascript
+// user.service.test.js
+const UserService = require('./user.service');
+
+describe('UserService', () => {
+  it('should create user', async () => {
+    const service = new UserService();
+    const user = await service.createUser({
+      email: 'test@example.com',
+      name: 'Test User'
+    });
+    
+    expect(user.id).toBeDefined();
+    expect(user.email).toBe('test@example.com');
+  });
+});
+```
+
+## Integration Tests
+
+```javascript
+// Database integration test
+describe('User API Integration', () => {
+  let db;
+  
+  beforeAll(async () => {
+    db = await connectDatabase();
+  });
+  
+  afterAll(async () => {
+    await db.close();
+  });
+  
+  it('should create and retrieve user', async () => {
+    const user = await request(app)
+      .post('/api/users')
+      .send({ email: 'test@example.com', name: 'Test' });
+    
+    const retrieved = await request(app)
+      .get(`/api/users/${user.body.id}`);
+    
+    expect(retrieved.body.email).toBe('test@example.com');
+  });
+});
+```
+
+## E2E Tests
+
+### Playwright
+
+```typescript
+// e2e/user-flow.spec.ts
+import { test, expect } from '@playwright/test';
+
+test('user registration flow', async ({ page }) => {
+  await page.goto('http://localhost:4200');
+  
+  await page.click('text=Sign Up');
+  await page.fill('input[name="email"]', 'test@example.com');
+  await page.fill('input[name="password"]', 'password123');
+  await page.click('button[type="submit"]');
+  
+  await expect(page).toHaveURL('/dashboard');
+  await expect(page.locator('text=Welcome')).toBeVisible();
+});
+```
+
+### Cypress
+
+```javascript
+// cypress/e2e/user-flow.cy.js
+describe('User Flow', () => {
+  it('should register and login', () => {
+    cy.visit('/');
+    cy.contains('Sign Up').click();
+    
+    cy.get('input[name="email"]').type('test@example.com');
+    cy.get('input[name="password"]').type('password123');
+    cy.get('button[type="submit"]').click();
+    
+    cy.url().should('include', '/dashboard');
+    cy.contains('Welcome').should('be.visible');
+  });
+});
+```
+
+## CI/CD Pipeline
+
+```yaml
+name: Automated Testing
+
+on: [push, pull_request]
+
+jobs:
+  # Unit Tests
+  unit-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        component: [frontend, api, service]
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup environment
+        run: |
+          if [ "${{ matrix.component }}" == "frontend" ]; then
+            cd frontend && npm ci
+          elif [ "${{ matrix.component }}" == "api" ]; then
+            cd api && dotnet restore
+          else
+            cd service && npm ci
+          fi
+      
+      - name: Run unit tests
+        run: |
+          if [ "${{ matrix.component }}" == "frontend" ]; then
+            cd frontend && npm run test:ci
+          elif [ "${{ matrix.component }}" == "api" ]; then
+            cd api && dotnet test
+          else
+            cd service && npm test
+          fi
+      
+      - name: Upload coverage
+        uses: codecov/codecov-action@v3
+  
+  # Integration Tests
+  integration-tests:
+    needs: unit-tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+      mongodb:
+        image: mongo:6
+      redis:
+        image: redis:7
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Run integration tests
+        run: npm run test:integration
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test
+          MONGODB_URL: mongodb://localhost:27017/test
+          REDIS_URL: redis://localhost:6379
+  
+  # E2E Tests
+  e2e-tests:
+    needs: integration-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Install Playwright
+        run: npx playwright install --with-deps
+      
+      - name: Start application
+        run: |
+          docker-compose up -d
+          sleep 30
+      
+      - name: Run E2E tests
+        run: npm run test:e2e
+      
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: playwright-report
+          path: playwright-report/
+```
+
+## Test Coverage
+
+```yaml
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Run tests with coverage
+        run: npm run test:coverage
+      
+      - name: Check coverage threshold
+        run: |
+          COVERAGE=$(cat coverage/coverage-summary.json | jq '.total.lines.pct')
+          if (( $(echo "$COVERAGE < 80" | bc -l) )); then
+            echo "Coverage $COVERAGE% is below 80%"
+            exit 1
+          fi
+      
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v3
+```
+
+## Performance Tests
+
+```javascript
+// k6 performance test
+import http from 'k6/http';
+import { check, sleep } from 'k6';
+
+export const options = {
+  stages: [
+    { duration: '30s', target: 20 },
+    { duration: '1m', target: 50 },
+    { duration: '30s', target: 0 },
+  ],
+  thresholds: {
+    http_req_duration: ['p(95)<500'],
+    http_req_failed: ['rate<0.01'],
+  },
+};
+
+export default function () {
+  const res = http.get('http://api/users');
+  check(res, {
+    'status is 200': (r) => r.status === 200,
+    'response time < 500ms': (r) => r.timings.duration < 500,
+  });
+  sleep(1);
+}
+```
+
+## Security Tests
+
+```yaml
+jobs:
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Run SAST
+        run: npm audit
+      
+      - name: Dependency check
+        uses: dependency-check/Dependency-Check_Action@main
+      
+      - name: Container scan
+        run: |
+          docker build -t myapp:test .
+          trivy image myapp:test
+```
+
+## Smoke Tests
+
+```bash
+#!/bin/bash
+# smoke-tests.sh
+
+BASE_URL=$1
+
+# Health check
+curl -f $BASE_URL/health || exit 1
+
+# Basic API test
+RESPONSE=$(curl -s $BASE_URL/api/users)
+if [ -z "$RESPONSE" ]; then
+  echo "API returned empty response"
+  exit 1
+fi
+
+# Database connectivity
+curl -f $BASE_URL/health/db || exit 1
+
+echo "Smoke tests passed"
+```
+
+## Test Data Management
+
+```javascript
+// Test fixtures
+const fixtures = {
+  user: {
+    email: 'test@example.com',
+    name: 'Test User',
+    password: 'password123'
+  },
+  order: {
+    userId: '123',
+    items: [{ productId: '456', quantity: 2 }],
+    total: 99.99
+  }
+};
+
+// Seed test data
+async function seedTestData() {
+  await User.deleteMany({});
+  await User.create(fixtures.user);
+  
+  await Order.deleteMany({});
+  await Order.create(fixtures.order);
+}
+
+beforeEach(async () => {
+  await seedTestData();
+});
+```
+
+## Best Practices
+
+1. **Test pyramid**: More unit, fewer E2E
+2. **Fast feedback**: Run unit tests first
+3. **Isolated tests**: No dependencies between tests
+4. **Test data**: Use fixtures and factories
+5. **Coverage threshold**: Enforce minimum coverage
+6. **Parallel execution**: Speed up test runs
+7. **Flaky tests**: Fix or remove them
+
+## Interview Tips
+
+- **Explain pyramid**: Unit, integration, E2E
+- **Show examples**: Angular, .NET, Node.js
+- **Demonstrate CI/CD**: Automated pipeline
+- **Discuss coverage**: Thresholds and reporting
+- **Mention performance**: Load testing
+- **Show security**: SAST, dependency scanning
+
+## Summary
+
+Automated testing in CI/CD includes unit, integration, and E2E tests. Follow testing pyramid with more unit tests. Run tests in CI/CD pipeline with proper environment setup. Enforce coverage thresholds. Include performance and security tests. Use test fixtures for data management. Essential for maintaining code quality and preventing regressions.

@@ -1,0 +1,381 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Data Modeling in NoSQL
+---
+
+# Data Modeling in NoSQL
+
+## NoSQL vs SQL Modeling
+
+| Aspect | SQL | NoSQL |
+|--------|-----|-------|
+| **Approach** | Normalize data | Denormalize data |
+| **Relationships** | Foreign keys, joins | Embedded documents, references |
+| **Schema** | Fixed, predefined | Flexible, dynamic |
+| **Design Goal** | Minimize redundancy | Optimize for queries |
+
+## Embedding vs Referencing
+
+### Embedding (Denormalization)
+
+```javascript
+// MongoDB - Embedded documents
+{
+  _id: ObjectId("123"),
+  name: "John Doe",
+  email: "john@example.com",
+  address: {
+    street: "123 Main St",
+    city: "New York",
+    zip: "10001"
+  },
+  orders: [
+    {
+      id: "789",
+      date: ISODate("2024-01-01"),
+      items: ["item1", "item2"],
+      total: 99.99
+    }
+  ]
+}
+
+// Advantages: Single query, atomic updates
+// Disadvantages: Data duplication, document size limits
+```
+
+### Referencing (Normalization)
+
+```javascript
+// Users collection
+{
+  _id: ObjectId("123"),
+  name: "John Doe",
+  email: "john@example.com"
+}
+
+// Orders collection
+{
+  _id: ObjectId("789"),
+  userId: ObjectId("123"),
+  date: ISODate("2024-01-01"),
+  total: 99.99
+}
+
+// Advantages: No duplication, smaller documents
+// Disadvantages: Multiple queries, no joins
+```
+
+## When to Embed
+
+```javascript
+const embedWhen = [
+  'One-to-few relationships',
+  'Data accessed together',
+  'Data rarely changes',
+  'Need atomic updates',
+  'Child data belongs to parent'
+];
+
+// Example: User profile with addresses
+const userWithAddresses = {
+  _id: ObjectId("123"),
+  name: "John Doe",
+  addresses: [
+    { type: "home", street: "123 Main St" },
+    { type: "work", street: "456 Office Blvd" }
+  ]
+};
+```
+
+## When to Reference
+
+```javascript
+const referenceWhen = [
+  'One-to-many or many-to-many',
+  'Data accessed separately',
+  'Data changes frequently',
+  'Large subdocuments',
+  'Need to query child independently'
+];
+
+// Example: Blog posts and comments
+// Posts collection
+{
+  _id: ObjectId("123"),
+  title: "My Post",
+  content: "...",
+  authorId: ObjectId("456")
+}
+
+// Comments collection
+{
+  _id: ObjectId("789"),
+  postId: ObjectId("123"),
+  text: "Great post!",
+  authorId: ObjectId("999")
+}
+```
+
+## Design Patterns
+
+### 1. Attribute Pattern
+
+```javascript
+// Instead of fixed fields
+{
+  _id: 1,
+  name: "Product",
+  color: "red",
+  size: "large",
+  weight: "5kg"
+}
+
+// Use flexible attributes
+{
+  _id: 1,
+  name: "Product",
+  attributes: [
+    { key: "color", value: "red" },
+    { key: "size", value: "large" },
+    { key: "weight", value: "5kg" }
+  ]
+}
+
+// Query any attribute
+db.products.find({ "attributes.key": "color", "attributes.value": "red" });
+```
+
+### 2. Bucket Pattern
+
+```javascript
+// Time-series data - bucket by hour
+{
+  _id: ObjectId("123"),
+  deviceId: "sensor-1",
+  hour: ISODate("2024-01-01T10:00:00Z"),
+  measurements: [
+    { timestamp: ISODate("2024-01-01T10:05:00Z"), temp: 25.5 },
+    { timestamp: ISODate("2024-01-01T10:10:00Z"), temp: 25.7 },
+    { timestamp: ISODate("2024-01-01T10:15:00Z"), temp: 25.6 }
+  ],
+  count: 3,
+  avgTemp: 25.6
+}
+
+// Reduces number of documents
+// Improves query performance
+```
+
+### 3. Computed Pattern
+
+```javascript
+// Store pre-computed values
+{
+  _id: ObjectId("123"),
+  userId: "user-1",
+  orders: [
+    { id: "789", total: 99.99 },
+    { id: "790", total: 149.99 }
+  ],
+  // Computed fields
+  totalOrders: 2,
+  totalSpent: 249.98,
+  avgOrderValue: 124.99,
+  lastOrderDate: ISODate("2024-01-01")
+}
+
+// Update computed fields on write
+await db.users.updateOne(
+  { _id: userId },
+  {
+    $push: { orders: newOrder },
+    $inc: { totalOrders: 1, totalSpent: newOrder.total },
+    $set: { lastOrderDate: new Date() }
+  }
+);
+```
+
+### 4. Extended Reference Pattern
+
+```javascript
+// Store frequently accessed fields from reference
+{
+  _id: ObjectId("123"),
+  title: "Blog Post",
+  content: "...",
+  author: {
+    id: ObjectId("456"),
+    name: "John Doe",      // Duplicated for performance
+    avatar: "url"          // Duplicated for performance
+  }
+}
+
+// Full author data in separate collection
+{
+  _id: ObjectId("456"),
+  name: "John Doe",
+  avatar: "url",
+  bio: "...",
+  email: "john@example.com"
+}
+```
+
+### 5. Subset Pattern
+
+```javascript
+// Store subset of large array
+{
+  _id: ObjectId("123"),
+  title: "Popular Movie",
+  recentReviews: [  // Last 10 reviews
+    { user: "user1", rating: 5, text: "Great!" },
+    { user: "user2", rating: 4, text: "Good" }
+  ],
+  totalReviews: 10000,
+  avgRating: 4.5
+}
+
+// All reviews in separate collection
+{
+  _id: ObjectId("789"),
+  movieId: ObjectId("123"),
+  user: "user1",
+  rating: 5,
+  text: "Great!",
+  date: ISODate("2024-01-01")
+}
+```
+
+## Schema Design for Queries
+
+```javascript
+// Design for access patterns
+const accessPatterns = {
+  pattern1: 'Get user with recent orders',
+  pattern2: 'Get all orders for user',
+  pattern3: 'Get order details'
+};
+
+// Solution: Hybrid approach
+// Users collection - embed recent orders
+{
+  _id: ObjectId("123"),
+  name: "John Doe",
+  recentOrders: [
+    { id: "789", date: "2024-01-01", total: 99.99 }
+  ]
+}
+
+// Orders collection - full order data
+{
+  _id: "789",
+  userId: ObjectId("123"),
+  items: [...],
+  total: 99.99,
+  status: "delivered"
+}
+```
+
+## Polymorphic Pattern
+
+```javascript
+// Different document types in same collection
+// Product types with different attributes
+{
+  _id: 1,
+  type: "book",
+  title: "MongoDB Guide",
+  author: "John Doe",
+  isbn: "123-456",
+  pages: 300
+}
+
+{
+  _id: 2,
+  type: "electronics",
+  title: "Laptop",
+  brand: "Dell",
+  model: "XPS 15",
+  specs: { cpu: "i7", ram: "16GB" }
+}
+
+// Query by type
+db.products.find({ type: "book" });
+```
+
+## .NET Data Modeling
+
+```csharp
+using MongoDB.Bson;
+using MongoDB.Bson.Serialization.Attributes;
+
+// Embedded documents
+public class User
+{
+    [BsonId]
+    public ObjectId Id { get; set; }
+    
+    public string Name { get; set; }
+    
+    public Address Address { get; set; }  // Embedded
+    
+    public List<Order> RecentOrders { get; set; }  // Embedded array
+}
+
+public class Address
+{
+    public string Street { get; set; }
+    public string City { get; set; }
+}
+
+// Referenced documents
+public class Order
+{
+    [BsonId]
+    public ObjectId Id { get; set; }
+    
+    [BsonRepresentation(BsonType.ObjectId)]
+    public string UserId { get; set; }  // Reference
+    
+    public decimal Total { get; set; }
+}
+```
+
+## Migration Example
+
+```javascript
+// From normalized to denormalized
+// Before: Separate collections
+// users: { _id, name, email }
+// addresses: { _id, userId, street, city }
+
+// After: Embedded
+async function migrateToEmbedded() {
+  const users = await db.users.find().toArray();
+  
+  for (const user of users) {
+    const addresses = await db.addresses.find({ userId: user._id }).toArray();
+    
+    await db.users_new.insertOne({
+      ...user,
+      addresses: addresses.map(a => ({
+        street: a.street,
+        city: a.city
+      }))
+    });
+  }
+}
+```
+
+## Interview Tips
+
+- **Explain embedding vs referencing**: When to use each
+- **Show design patterns**: Attribute, bucket, computed
+- **Demonstrate access patterns**: Design for queries
+- **Discuss trade-offs**: Performance vs consistency
+- **Mention document size**: 16MB limit in MongoDB
+- **Show examples**: Node.js, .NET implementations
+
+## Summary
+
+NoSQL data modeling prioritizes query performance over normalization. Embed documents for one-to-few relationships and data accessed together. Reference for one-to-many, frequently changing data. Apply patterns: attribute (flexible fields), bucket (time-series), computed (pre-calculated), extended reference (duplicate frequently accessed), subset (partial arrays), polymorphic (different types). Design schema based on access patterns. Trade-offs between duplication and performance. Essential for efficient NoSQL applications.

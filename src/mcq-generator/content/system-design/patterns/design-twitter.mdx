@@ -1,0 +1,472 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Design Twitter
+---
+
+# Design Twitter
+
+## Requirements Gathering
+
+### Functional Requirements
+
+**Core Features:**
+- Users can post tweets (280 characters)
+- Users can follow other users
+- Users see timeline of tweets from people they follow
+- Users can like and retweet
+- Search tweets
+
+**Out of Scope (for this design):**
+- Direct messages
+- Notifications
+- Trending topics
+- Ads
+
+### Non-Functional Requirements
+
+**Scale:**
+- 500 million users
+- 200 million daily active users
+- 500 million tweets per day
+- Read-heavy (100:1 read-to-write ratio)
+
+**Performance:**
+- Timeline loads in < 200ms
+- Tweet posted in < 500ms
+- Search results in < 1 second
+
+**Availability:**
+- 99.99% uptime
+- No data loss for posted tweets
+
+## Capacity Estimation
+
+**Storage:**
+- Average tweet: 300 bytes (text + metadata)
+- 500M tweets/day × 300 bytes = 150 GB/day
+- 5 years: 150 GB × 365 × 5 = 274 TB
+
+**Bandwidth:**
+- Writes: 500M tweets/day ÷ 86400 seconds = 5,800 tweets/second
+- Reads: 5,800 × 100 = 580,000 reads/second
+- Data transfer: 580K × 300 bytes = 174 MB/second
+
+**Cache:**
+- Cache hot users' timelines
+- Top 20% users = 100M users
+- 200 tweets per timeline × 300 bytes = 60 KB per user
+- Total: 100M × 60 KB = 6 TB
+
+## High-Level Design
+
+```
+┌─────────┐
+│ Client  │
+└────┬────┘
+     │
+┌────▼────────┐
+│ Load        │
+│ Balancer    │
+└────┬────────┘
+     │
+┌────▼────────────────────────┐
+│ API Gateway                 │
+│ (Auth, Rate Limiting)       │
+└────┬────────────────────────┘
+     │
+     ├──────────┬──────────┬──────────┐
+     │          │          │          │
+┌────▼────┐ ┌──▼──────┐ ┌─▼────────┐ ┌─▼────────┐
+│ Tweet   │ │Timeline │ │ User     │ │ Search   │
+│ Service │ │ Service │ │ Service  │ │ Service  │
+└────┬────┘ └──┬──────┘ └─┬────────┘ └─┬────────┘
+     │         │          │            │
+┌────▼─────────▼──────────▼────────────▼────┐
+│ Message Queue (Kafka)                      │
+└────┬───────────────────────────────────────┘
+     │
+┌────▼────────┐  ┌──────────┐  ┌──────────┐
+│ Tweet DB    │  │ User DB  │  │ Cache    │
+│ (Cassandra) │  │ (MySQL)  │  │ (Redis)  │
+└─────────────┘  └──────────┘  └──────────┘
+```
+
+## Database Schema
+
+### User Service (MySQL)
+
+```sql
+CREATE TABLE users (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  username VARCHAR(50) UNIQUE NOT NULL,
+  email VARCHAR(255) UNIQUE NOT NULL,
+  password_hash VARCHAR(255) NOT NULL,
+  bio TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_username (username)
+);
+
+CREATE TABLE follows (
+  follower_id BIGINT NOT NULL,
+  followee_id BIGINT NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (follower_id, followee_id),
+  FOREIGN KEY (follower_id) REFERENCES users(id),
+  FOREIGN KEY (followee_id) REFERENCES users(id),
+  INDEX idx_follower (follower_id),
+  INDEX idx_followee (followee_id)
+);
+```
+
+### Tweet Service (Cassandra)
+
+```sql
+-- Tweets table (write-optimized)
+CREATE TABLE tweets (
+  tweet_id UUID PRIMARY KEY,
+  user_id BIGINT,
+  content TEXT,
+  created_at TIMESTAMP,
+  like_count INT,
+  retweet_count INT
+);
+
+-- User timeline (read-optimized, denormalized)
+CREATE TABLE user_timeline (
+  user_id BIGINT,
+  tweet_id UUID,
+  tweet_content TEXT,
+  author_id BIGINT,
+  author_username TEXT,
+  created_at TIMESTAMP,
+  PRIMARY KEY (user_id, created_at, tweet_id)
+) WITH CLUSTERING ORDER BY (created_at DESC);
+
+-- Home timeline (fan-out on write)
+CREATE TABLE home_timeline (
+  user_id BIGINT,
+  tweet_id UUID,
+  tweet_content TEXT,
+  author_id BIGINT,
+  author_username TEXT,
+  created_at TIMESTAMP,
+  PRIMARY KEY (user_id, created_at, tweet_id)
+) WITH CLUSTERING ORDER BY (created_at DESC);
+```
+
+## API Design
+
+```javascript
+// Post tweet
+POST /api/v1/tweets
+{
+  "content": "Hello Twitter!",
+  "media_urls": ["https://..."]
+}
+
+// Get user timeline
+GET /api/v1/users/{userId}/timeline?limit=20&cursor=abc123
+
+// Get home timeline
+GET /api/v1/timeline?limit=20&cursor=abc123
+
+// Follow user
+POST /api/v1/users/{userId}/follow
+
+// Like tweet
+POST /api/v1/tweets/{tweetId}/like
+
+// Search tweets
+GET /api/v1/search?q=hello&limit=20
+```
+
+## Core Workflows
+
+### 1. Post Tweet (Fan-out on Write)
+
+```javascript
+class TweetService {
+  async postTweet(userId, content) {
+    // 1. Create tweet
+    const tweet = {
+      id: generateUUID(),
+      userId,
+      content,
+      createdAt: new Date(),
+      likeCount: 0,
+      retweetCount: 0
+    };
+    
+    // 2. Save to tweets table
+    await cassandra.execute(
+      'INSERT INTO tweets (tweet_id, user_id, content, created_at, like_count, retweet_count) VALUES (?, ?, ?, ?, ?, ?)',
+      [tweet.id, tweet.userId, tweet.content, tweet.createdAt, 0, 0]
+    );
+    
+    // 3. Add to user's own timeline
+    await cassandra.execute(
+      'INSERT INTO user_timeline (user_id, tweet_id, tweet_content, author_id, author_username, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+      [userId, tweet.id, tweet.content, userId, await this.getUsername(userId), tweet.createdAt]
+    );
+    
+    // 4. Fan-out to followers (async via message queue)
+    const followers = await this.getFollowers(userId);
+    
+    // For celebrities with millions of followers, use fan-out on read instead
+    if (followers.length > 1000000) {
+      await this.markAsCelebrity(userId);
+      return tweet;
+    }
+    
+    // Fan-out to followers' home timelines
+    await kafka.publish('tweet.created', {
+      tweet,
+      followers
+    });
+    
+    return tweet;
+  }
+  
+  async getFollowers(userId) {
+    const result = await mysql.query(
+      'SELECT follower_id FROM follows WHERE followee_id = ?',
+      [userId]
+    );
+    return result.map(r => r.follower_id);
+  }
+}
+
+// Fan-out worker (processes Kafka messages)
+class FanOutWorker {
+  async processTweetCreated(message) {
+    const { tweet, followers } = message;
+    
+    // Batch insert into followers' timelines
+    const batch = followers.map(followerId => ({
+      query: 'INSERT INTO home_timeline (user_id, tweet_id, tweet_content, author_id, author_username, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+      params: [followerId, tweet.id, tweet.content, tweet.userId, tweet.username, tweet.createdAt]
+    }));
+    
+    await cassandra.batch(batch);
+  }
+}
+```
+
+### 2. Get Home Timeline
+
+```javascript
+class TimelineService {
+  async getHomeTimeline(userId, limit = 20, cursor = null) {
+    // Try cache first
+    const cacheKey = `timeline:${userId}`;
+    let timeline = await redis.get(cacheKey);
+    
+    if (timeline) {
+      return JSON.parse(timeline);
+    }
+    
+    // Fetch from database
+    let query = 'SELECT * FROM home_timeline WHERE user_id = ?';
+    const params = [userId];
+    
+    if (cursor) {
+      query += ' AND created_at < ?';
+      params.push(cursor);
+    }
+    
+    query += ' LIMIT ?';
+    params.push(limit);
+    
+    const tweets = await cassandra.execute(query, params);
+    
+    // Cache for 5 minutes
+    await redis.setEx(cacheKey, 300, JSON.stringify(tweets));
+    
+    return tweets;
+  }
+  
+  // For celebrity tweets, merge on read
+  async getHomeTimelineWithCelebrities(userId, limit = 20) {
+    // Get regular timeline
+    const regularTimeline = await this.getHomeTimeline(userId, limit);
+    
+    // Get tweets from celebrities user follows
+    const celebrities = await this.getCelebritiesFollowed(userId);
+    
+    if (celebrities.length === 0) {
+      return regularTimeline;
+    }
+    
+    // Fetch recent tweets from celebrities
+    const celebrityTweets = await this.getCelebrityTweets(celebrities, limit);
+    
+    // Merge and sort by timestamp
+    const merged = [...regularTimeline, ...celebrityTweets]
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, limit);
+    
+    return merged;
+  }
+}
+```
+
+### 3. Search Tweets
+
+```javascript
+class SearchService {
+  constructor() {
+    this.elasticsearch = new ElasticsearchClient();
+  }
+  
+  async indexTweet(tweet) {
+    await this.elasticsearch.index({
+      index: 'tweets',
+      id: tweet.id,
+      body: {
+        content: tweet.content,
+        userId: tweet.userId,
+        username: tweet.username,
+        createdAt: tweet.createdAt,
+        likeCount: tweet.likeCount
+      }
+    });
+  }
+  
+  async searchTweets(query, limit = 20) {
+    const result = await this.elasticsearch.search({
+      index: 'tweets',
+      body: {
+        query: {
+          multi_match: {
+            query,
+            fields: ['content', 'username']
+          }
+        },
+        sort: [
+          { createdAt: 'desc' }
+        ],
+        size: limit
+      }
+    });
+    
+    return result.hits.hits.map(hit => hit._source);
+  }
+}
+```
+
+## Scaling Strategies
+
+**Database Sharding:**
+- Shard tweets by user_id
+- Shard timelines by user_id
+- Consistent hashing for distribution
+
+**Caching:**
+- Cache hot users' timelines (Redis)
+- Cache user profiles
+- CDN for media files
+
+**Message Queue:**
+- Kafka for fan-out processing
+- Decouple tweet posting from timeline updates
+- Handle backpressure
+
+**Read Replicas:**
+- Multiple read replicas for user database
+- Distribute read load
+
+## Trade-offs
+
+**Fan-out on Write vs Fan-out on Read:**
+
+**Fan-out on Write (chosen for most users):**
+- Pros: Fast timeline reads
+- Cons: Slow tweet posting for users with many followers
+
+**Fan-out on Read (for celebrities):**
+- Pros: Fast tweet posting
+- Cons: Slower timeline reads (must merge)
+
+**Cassandra vs MySQL:**
+- Cassandra for tweets (write-heavy, time-series data)
+- MySQL for users/follows (relational, ACID)
+
+## .NET Implementation
+
+```csharp
+public class TweetService
+{
+    private readonly ICassandraSession _cassandra;
+    private readonly IKafkaProducer _kafka;
+    private readonly IRedisCache _cache;
+    
+    public async Task<Tweet> PostTweetAsync(long userId, string content)
+    {
+        var tweet = new Tweet
+        {
+            Id = Guid.NewGuid(),
+            UserId = userId,
+            Content = content,
+            CreatedAt = DateTime.UtcNow,
+            LikeCount = 0,
+            RetweetCount = 0
+        };
+        
+        // Save tweet
+        await _cassandra.ExecuteAsync(
+            "INSERT INTO tweets (tweet_id, user_id, content, created_at, like_count, retweet_count) VALUES (?, ?, ?, ?, ?, ?)",
+            tweet.Id, tweet.UserId, tweet.Content, tweet.CreatedAt, 0, 0
+        );
+        
+        // Fan-out async
+        var followers = await GetFollowersAsync(userId);
+        
+        await _kafka.ProduceAsync("tweet.created", new
+        {
+            Tweet = tweet,
+            Followers = followers
+        });
+        
+        // Invalidate cache
+        await _cache.DeleteAsync($"timeline:{userId}");
+        
+        return tweet;
+    }
+    
+    public async Task<List<Tweet>> GetHomeTimelineAsync(long userId, int limit = 20)
+    {
+        var cacheKey = $"timeline:{userId}";
+        
+        // Try cache
+        var cached = await _cache.GetAsync<List<Tweet>>(cacheKey);
+        if (cached != null)
+        {
+            return cached;
+        }
+        
+        // Fetch from database
+        var tweets = await _cassandra.ExecuteAsync<Tweet>(
+            "SELECT * FROM home_timeline WHERE user_id = ? LIMIT ?",
+            userId, limit
+        );
+        
+        // Cache for 5 minutes
+        await _cache.SetAsync(cacheKey, tweets, TimeSpan.FromMinutes(5));
+        
+        return tweets;
+    }
+}
+```
+
+## Interview Tips
+
+- **Start with requirements** - Functional and non-functional
+- **Estimate capacity** - Storage, bandwidth, cache
+- **Design high-level** - Services, databases, message queues
+- **Deep dive** - Post tweet and timeline workflows
+- **Discuss trade-offs** - Fan-out strategies, database choices
+- **Address scale** - Sharding, caching, celebrities
+
+## Summary
+
+Twitter is a read-heavy social media platform requiring high scalability. Use microservices architecture with separate services for tweets, timelines, users, and search. Store tweets in Cassandra (write-optimized) and users in MySQL (relational). Implement fan-out on write for most users (fast reads) and fan-out on read for celebrities (fast writes). Use Kafka for async fan-out processing. Cache hot timelines in Redis. Shard by user_id for horizontal scaling. Use Elasticsearch for tweet search. Handle 500M tweets/day with 580K reads/second. Essential pattern for designing scalable social media platforms.

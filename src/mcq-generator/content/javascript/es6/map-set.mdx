@@ -1,0 +1,517 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Map and Set in JavaScript
+---
+
+# Map and Set in JavaScript
+
+## What are Map and Set?
+
+**Map** and **Set** are built-in data structures introduced in ES6 that provide more efficient and flexible ways to store collections of data compared to traditional objects and arrays.
+
+## Map
+
+A **Map** is a collection of key-value pairs where keys can be of any type (not just strings like in objects).
+
+### Creating a Map
+
+```javascript
+// Empty Map
+const map = new Map();
+
+// Map with initial values
+const userMap = new Map([
+  ['name', 'John'],
+  ['age', 30],
+  ['email', 'john@example.com']
+]);
+
+console.log(userMap.size); // 3
+```
+
+### Map Methods
+
+```javascript
+const map = new Map();
+
+// Set values
+map.set('name', 'Alice');
+map.set('age', 25);
+map.set(1, 'number key');
+map.set(true, 'boolean key');
+map.set({id: 1}, 'object key');
+
+// Get values
+console.log(map.get('name')); // 'Alice'
+console.log(map.get('age'));  // 25
+console.log(map.get(1));      // 'number key'
+
+// Check if key exists
+console.log(map.has('name')); // true
+console.log(map.has('city')); // false
+
+// Delete a key
+map.delete('age');
+console.log(map.has('age')); // false
+
+// Get size
+console.log(map.size); // 4
+
+// Clear all entries
+map.clear();
+console.log(map.size); // 0
+```
+
+### Iterating Over Maps
+
+```javascript
+const userMap = new Map([
+  ['name', 'John'],
+  ['age', 30],
+  ['city', 'New York']
+]);
+
+// Using forEach
+userMap.forEach((value, key) => {
+  console.log(`${key}: ${value}`);
+});
+
+// Using for...of with entries
+for (const [key, value] of userMap) {
+  console.log(`${key}: ${value}`);
+}
+
+// Iterate over keys
+for (const key of userMap.keys()) {
+  console.log(key);
+}
+
+// Iterate over values
+for (const value of userMap.values()) {
+  console.log(value);
+}
+
+// Iterate over entries
+for (const [key, value] of userMap.entries()) {
+  console.log(`${key}: ${value}`);
+}
+```
+
+### Map vs Object
+
+```javascript
+// Object limitations
+const obj = {};
+obj['key1'] = 'value1';
+obj[1] = 'value2';
+obj[true] = 'value3';
+
+console.log(Object.keys(obj)); // ['1', 'key1', 'true'] - all converted to strings
+
+// Map advantages
+const map = new Map();
+map.set('key1', 'value1');
+map.set(1, 'value2');
+map.set(true, 'value3');
+
+console.log([...map.keys()]); // ['key1', 1, true] - preserves types
+```
+
+### Practical Map Examples
+
+#### 1. Caching Function Results
+
+```javascript
+const cache = new Map();
+
+function expensiveOperation(n) {
+  if (cache.has(n)) {
+    console.log('Returning cached result');
+    return cache.get(n);
+  }
+  
+  console.log('Computing result');
+  const result = n * n; // Expensive calculation
+  cache.set(n, result);
+  return result;
+}
+
+console.log(expensiveOperation(5)); // Computing result, 25
+console.log(expensiveOperation(5)); // Returning cached result, 25
+```
+
+#### 2. Counting Occurrences
+
+```javascript
+function countOccurrences(arr) {
+  const counts = new Map();
+  
+  for (const item of arr) {
+    counts.set(item, (counts.get(item) || 0) + 1);
+  }
+  
+  return counts;
+}
+
+const fruits = ['apple', 'banana', 'apple', 'orange', 'banana', 'apple'];
+const fruitCounts = countOccurrences(fruits);
+
+console.log(fruitCounts.get('apple'));  // 3
+console.log(fruitCounts.get('banana')); // 2
+```
+
+#### 3. Grouping Data
+
+```javascript
+const users = [
+  { name: 'Alice', role: 'admin' },
+  { name: 'Bob', role: 'user' },
+  { name: 'Charlie', role: 'admin' },
+  { name: 'David', role: 'user' }
+];
+
+function groupBy(array, key) {
+  const grouped = new Map();
+  
+  for (const item of array) {
+    const groupKey = item[key];
+    if (!grouped.has(groupKey)) {
+      grouped.set(groupKey, []);
+    }
+    grouped.get(groupKey).push(item);
+  }
+  
+  return grouped;
+}
+
+const usersByRole = groupBy(users, 'role');
+console.log(usersByRole.get('admin')); // [{ name: 'Alice', ... }, { name: 'Charlie', ... }]
+```
+
+## Set
+
+A **Set** is a collection of unique values. It automatically removes duplicates.
+
+### Creating a Set
+
+```javascript
+// Empty Set
+const set = new Set();
+
+// Set with initial values
+const numbers = new Set([1, 2, 3, 4, 5]);
+
+// Duplicates are automatically removed
+const withDuplicates = new Set([1, 2, 2, 3, 3, 3, 4]);
+console.log([...withDuplicates]); // [1, 2, 3, 4]
+```
+
+### Set Methods
+
+```javascript
+const set = new Set();
+
+// Add values
+set.add(1);
+set.add(2);
+set.add(3);
+set.add(2); // Duplicate, won't be added
+
+console.log(set.size); // 3
+
+// Check if value exists
+console.log(set.has(2)); // true
+console.log(set.has(5)); // false
+
+// Delete a value
+set.delete(2);
+console.log(set.has(2)); // false
+
+// Clear all values
+set.clear();
+console.log(set.size); // 0
+```
+
+### Iterating Over Sets
+
+```javascript
+const colors = new Set(['red', 'green', 'blue']);
+
+// Using forEach
+colors.forEach(color => {
+  console.log(color);
+});
+
+// Using for...of
+for (const color of colors) {
+  console.log(color);
+}
+
+// Convert to array
+const colorArray = [...colors];
+console.log(colorArray); // ['red', 'green', 'blue']
+```
+
+### Practical Set Examples
+
+#### 1. Remove Duplicates from Array
+
+```javascript
+const numbers = [1, 2, 3, 2, 4, 3, 5, 1];
+const uniqueNumbers = [...new Set(numbers)];
+
+console.log(uniqueNumbers); // [1, 2, 3, 4, 5]
+
+// One-liner function
+const removeDuplicates = arr => [...new Set(arr)];
+```
+
+#### 2. Set Operations
+
+```javascript
+// Union
+function union(setA, setB) {
+  return new Set([...setA, ...setB]);
+}
+
+// Intersection
+function intersection(setA, setB) {
+  return new Set([...setA].filter(x => setB.has(x)));
+}
+
+// Difference
+function difference(setA, setB) {
+  return new Set([...setA].filter(x => !setB.has(x)));
+}
+
+// Symmetric Difference
+function symmetricDifference(setA, setB) {
+  const diff1 = difference(setA, setB);
+  const diff2 = difference(setB, setA);
+  return union(diff1, diff2);
+}
+
+// Usage
+const setA = new Set([1, 2, 3, 4]);
+const setB = new Set([3, 4, 5, 6]);
+
+console.log([...union(setA, setB)]);              // [1, 2, 3, 4, 5, 6]
+console.log([...intersection(setA, setB)]);       // [3, 4]
+console.log([...difference(setA, setB)]);         // [1, 2]
+console.log([...symmetricDifference(setA, setB)]); // [1, 2, 5, 6]
+```
+
+#### 3. Checking for Unique Values
+
+```javascript
+function hasUniqueValues(arr) {
+  return arr.length === new Set(arr).size;
+}
+
+console.log(hasUniqueValues([1, 2, 3, 4]));    // true
+console.log(hasUniqueValues([1, 2, 2, 3, 4])); // false
+```
+
+#### 4. Filtering Unique Objects
+
+```javascript
+const users = [
+  { id: 1, name: 'Alice' },
+  { id: 2, name: 'Bob' },
+  { id: 1, name: 'Alice' }, // Duplicate
+  { id: 3, name: 'Charlie' }
+];
+
+function uniqueById(array, key) {
+  const seen = new Set();
+  return array.filter(item => {
+    const value = item[key];
+    if (seen.has(value)) {
+      return false;
+    }
+    seen.add(value);
+    return true;
+  });
+}
+
+const uniqueUsers = uniqueById(users, 'id');
+console.log(uniqueUsers);
+// [{ id: 1, name: 'Alice' }, { id: 2, name: 'Bob' }, { id: 3, name: 'Charlie' }]
+```
+
+## Map vs Set Comparison
+
+| Feature | Map | Set |
+|---------|-----|-----|
+| **Structure** | Key-value pairs | Unique values only |
+| **Duplicates** | Unique keys, duplicate values allowed | No duplicates |
+| **Access** | By key | By value |
+| **Use Case** | Associative data | Unique collections |
+
+## When to Use Map
+
+- Need key-value associations
+- Keys are not strings
+- Need to maintain insertion order
+- Frequent additions/deletions
+- Need to know the size efficiently
+
+## When to Use Set
+
+- Need unique values only
+- Remove duplicates from arrays
+- Check membership efficiently
+- Perform set operations (union, intersection)
+- Order matters (maintains insertion order)
+
+## Performance Considerations
+
+```javascript
+// Map vs Object performance
+const map = new Map();
+const obj = {};
+
+// Map is faster for frequent additions/deletions
+console.time('Map set');
+for (let i = 0; i < 1000000; i++) {
+  map.set(i, i);
+}
+console.timeEnd('Map set');
+
+console.time('Object set');
+for (let i = 0; i < 1000000; i++) {
+  obj[i] = i;
+}
+console.timeEnd('Object set');
+
+// Set vs Array for uniqueness
+const set = new Set();
+const arr = [];
+
+console.time('Set add');
+for (let i = 0; i < 100000; i++) {
+  set.add(i);
+}
+console.timeEnd('Set add');
+
+console.time('Array push with check');
+for (let i = 0; i < 100000; i++) {
+  if (!arr.includes(i)) {
+    arr.push(i);
+  }
+}
+console.timeEnd('Array push with check');
+```
+
+## Converting Between Types
+
+```javascript
+// Array to Set
+const arr = [1, 2, 3, 2, 1];
+const set = new Set(arr);
+
+// Set to Array
+const backToArray = [...set];
+// or
+const backToArray2 = Array.from(set);
+
+// Object to Map
+const obj = { name: 'John', age: 30 };
+const map = new Map(Object.entries(obj));
+
+// Map to Object
+const mapToObj = Object.fromEntries(map);
+
+// Array of arrays to Map
+const pairs = [['a', 1], ['b', 2], ['c', 3]];
+const mapFromPairs = new Map(pairs);
+```
+
+## Advanced Patterns
+
+### Chaining Map Operations
+
+```javascript
+const map = new Map()
+  .set('name', 'John')
+  .set('age', 30)
+  .set('city', 'New York');
+
+console.log(map.get('name')); // 'John'
+```
+
+### Using Objects as Keys
+
+```javascript
+const map = new Map();
+
+const key1 = { id: 1 };
+const key2 = { id: 2 };
+
+map.set(key1, 'First object');
+map.set(key2, 'Second object');
+
+console.log(map.get(key1)); // 'First object'
+console.log(map.get({ id: 1 })); // undefined (different object reference)
+```
+
+### Set with Custom Comparison
+
+```javascript
+class CustomSet {
+  constructor(compareFn) {
+    this.items = [];
+    this.compareFn = compareFn || ((a, b) => a === b);
+  }
+  
+  add(item) {
+    if (!this.has(item)) {
+      this.items.push(item);
+    }
+    return this;
+  }
+  
+  has(item) {
+    return this.items.some(existing => this.compareFn(existing, item));
+  }
+  
+  delete(item) {
+    const index = this.items.findIndex(existing => this.compareFn(existing, item));
+    if (index !== -1) {
+      this.items.splice(index, 1);
+      return true;
+    }
+    return false;
+  }
+}
+
+// Usage with custom comparison
+const userSet = new CustomSet((a, b) => a.id === b.id);
+userSet.add({ id: 1, name: 'Alice' });
+userSet.add({ id: 2, name: 'Bob' });
+userSet.add({ id: 1, name: 'Alice Clone' }); // Won't be added (same id)
+```
+
+## Best Practices
+
+1. **Use Map for key-value pairs** instead of objects when keys are not strings
+2. **Use Set for unique collections** instead of arrays with manual duplicate checking
+3. **Prefer Map/Set for frequent additions/deletions** over objects/arrays
+4. **Remember insertion order is preserved** in both Map and Set
+5. **Use spread operator** to convert Map/Set to arrays when needed
+6. **Consider WeakMap/WeakSet** for garbage collection benefits
+
+## Interview Tips
+
+- **Explain the difference** between Map/Set and Object/Array
+- **Demonstrate practical use cases** with code examples
+- **Discuss performance benefits** for specific operations
+- **Show knowledge of iteration methods** (forEach, for...of)
+- **Mention insertion order preservation** as a key feature
+- **Explain when to use each** data structure
+- **Discuss WeakMap and WeakSet** as related concepts
+- **Show set operations** (union, intersection, difference)
+
+## Summary
+
+**Map** is a collection of key-value pairs where keys can be any type, providing better performance for frequent additions/deletions compared to objects. **Set** is a collection of unique values, perfect for removing duplicates and performing set operations. Both maintain insertion order and provide efficient methods for common operations.

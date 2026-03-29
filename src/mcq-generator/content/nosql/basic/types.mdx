@@ -1,0 +1,347 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Types of NoSQL Databases
+---
+
+# Types of NoSQL Databases
+
+## Four Main Types
+
+```
+┌─────────────────────────────────────────┐
+│         NoSQL Database Types            │
+├─────────────┬──────────┬────────┬───────┤
+│  Document   │Key-Value │ Column │ Graph │
+│  (MongoDB)  │ (Redis)  │(Cassan)│(Neo4j)│
+└─────────────┴──────────┴────────┴───────┘
+```
+
+## 1. Document Databases
+
+### Characteristics
+- Store data as documents (JSON, BSON, XML)
+- Flexible schema
+- Nested structures
+- Query by any field
+
+### Examples: MongoDB, CouchDB, Couchbase
+
+```javascript
+// MongoDB document
+{
+  _id: ObjectId("507f1f77bcf86cd799439011"),
+  name: "John Doe",
+  email: "john@example.com",
+  address: {
+    street: "123 Main St",
+    city: "New York",
+    zip: "10001"
+  },
+  orders: [
+    {
+      id: "789",
+      items: ["item1", "item2"],
+      total: 99.99
+    }
+  ],
+  tags: ["premium", "verified"]
+}
+
+// Node.js with MongoDB
+const { MongoClient } = require('mongodb');
+
+async function documentExample() {
+  const client = new MongoClient('mongodb://localhost:27017');
+  await client.connect();
+  
+  const db = client.db('myapp');
+  
+  // Insert document
+  await db.collection('users').insertOne({
+    name: 'John Doe',
+    email: 'john@example.com',
+    preferences: {
+      theme: 'dark',
+      notifications: true
+    }
+  });
+  
+  // Query documents
+  const users = await db.collection('users').find({
+    'preferences.theme': 'dark'
+  }).toArray();
+  
+  // Update nested field
+  await db.collection('users').updateOne(
+    { email: 'john@example.com' },
+    { $set: { 'preferences.notifications': false } }
+  );
+}
+```
+
+### Use Cases
+- Content management systems
+- E-commerce product catalogs
+- User profiles
+- Real-time analytics
+
+## 2. Key-Value Databases
+
+### Characteristics
+- Simplest NoSQL model
+- Key-value pairs
+- Fast lookups
+- In-memory storage (often)
+
+### Examples: Redis, Memcached, DynamoDB
+
+```javascript
+// Redis key-value operations
+const redis = require('redis');
+const client = redis.createClient();
+
+await client.connect();
+
+// String operations
+await client.set('user:1:name', 'John Doe');
+const name = await client.get('user:1:name');
+
+// Set with expiration
+await client.setEx('session:abc123', 3600, 'user-data');
+
+// Hash operations
+await client.hSet('user:1', {
+  name: 'John Doe',
+  email: 'john@example.com',
+  age: '30'
+});
+
+const email = await client.hGet('user:1', 'email');
+const user = await client.hGetAll('user:1');
+
+// List operations
+await client.lPush('queue:jobs', 'job1');
+await client.lPush('queue:jobs', 'job2');
+const job = await client.rPop('queue:jobs');
+
+// Set operations
+await client.sAdd('tags:user:1', 'premium');
+await client.sAdd('tags:user:1', 'verified');
+const tags = await client.sMembers('tags:user:1');
+
+// Sorted set operations
+await client.zAdd('leaderboard', [
+  { score: 100, value: 'player1' },
+  { score: 200, value: 'player2' }
+]);
+
+const top = await client.zRange('leaderboard', 0, 9, { REV: true });
+```
+
+```csharp
+// .NET with Redis
+using StackExchange.Redis;
+
+var redis = ConnectionMultiplexer.Connect("localhost");
+var db = redis.GetDatabase();
+
+// String operations
+await db.StringSetAsync("user:1:name", "John Doe");
+var name = await db.StringGetAsync("user:1:name");
+
+// Hash operations
+await db.HashSetAsync("user:1", new HashEntry[]
+{
+    new HashEntry("name", "John Doe"),
+    new HashEntry("email", "john@example.com")
+});
+
+var email = await db.HashGetAsync("user:1", "email");
+```
+
+### Use Cases
+- Caching
+- Session storage
+- Real-time leaderboards
+- Rate limiting
+- Pub/Sub messaging
+
+## 3. Column-Family Databases
+
+### Characteristics
+- Store data in column families
+- Optimized for write-heavy workloads
+- Distributed and scalable
+- Time-series data
+
+### Examples: Cassandra, HBase, ScyllaDB
+
+```javascript
+// Cassandra with Node.js
+const cassandra = require('cassandra-driver');
+
+const client = new cassandra.Client({
+  contactPoints: ['localhost'],
+  localDataCenter: 'datacenter1',
+  keyspace: 'myapp'
+});
+
+await client.connect();
+
+// Create table
+await client.execute(`
+  CREATE TABLE IF NOT EXISTS users (
+    user_id UUID PRIMARY KEY,
+    name TEXT,
+    email TEXT,
+    created_at TIMESTAMP
+  )
+`);
+
+// Insert data
+await client.execute(
+  'INSERT INTO users (user_id, name, email, created_at) VALUES (?, ?, ?, ?)',
+  [cassandra.types.Uuid.random(), 'John Doe', 'john@example.com', new Date()],
+  { prepare: true }
+);
+
+// Query data
+const result = await client.execute(
+  'SELECT * FROM users WHERE user_id = ?',
+  [userId],
+  { prepare: true }
+);
+
+// Time-series example
+await client.execute(`
+  CREATE TABLE IF NOT EXISTS events (
+    device_id UUID,
+    timestamp TIMESTAMP,
+    temperature DOUBLE,
+    PRIMARY KEY (device_id, timestamp)
+  ) WITH CLUSTERING ORDER BY (timestamp DESC)
+`);
+
+await client.execute(
+  'INSERT INTO events (device_id, timestamp, temperature) VALUES (?, ?, ?)',
+  [deviceId, new Date(), 25.5],
+  { prepare: true }
+);
+```
+
+### Use Cases
+- Time-series data
+- IoT sensor data
+- Event logging
+- Analytics
+- High-write workloads
+
+## 4. Graph Databases
+
+### Characteristics
+- Store nodes and relationships
+- Optimized for connected data
+- Traverse relationships efficiently
+- Query patterns and paths
+
+### Examples: Neo4j, Amazon Neptune, ArangoDB
+
+```javascript
+// Neo4j with Node.js
+const neo4j = require('neo4j-driver');
+
+const driver = neo4j.driver(
+  'bolt://localhost:7687',
+  neo4j.auth.basic('neo4j', 'password')
+);
+
+const session = driver.session();
+
+// Create nodes and relationships
+await session.run(`
+  CREATE (u:User {name: $name, email: $email})
+  RETURN u
+`, { name: 'John Doe', email: 'john@example.com' });
+
+await session.run(`
+  MATCH (u1:User {email: $email1})
+  MATCH (u2:User {email: $email2})
+  CREATE (u1)-[:FOLLOWS]->(u2)
+`, { email1: 'john@example.com', email2: 'jane@example.com' });
+
+// Query relationships
+const result = await session.run(`
+  MATCH (u:User {email: $email})-[:FOLLOWS]->(friend)
+  RETURN friend.name AS name
+`, { email: 'john@example.com' });
+
+const friends = result.records.map(r => r.get('name'));
+
+// Find shortest path
+await session.run(`
+  MATCH path = shortestPath(
+    (u1:User {email: $email1})-[:FOLLOWS*]-(u2:User {email: $email2})
+  )
+  RETURN path
+`, { email1: 'john@example.com', email2: 'jane@example.com' });
+
+// Recommendation query
+await session.run(`
+  MATCH (u:User {email: $email})-[:FOLLOWS]->()-[:FOLLOWS]->(recommended)
+  WHERE NOT (u)-[:FOLLOWS]->(recommended) AND u <> recommended
+  RETURN recommended.name, COUNT(*) AS mutual_friends
+  ORDER BY mutual_friends DESC
+  LIMIT 10
+`, { email: 'john@example.com' });
+
+await session.close();
+```
+
+### Use Cases
+- Social networks
+- Recommendation engines
+- Fraud detection
+- Knowledge graphs
+- Network analysis
+
+## Comparison Table
+
+| Type | Best For | Examples | Strengths | Weaknesses |
+|------|----------|----------|-----------|------------|
+| **Document** | Flexible data, nested structures | MongoDB, CouchDB | Flexible schema, rich queries | No joins |
+| **Key-Value** | Simple lookups, caching | Redis, DynamoDB | Fast, simple | Limited queries |
+| **Column** | Time-series, analytics | Cassandra, HBase | Write-heavy, scalable | Complex queries |
+| **Graph** | Connected data, relationships | Neo4j, Neptune | Relationship queries | Not for large datasets |
+
+## Choosing the Right Type
+
+```javascript
+const chooseDatabase = (useCase) => {
+  const recommendations = {
+    'content-management': 'Document (MongoDB)',
+    'user-profiles': 'Document (MongoDB)',
+    'caching': 'Key-Value (Redis)',
+    'session-storage': 'Key-Value (Redis)',
+    'iot-sensors': 'Column (Cassandra)',
+    'time-series': 'Column (Cassandra)',
+    'social-network': 'Graph (Neo4j)',
+    'recommendations': 'Graph (Neo4j)',
+    'fraud-detection': 'Graph (Neo4j)'
+  };
+  
+  return recommendations[useCase] || 'Evaluate requirements';
+};
+```
+
+## Interview Tips
+
+- **Explain four types**: Document, key-value, column, graph
+- **Show examples**: MongoDB, Redis, Cassandra, Neo4j
+- **Demonstrate use cases**: When to use each type
+- **Discuss strengths**: What each type excels at
+- **Mention trade-offs**: Limitations of each type
+- **Show code**: Node.js, .NET examples
+
+## Summary
+
+NoSQL databases come in four main types: document (MongoDB), key-value (Redis), column-family (Cassandra), and graph (Neo4j). Document databases offer flexible schemas for nested data. Key-value databases provide fast lookups for caching. Column-family databases excel at write-heavy workloads and time-series data. Graph databases optimize for connected data and relationships. Choose based on data structure and access patterns. Essential for modern application architectures.

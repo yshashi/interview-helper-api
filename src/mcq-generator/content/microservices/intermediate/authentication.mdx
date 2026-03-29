@@ -1,0 +1,310 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Authentication in Microservices
+---
+
+# Authentication in Microservices
+
+## Challenges
+
+- Multiple services need to verify user identity
+- Avoid authenticating on every service call
+- Centralized user management
+- Token validation across services
+
+## JWT-Based Authentication
+
+```javascript
+// Auth Service
+const jwt = require('jsonwebtoken');
+
+class AuthService {
+  async login(email, password) {
+    const user = await User.findOne({ email });
+    
+    if (!user || !await user.comparePassword(password)) {
+      throw new Error('Invalid credentials');
+    }
+    
+    // Generate JWT
+    const token = jwt.sign(
+      {
+        userId: user.id,
+        email: user.email,
+        role: user.role
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+    
+    return { token, user };
+  }
+  
+  verifyToken(token) {
+    try {
+      return jwt.verify(token, process.env.JWT_SECRET);
+    } catch (error) {
+      throw new Error('Invalid token');
+    }
+  }
+}
+```
+
+## API Gateway Authentication
+
+```javascript
+// API Gateway
+const express = require('express');
+const jwt = require('jsonwebtoken');
+
+const app = express();
+
+// Authentication middleware
+app.use((req, res, next) => {
+  const token = req.headers.authorization?.split(' ')[1];
+  
+  if (!token) {
+    return res.status(401).json({ error: 'No token provided' });
+  }
+  
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = decoded;
+    
+    // Add user info to headers for downstream services
+    req.headers['x-user-id'] = decoded.userId;
+    req.headers['x-user-role'] = decoded.role;
+    
+    next();
+  } catch (error) {
+    res.status(401).json({ error: 'Invalid token' });
+  }
+});
+
+// Route to services
+app.use('/api/orders', proxy('http://order-service'));
+app.use('/api/products', proxy('http://product-service'));
+```
+
+## Service-to-Service Authentication
+
+```javascript
+// Service Token
+class ServiceAuthClient {
+  constructor(serviceName, secret) {
+    this.serviceName = serviceName;
+    this.secret = secret;
+  }
+  
+  generateToken() {
+    return jwt.sign(
+      {
+        service: this.serviceName,
+        type: 'service'
+      },
+      this.secret,
+      { expiresIn: '1h' }
+    );
+  }
+  
+  async callService(url, data) {
+    const token = this.generateToken();
+    
+    return axios.post(url, data, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'X-Service-Name': this.serviceName
+      }
+    });
+  }
+}
+
+// Usage
+const authClient = new ServiceAuthClient('order-service', process.env.SERVICE_SECRET);
+await authClient.callService('http://inventory-service/reserve', { productId: '123' });
+```
+
+## OAuth 2.0 Integration
+
+```javascript
+// OAuth 2.0 with Google
+const passport = require('passport');
+const GoogleStrategy = require('passport-google-oauth20').Strategy;
+
+passport.use(new GoogleStrategy({
+    clientID: process.env.GOOGLE_CLIENT_ID,
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+    callbackURL: '/auth/google/callback'
+  },
+  async (accessToken, refreshToken, profile, done) => {
+    let user = await User.findOne({ googleId: profile.id });
+    
+    if (!user) {
+      user = await User.create({
+        googleId: profile.id,
+        email: profile.emails[0].value,
+        name: profile.displayName
+      });
+    }
+    
+    const token = jwt.sign(
+      { userId: user.id, email: user.email },
+      process.env.JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+    
+    done(null, { user, token });
+  }
+));
+
+// Routes
+app.get('/auth/google',
+  passport.authenticate('google', { scope: ['profile', 'email'] })
+);
+
+app.get('/auth/google/callback',
+  passport.authenticate('google', { session: false }),
+  (req, res) => {
+    res.json({ token: req.user.token });
+  }
+);
+```
+
+## Role-Based Access Control (RBAC)
+
+```javascript
+// Authorization middleware
+function authorize(...roles) {
+  return (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    
+    if (!roles.includes(req.user.role)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    
+    next();
+  };
+}
+
+// Usage
+app.get('/admin/users', 
+  authenticate,
+  authorize('admin'),
+  async (req, res) => {
+    const users = await User.find();
+    res.json(users);
+  }
+);
+
+app.post('/orders',
+  authenticate,
+  authorize('user', 'admin'),
+  async (req, res) => {
+    const order = await Order.create(req.body);
+    res.json(order);
+  }
+);
+```
+
+## Token Refresh
+
+```javascript
+class TokenService {
+  generateAccessToken(user) {
+    return jwt.sign(
+      { userId: user.id, email: user.email },
+      process.env.JWT_SECRET,
+      { expiresIn: '15m' }  // Short-lived
+    );
+  }
+  
+  generateRefreshToken(user) {
+    return jwt.sign(
+      { userId: user.id, type: 'refresh' },
+      process.env.REFRESH_SECRET,
+      { expiresIn: '7d' }  // Long-lived
+    );
+  }
+  
+  async refresh(refreshToken) {
+    try {
+      const decoded = jwt.verify(refreshToken, process.env.REFRESH_SECRET);
+      
+      if (decoded.type !== 'refresh') {
+        throw new Error('Invalid token type');
+      }
+      
+      const user = await User.findById(decoded.userId);
+      
+      return {
+        accessToken: this.generateAccessToken(user),
+        refreshToken: this.generateRefreshToken(user)
+      };
+    } catch (error) {
+      throw new Error('Invalid refresh token');
+    }
+  }
+}
+```
+
+## Centralized Auth Service
+
+```javascript
+// Auth Service API
+app.post('/auth/login', async (req, res) => {
+  const { email, password } = req.body;
+  const result = await authService.login(email, password);
+  res.json(result);
+});
+
+app.post('/auth/verify', async (req, res) => {
+  const { token } = req.body;
+  
+  try {
+    const user = authService.verifyToken(token);
+    res.json({ valid: true, user });
+  } catch (error) {
+    res.json({ valid: false });
+  }
+});
+
+app.post('/auth/refresh', async (req, res) => {
+  const { refreshToken } = req.body;
+  const tokens = await tokenService.refresh(refreshToken);
+  res.json(tokens);
+});
+
+// Other services verify tokens
+async function verifyToken(token) {
+  const response = await axios.post('http://auth-service/auth/verify', {
+    token
+  });
+  
+  return response.data;
+}
+```
+
+## Best Practices
+
+1. **Use short-lived access tokens**
+2. **Implement token refresh**
+3. **Validate tokens at API Gateway**
+4. **Use HTTPS for all communication**
+5. **Store secrets securely**
+6. **Implement rate limiting**
+7. **Log authentication attempts**
+
+## Interview Tips
+
+- **Explain JWT**: Token-based authentication
+- **Show API Gateway**: Centralized auth check
+- **Demonstrate service-to-service**: Service tokens
+- **Discuss OAuth**: Third-party integration
+- **Mention RBAC**: Role-based access
+- **Show token refresh**: Short vs long-lived tokens
+
+## Summary
+
+Microservices authentication uses JWT tokens validated at API Gateway. Implement service-to-service authentication for internal calls. Support OAuth for third-party login. Use RBAC for authorization. Implement token refresh for security. Centralize authentication logic in dedicated auth service.

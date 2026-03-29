@@ -1,0 +1,137 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Error Handling in Node.js
+---
+
+# Error Handling in Node.js
+
+## Error Types
+
+### 1. Operational Errors
+Runtime problems (network issues, database errors)
+
+### 2. Programmer Errors
+Bugs in code (undefined variables, type errors)
+
+## Try-Catch
+
+```javascript
+try {
+  const data = JSON.parse(invalidJSON);
+} catch (err) {
+  console.error('Parse error:', err.message);
+}
+
+// Async/await
+async function fetchData() {
+  try {
+    const response = await fetch(url);
+    const data = await response.json();
+    return data;
+  } catch (err) {
+    console.error('Fetch error:', err);
+    throw err;
+  }
+}
+```
+
+## Error-First Callbacks
+
+```javascript
+fs.readFile('file.txt', (err, data) => {
+  if (err) {
+    console.error('Error:', err);
+    return;
+  }
+  console.log(data);
+});
+```
+
+## Express Error Handling
+
+```javascript
+// Error middleware (4 parameters)
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(err.status || 500).json({
+    error: {
+      message: err.message,
+      status: err.status
+    }
+  });
+});
+
+// Async error handling
+app.get('/data', async (req, res, next) => {
+  try {
+    const data = await getData();
+    res.json(data);
+  } catch (err) {
+    next(err);
+  }
+});
+```
+
+## Custom Error Classes
+
+```javascript
+class AppError extends Error {
+  constructor(message, statusCode) {
+    super(message);
+    this.statusCode = statusCode;
+    this.isOperational = true;
+    Error.captureStackTrace(this, this.constructor);
+  }
+}
+
+class NotFoundError extends AppError {
+  constructor(message = 'Resource not found') {
+    super(message, 404);
+  }
+}
+
+class ValidationError extends AppError {
+  constructor(message = 'Validation failed') {
+    super(message, 400);
+  }
+}
+
+// Usage
+throw new NotFoundError('User not found');
+```
+
+## Global Error Handlers
+
+```javascript
+// Uncaught exceptions
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception:', err);
+  process.exit(1);
+});
+
+// Unhandled promise rejections
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection:', reason);
+  process.exit(1);
+});
+```
+
+## Best Practices
+
+1. **Always handle errors**
+2. **Use try-catch for async/await**
+3. **Create custom error classes**
+4. **Log errors properly**
+5. **Don't expose error details to clients**
+
+## Interview Tips
+
+- **Explain error types**: Operational vs programmer errors
+- **Show try-catch**: Synchronous and async
+- **Demonstrate Express errors**: Error middleware
+- **Discuss custom errors**: Error classes
+- **Mention global handlers**: uncaughtException, unhandledRejection
+
+## Summary
+
+Handle errors using try-catch, error-first callbacks, and Express error middleware. Create custom error classes for different error types. Use global handlers for uncaught exceptions and unhandled rejections. Always log errors and handle them gracefully.

@@ -1,0 +1,382 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Replication
+---
+
+# Replication
+
+## What is Replication?
+
+**Replication** is the process of copying data across multiple servers to ensure high availability, fault tolerance, and read scalability.
+
+## MongoDB Replica Sets
+
+### Architecture
+
+```
+┌─────────┐     ┌─────────┐     ┌─────────┐
+│ Primary │────▶│Secondary│────▶│Secondary│
+└─────────┘     └─────────┘     └─────────┘
+     │               │               │
+     └───────────────┴───────────────┘
+            Heartbeat
+```
+
+### Setup Replica Set
+
+```javascript
+// Initialize replica set
+rs.initiate({
+  _id: "myReplicaSet",
+  members: [
+    { _id: 0, host: "mongo1:27017" },
+    { _id: 1, host: "mongo2:27017" },
+    { _id: 2, host: "mongo3:27017" }
+  ]
+});
+
+// Check status
+rs.status();
+
+// Add member
+rs.add("mongo4:27017");
+
+// Remove member
+rs.remove("mongo4:27017");
+```
+
+### Node.js with Replica Set
+
+```javascript
+const { MongoClient } = require('mongodb');
+
+const client = new MongoClient('mongodb://mongo1:27017,mongo2:27017,mongo3:27017/mydb?replicaSet=myReplicaSet', {
+  useUnifiedTopology: true
+});
+
+await client.connect();
+
+// Write to primary
+await db.collection('users').insertOne({
+  name: 'John Doe',
+  email: 'john@example.com'
+}, {
+  writeConcern: { w: 'majority' }  // Wait for majority
+});
+
+// Read from secondary
+const users = await db.collection('users').find().toArray({
+  readPreference: 'secondary'
+});
+```
+
+### Write Concerns
+
+```javascript
+// Write concern levels
+const writeConcerns = {
+  w1: { w: 1 },              // Acknowledged by primary only
+  wMajority: { w: 'majority' },  // Acknowledged by majority
+  wAll: { w: 3 },            // Acknowledged by all 3 nodes
+  journal: { w: 1, j: true }     // Written to journal
+};
+
+// Example
+await db.collection('users').insertOne(
+  { name: 'John' },
+  { writeConcern: { w: 'majority', j: true, wtimeout: 5000 } }
+);
+```
+
+### Read Preferences
+
+```javascript
+// Read preference modes
+const readPreferences = {
+  primary: 'Read from primary only',
+  primaryPreferred: 'Primary, fallback to secondary',
+  secondary: 'Read from secondary only',
+  secondaryPreferred: 'Secondary, fallback to primary',
+  nearest: 'Lowest network latency'
+};
+
+// Example
+const users = await db.collection('users').find().toArray({
+  readPreference: 'secondaryPreferred'
+});
+```
+
+### Automatic Failover
+
+```javascript
+// When primary fails:
+// 1. Secondaries detect failure (heartbeat)
+// 2. Election process begins
+// 3. New primary elected
+// 4. Applications reconnect automatically
+
+// Monitor failover
+const client = new MongoClient(uri, {
+  serverSelectionTimeoutMS: 5000,
+  heartbeatFrequencyMS: 10000
+});
+
+client.on('serverDescriptionChanged', (event) => {
+  console.log('Server changed:', event);
+});
+```
+
+## Cassandra Replication
+
+### Replication Strategy
+
+```sql
+-- SimpleStrategy (single datacenter)
+CREATE KEYSPACE myapp
+WITH replication = {
+  'class': 'SimpleStrategy',
+  'replication_factor': 3
+};
+
+-- NetworkTopologyStrategy (multiple datacenters)
+CREATE KEYSPACE myapp
+WITH replication = {
+  'class': 'NetworkTopologyStrategy',
+  'dc1': 3,
+  'dc2': 2
+};
+```
+
+### Consistency Levels
+
+```javascript
+const cassandra = require('cassandra-driver');
+
+const client = new cassandra.Client({
+  contactPoints: ['node1', 'node2', 'node3'],
+  localDataCenter: 'dc1',
+  keyspace: 'myapp'
+});
+
+// Write with quorum
+await client.execute(
+  'INSERT INTO users (id, name) VALUES (?, ?)',
+  [id, name],
+  { consistency: cassandra.types.consistencies.quorum }
+);
+
+// Read with one
+await client.execute(
+  'SELECT * FROM users WHERE id = ?',
+  [id],
+  { consistency: cassandra.types.consistencies.one }
+);
+```
+
+### Consistency Levels
+
+```javascript
+const consistencyLevels = {
+  ONE: 'One replica responds',
+  TWO: 'Two replicas respond',
+  THREE: 'Three replicas respond',
+  QUORUM: 'Majority of replicas',
+  ALL: 'All replicas respond',
+  LOCAL_QUORUM: 'Quorum in local DC',
+  EACH_QUORUM: 'Quorum in each DC'
+};
+```
+
+## Redis Replication
+
+### Master-Slave Setup
+
+```bash
+# Master configuration
+# redis.conf
+port 6379
+
+# Slave configuration
+# redis.conf
+port 6380
+replicaof 127.0.0.1 6379
+```
+
+### Node.js with Redis Sentinel
+
+```javascript
+const Redis = require('ioredis');
+
+// Connect to Sentinel
+const redis = new Redis({
+  sentinels: [
+    { host: 'sentinel1', port: 26379 },
+    { host: 'sentinel2', port: 26379 },
+    { host: 'sentinel3', port: 26379 }
+  ],
+  name: 'mymaster'
+});
+
+// Automatic failover handled by Sentinel
+redis.on('connect', () => {
+  console.log('Connected to Redis');
+});
+
+redis.on('error', (err) => {
+  console.error('Redis error:', err);
+});
+```
+
+## DynamoDB Replication
+
+### Global Tables
+
+```javascript
+const { DynamoDBClient, CreateGlobalTableCommand } = require('@aws-sdk/client-dynamodb');
+
+const client = new DynamoDBClient({ region: 'us-east-1' });
+
+// Create global table (multi-region replication)
+const command = new CreateGlobalTableCommand({
+  GlobalTableName: 'Users',
+  ReplicationGroup: [
+    { RegionName: 'us-east-1' },
+    { RegionName: 'eu-west-1' },
+    { RegionName: 'ap-southeast-1' }
+  ]
+});
+
+await client.send(command);
+
+// Automatic replication across regions
+// Eventually consistent reads by default
+```
+
+## Replication Lag
+
+```javascript
+// Monitor replication lag in MongoDB
+const status = rs.status();
+status.members.forEach(member => {
+  if (member.state === 2) {  // Secondary
+    const lag = status.members[0].optimeDate - member.optimeDate;
+    console.log(`${member.name} lag: ${lag}ms`);
+  }
+});
+
+// Handle replication lag
+async function readWithRetry(query, maxLag = 1000) {
+  let attempt = 0;
+  while (attempt < 3) {
+    const result = await db.collection('users').findOne(query, {
+      readPreference: 'secondary'
+    });
+    
+    if (result) return result;
+    
+    // Wait for replication
+    await new Promise(resolve => setTimeout(resolve, maxLag));
+    attempt++;
+  }
+  
+  // Fallback to primary
+  return await db.collection('users').findOne(query, {
+    readPreference: 'primary'
+  });
+}
+```
+
+## .NET with Replication
+
+```csharp
+using MongoDB.Driver;
+
+public class ReplicationService
+{
+    private readonly IMongoClient _client;
+    
+    public ReplicationService()
+    {
+        var settings = MongoClientSettings.FromConnectionString(
+            "mongodb://mongo1:27017,mongo2:27017,mongo3:27017/?replicaSet=myReplicaSet"
+        );
+        
+        // Write concern
+        settings.WriteConcern = WriteConcern.WMajority;
+        
+        // Read preference
+        settings.ReadPreference = ReadPreference.SecondaryPreferred;
+        
+        _client = new MongoClient(settings);
+    }
+    
+    public async Task<User> CreateUser(User user)
+    {
+        var db = _client.GetDatabase("myapp");
+        var collection = db.GetCollection<User>("users");
+        
+        await collection.InsertOneAsync(
+            user,
+            new InsertOneOptions
+            {
+                WriteConcern = WriteConcern.WMajority
+            }
+        );
+        
+        return user;
+    }
+    
+    public async Task<List<User>> GetUsers()
+    {
+        var db = _client.GetDatabase("myapp");
+        var collection = db.GetCollection<User>("users")
+            .WithReadPreference(ReadPreference.Secondary);
+        
+        return await collection.Find(_ => true).ToListAsync();
+    }
+}
+```
+
+## Best Practices
+
+```javascript
+const replicationBestPractices = {
+  mongodb: [
+    'Use odd number of nodes (3, 5, 7)',
+    'Set appropriate write concern for durability',
+    'Use read preference based on use case',
+    'Monitor replication lag',
+    'Place nodes in different availability zones',
+    'Use arbiter only if necessary'
+  ],
+  
+  cassandra: [
+    'Set replication factor >= 3',
+    'Use NetworkTopologyStrategy for production',
+    'Choose consistency level per query',
+    'Balance consistency vs availability',
+    'Distribute nodes across racks/datacenters'
+  ],
+  
+  redis: [
+    'Use Redis Sentinel for automatic failover',
+    'Configure multiple sentinels (3+)',
+    'Set appropriate timeout values',
+    'Monitor master-slave lag',
+    'Use Redis Cluster for horizontal scaling'
+  ]
+};
+```
+
+## Interview Tips
+
+- **Explain replication**: Data copying for availability
+- **Show MongoDB**: Replica sets, primary/secondary
+- **Demonstrate Cassandra**: Replication factor, consistency
+- **Discuss failover**: Automatic election process
+- **Mention trade-offs**: Consistency vs availability
+- **Show examples**: Node.js, .NET implementations
+
+## Summary
+
+Replication copies data across multiple servers for high availability and fault tolerance. MongoDB uses replica sets with primary-secondary architecture and automatic failover. Cassandra uses configurable replication factor with tunable consistency. Redis supports master-slave replication with Sentinel for failover. DynamoDB offers global tables for multi-region replication. Configure write concerns and read preferences based on requirements. Monitor replication lag. Essential for production NoSQL deployments.

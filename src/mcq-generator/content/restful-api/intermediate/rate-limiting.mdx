@@ -1,0 +1,362 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Rate Limiting
+---
+
+# Rate Limiting
+
+## What is Rate Limiting?
+
+**Rate limiting** controls the number of requests a client can make to an API within a time window, preventing abuse and ensuring fair usage.
+
+## Why Rate Limiting?
+
+- **Prevent abuse**: Stop malicious attacks
+- **Fair usage**: Ensure resources for all users
+- **Cost control**: Limit infrastructure costs
+- **Performance**: Maintain API responsiveness
+
+## Node.js/Express Implementation
+
+```javascript
+const rateLimit = require('express-rate-limit');
+
+// Basic rate limiting
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Limit each IP to 100 requests per windowMs
+  message: 'Too many requests, please try again later',
+  standardHeaders: true, // Return rate limit info in headers
+  legacyHeaders: false
+});
+
+app.use('/api', limiter);
+
+// Custom handler
+const customLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  handler: (req, res) => {
+    res.status(429).json({
+      error: {
+        code: 'RATE_LIMIT_EXCEEDED',
+        message: 'Too many requests from this IP',
+        retryAfter: req.rateLimit.resetTime
+      }
+    });
+  }
+});
+```
+
+## Different Limits for Different Routes
+
+```javascript
+// Strict limit for authentication
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5, // 5 attempts per 15 minutes
+  skipSuccessfulRequests: true
+});
+
+app.post('/api/auth/login', authLimiter, async (req, res) => {
+  // Login logic
+});
+
+// Moderate limit for API endpoints
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100
+});
+
+app.use('/api', apiLimiter);
+
+// Generous limit for public data
+const publicLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 1000
+});
+
+app.use('/api/public', publicLimiter);
+```
+
+## Redis-Based Rate Limiting
+
+```javascript
+const RedisStore = require('rate-limit-redis');
+const redis = require('redis');
+
+const redisClient = redis.createClient({
+  host: 'localhost',
+  port: 6379
+});
+
+const limiter = rateLimit({
+  store: new RedisStore({
+    client: redisClient,
+    prefix: 'rl:'
+  }),
+  windowMs: 15 * 60 * 1000,
+  max: 100
+});
+
+app.use('/api', limiter);
+```
+
+## User-Based Rate Limiting
+
+```javascript
+// Rate limit by user ID instead of IP
+const userLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  keyGenerator: (req) => {
+    return req.user?.id || req.ip;
+  }
+});
+
+app.use('/api', authenticate, userLimiter);
+```
+
+## .NET Implementation
+
+```csharp
+// Install: AspNetCoreRateLimit
+
+// Startup.cs
+services.AddMemoryCache();
+services.Configure<IpRateLimitOptions>(options =>
+{
+    options.GeneralRules = new List<RateLimitRule>
+    {
+        new RateLimitRule
+        {
+            Endpoint = "*",
+            Period = "15m",
+            Limit = 100
+        },
+        new RateLimitRule
+        {
+            Endpoint = "POST:/api/auth/login",
+            Period = "15m",
+            Limit = 5
+        }
+    };
+});
+
+services.AddSingleton<IIpPolicyStore, MemoryCacheIpPolicyStore>();
+services.AddSingleton<IRateLimitCounterStore, MemoryCacheRateLimitCounterStore>();
+services.AddSingleton<IRateLimitConfiguration, RateLimitConfiguration>();
+services.AddSingleton<IProcessingStrategy, AsyncKeyLockProcessingStrategy>();
+
+// Configure
+app.UseIpRateLimiting();
+```
+
+## Response Headers
+
+```javascript
+// Rate limit headers
+HTTP/1.1 200 OK
+X-RateLimit-Limit: 100
+X-RateLimit-Remaining: 95
+X-RateLimit-Reset: 1640995200
+
+// When limit exceeded
+HTTP/1.1 429 Too Many Requests
+X-RateLimit-Limit: 100
+X-RateLimit-Remaining: 0
+X-RateLimit-Reset: 1640995200
+Retry-After: 900
+
+{
+  "error": {
+    "code": "RATE_LIMIT_EXCEEDED",
+    "message": "Too many requests",
+    "retryAfter": 900
+  }
+}
+```
+
+## Custom Rate Limit Logic
+
+```javascript
+const redis = require('redis');
+const client = redis.createClient();
+
+async function checkRateLimit(key, limit, window) {
+  const current = await client.incr(key);
+  
+  if (current === 1) {
+    await client.expire(key, window);
+  }
+  
+  if (current > limit) {
+    const ttl = await client.ttl(key);
+    return {
+      allowed: false,
+      remaining: 0,
+      resetTime: Date.now() + (ttl * 1000)
+    };
+  }
+  
+  return {
+    allowed: true,
+    remaining: limit - current,
+    resetTime: Date.now() + (window * 1000)
+  };
+}
+
+// Middleware
+app.use(async (req, res, next) => {
+  const key = `rl:${req.ip}`;
+  const result = await checkRateLimit(key, 100, 900); // 100 requests per 15 min
+  
+  res.set('X-RateLimit-Limit', '100');
+  res.set('X-RateLimit-Remaining', result.remaining.toString());
+  res.set('X-RateLimit-Reset', result.resetTime.toString());
+  
+  if (!result.allowed) {
+    return res.status(429).json({
+      error: 'Rate limit exceeded',
+      retryAfter: Math.ceil((result.resetTime - Date.now()) / 1000)
+    });
+  }
+  
+  next();
+});
+```
+
+## Tiered Rate Limiting
+
+```javascript
+// Different limits for different user tiers
+const getRateLimit = (user) => {
+  if (user.tier === 'premium') {
+    return { windowMs: 15 * 60 * 1000, max: 1000 };
+  } else if (user.tier === 'basic') {
+    return { windowMs: 15 * 60 * 1000, max: 100 };
+  } else {
+    return { windowMs: 15 * 60 * 1000, max: 10 };
+  }
+};
+
+app.use('/api', authenticate, (req, res, next) => {
+  const limits = getRateLimit(req.user);
+  
+  const limiter = rateLimit({
+    ...limits,
+    keyGenerator: (req) => req.user.id
+  });
+  
+  limiter(req, res, next);
+});
+```
+
+## Angular - Handling Rate Limits
+
+```typescript
+@Injectable()
+export class RateLimitInterceptor implements HttpInterceptor {
+  intercept(req: HttpRequest<any>, next: HttpHandler): Observable<HttpEvent<any>> {
+    return next.handle(req).pipe(
+      catchError((error: HttpErrorResponse) => {
+        if (error.status === 429) {
+          const retryAfter = error.headers.get('Retry-After');
+          const resetTime = error.headers.get('X-RateLimit-Reset');
+          
+          console.log(`Rate limited. Retry after ${retryAfter} seconds`);
+          
+          // Show user-friendly message
+          this.showRateLimitMessage(retryAfter);
+        }
+        
+        return throwError(() => error);
+      })
+    );
+  }
+  
+  private showRateLimitMessage(retryAfter: string) {
+    // Show notification to user
+  }
+}
+```
+
+## Distributed Rate Limiting
+
+```javascript
+// Using Redis for distributed systems
+const Redis = require('ioredis');
+const redis = new Redis.Cluster([
+  { host: 'redis-1', port: 6379 },
+  { host: 'redis-2', port: 6379 }
+]);
+
+async function distributedRateLimit(userId, limit, window) {
+  const key = `rl:${userId}`;
+  const now = Date.now();
+  const windowStart = now - (window * 1000);
+  
+  // Remove old entries
+  await redis.zremrangebyscore(key, 0, windowStart);
+  
+  // Count requests in current window
+  const count = await redis.zcard(key);
+  
+  if (count >= limit) {
+    return { allowed: false, remaining: 0 };
+  }
+  
+  // Add current request
+  await redis.zadd(key, now, `${now}-${Math.random()}`);
+  await redis.expire(key, window);
+  
+  return { allowed: true, remaining: limit - count - 1 };
+}
+```
+
+## Best Practices
+
+```javascript
+// 1. Return informative headers
+res.set('X-RateLimit-Limit', limit);
+res.set('X-RateLimit-Remaining', remaining);
+res.set('X-RateLimit-Reset', resetTime);
+res.set('Retry-After', retryAfter);
+
+// 2. Different limits for different endpoints
+// Auth: 5 requests per 15 min
+// API: 100 requests per 15 min
+// Public: 1000 requests per 15 min
+
+// 3. Use Redis for distributed systems
+
+// 4. Implement exponential backoff
+const backoff = Math.min(1000 * Math.pow(2, attempts), 30000);
+
+// 5. Whitelist trusted IPs
+const whitelist = ['192.168.1.1', '10.0.0.1'];
+if (whitelist.includes(req.ip)) {
+  return next();
+}
+
+// 6. Log rate limit violations
+logger.warn({
+  event: 'rate_limit_exceeded',
+  ip: req.ip,
+  userId: req.user?.id,
+  endpoint: req.path
+});
+```
+
+## Interview Tips
+
+- **Explain rate limiting**: Prevent abuse, ensure fair usage
+- **Show implementation**: Node.js, .NET
+- **Demonstrate Redis**: Distributed rate limiting
+- **Discuss headers**: X-RateLimit-* headers
+- **Mention tiers**: Different limits for different users
+- **Show client handling**: Angular interceptor
+
+## Summary
+
+Rate limiting controls API request frequency to prevent abuse and ensure fair usage. Implement using middleware with configurable windows and limits. Return rate limit info in response headers. Use Redis for distributed systems. Apply different limits to different endpoints and user tiers. Return 429 status when exceeded. Essential for production REST APIs.

@@ -1,0 +1,507 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Optional Chaining in JavaScript
+---
+
+# Optional Chaining in JavaScript
+
+## What is Optional Chaining?
+
+Optional chaining (`?.`) is an ES2020 feature that allows you to safely access deeply nested object properties without having to explicitly check if each reference in the chain is valid. It short-circuits and returns `undefined` if any part of the chain is `null` or `undefined`.
+
+## Syntax
+
+```javascript
+obj?.prop       // Optional property access
+obj?.[expr]     // Optional computed property access
+func?.(...args) // Optional function or method call
+```
+
+## Basic Usage
+
+### Without Optional Chaining
+
+```javascript
+const user = {
+  name: 'John',
+  address: {
+    street: '123 Main St',
+    city: 'New York'
+  }
+};
+
+// Traditional approach - verbose and error-prone
+let zipCode;
+if (user && user.address && user.address.zipCode) {
+  zipCode = user.address.zipCode;
+}
+
+console.log(zipCode); // undefined
+```
+
+### With Optional Chaining
+
+```javascript
+const user = {
+  name: 'John',
+  address: {
+    street: '123 Main St',
+    city: 'New York'
+  }
+};
+
+// Clean and concise
+const zipCode = user?.address?.zipCode;
+console.log(zipCode); // undefined (no error thrown)
+```
+
+## Property Access
+
+### Accessing Nested Properties
+
+```javascript
+const user = {
+  name: 'Alice',
+  profile: {
+    bio: 'Developer',
+    social: {
+      twitter: '@alice'
+    }
+  }
+};
+
+// Safe access to deeply nested properties
+console.log(user?.profile?.social?.twitter); // '@alice'
+console.log(user?.profile?.social?.linkedin); // undefined
+console.log(user?.settings?.theme); // undefined (settings doesn't exist)
+
+// Without optional chaining, this would throw an error
+const nonExistentUser = null;
+console.log(nonExistentUser?.profile?.bio); // undefined (no error)
+```
+
+### Array Access
+
+```javascript
+const users = [
+  { name: 'John', age: 30 },
+  { name: 'Jane', age: 25 }
+];
+
+// Safe array element access
+console.log(users?.[0]?.name); // 'John'
+console.log(users?.[5]?.name); // undefined
+console.log(users?.[0]?.address?.city); // undefined
+
+// With null/undefined arrays
+const emptyUsers = null;
+console.log(emptyUsers?.[0]?.name); // undefined (no error)
+```
+
+## Method Calls
+
+### Optional Method Invocation
+
+```javascript
+const user = {
+  name: 'John',
+  greet() {
+    return `Hello, I'm ${this.name}`;
+  }
+};
+
+// Safe method calls
+console.log(user.greet?.()); // "Hello, I'm John"
+console.log(user.sayGoodbye?.()); // undefined (method doesn't exist)
+
+// With null/undefined objects
+const nullUser = null;
+console.log(nullUser?.greet?.()); // undefined (no error)
+```
+
+### Callback Functions
+
+```javascript
+function processData(data, callback) {
+  // Safely call callback if it exists
+  const result = callback?.(data);
+  return result ?? 'No callback provided';
+}
+
+console.log(processData('test', (d) => d.toUpperCase())); // 'TEST'
+console.log(processData('test', null)); // 'No callback provided'
+console.log(processData('test')); // 'No callback provided'
+```
+
+## Computed Property Access
+
+```javascript
+const user = {
+  name: 'Alice',
+  'user-id': 123,
+  preferences: {
+    theme: 'dark'
+  }
+};
+
+const key = 'user-id';
+console.log(user?.[key]); // 123
+
+const nestedKey = 'theme';
+console.log(user?.preferences?.[nestedKey]); // 'dark'
+
+// Dynamic property access
+function getProperty(obj, path) {
+  return path.split('.').reduce((acc, key) => acc?.[key], obj);
+}
+
+console.log(getProperty(user, 'preferences.theme')); // 'dark'
+console.log(getProperty(user, 'preferences.color')); // undefined
+```
+
+## Practical Examples
+
+### 1. API Response Handling
+
+```javascript
+async function fetchUserData(userId) {
+  try {
+    const response = await fetch(`/api/users/${userId}`);
+    const data = await response.json();
+    
+    // Safe access to nested API response
+    const userName = data?.user?.profile?.name ?? 'Unknown';
+    const email = data?.user?.contact?.email ?? 'No email';
+    const avatar = data?.user?.profile?.avatar?.url ?? '/default-avatar.png';
+    
+    return { userName, email, avatar };
+  } catch (error) {
+    console.error('Error fetching user:', error);
+    return null;
+  }
+}
+```
+
+### 2. Event Handler Safety
+
+```javascript
+function handleClick(event) {
+  // Safe access to event properties
+  const targetId = event?.target?.id;
+  const dataAttribute = event?.target?.dataset?.action;
+  const parentClass = event?.target?.parentElement?.className;
+  
+  console.log('Target ID:', targetId);
+  console.log('Data Action:', dataAttribute);
+  console.log('Parent Class:', parentClass);
+}
+
+document.addEventListener('click', handleClick);
+```
+
+### 3. Configuration Objects
+
+```javascript
+function initializeApp(config) {
+  // Safe access to optional configuration
+  const apiUrl = config?.api?.baseUrl ?? 'https://api.default.com';
+  const timeout = config?.api?.timeout ?? 5000;
+  const retries = config?.api?.retries ?? 3;
+  const theme = config?.ui?.theme ?? 'light';
+  const language = config?.i18n?.defaultLanguage ?? 'en';
+  
+  return {
+    apiUrl,
+    timeout,
+    retries,
+    theme,
+    language
+  };
+}
+
+// Works with partial or missing config
+console.log(initializeApp({}));
+console.log(initializeApp({ api: { baseUrl: 'https://custom.api.com' } }));
+console.log(initializeApp(null));
+```
+
+### 4. Form Validation
+
+```javascript
+function validateForm(formData) {
+  const errors = [];
+  
+  // Safe access to form fields
+  if (!formData?.user?.name?.trim()) {
+    errors.push('Name is required');
+  }
+  
+  if (!formData?.user?.email?.includes('@')) {
+    errors.push('Valid email is required');
+  }
+  
+  if ((formData?.user?.age ?? 0) < 18) {
+    errors.push('Must be 18 or older');
+  }
+  
+  return {
+    isValid: errors.length === 0,
+    errors
+  };
+}
+
+console.log(validateForm({ user: { name: 'John', email: 'john@example.com', age: 25 } }));
+// { isValid: true, errors: [] }
+
+console.log(validateForm({}));
+// { isValid: false, errors: [...] }
+```
+
+### 5. DOM Manipulation
+
+```javascript
+function updateElement(elementId, content) {
+  const element = document.getElementById(elementId);
+  
+  // Safe DOM updates
+  element?.classList?.add('updated');
+  element?.setAttribute?.('data-modified', 'true');
+  
+  if (element?.textContent !== undefined) {
+    element.textContent = content;
+  }
+  
+  // Safe event listener addition
+  element?.addEventListener?.('click', () => {
+    console.log('Element clicked');
+  });
+}
+```
+
+## Combining with Nullish Coalescing
+
+Optional chaining works great with the nullish coalescing operator (`??`):
+
+```javascript
+const user = {
+  name: 'John',
+  settings: {
+    notifications: false
+  }
+};
+
+// Combine optional chaining with nullish coalescing
+const theme = user?.settings?.theme ?? 'default';
+const notifications = user?.settings?.notifications ?? true;
+const language = user?.preferences?.language ?? 'en';
+
+console.log(theme); // 'default'
+console.log(notifications); // false (not true, because false is a valid value)
+console.log(language); // 'en'
+```
+
+## Common Patterns
+
+### 1. Safe Array Operations
+
+```javascript
+const data = {
+  users: [
+    { name: 'Alice', posts: [{ title: 'Post 1' }] },
+    { name: 'Bob', posts: null }
+  ]
+};
+
+// Safe array mapping
+const firstPostTitles = data?.users?.map(user => 
+  user?.posts?.[0]?.title ?? 'No posts'
+);
+
+console.log(firstPostTitles); // ['Post 1', 'No posts']
+```
+
+### 2. Conditional Method Execution
+
+```javascript
+class Logger {
+  constructor(config) {
+    this.config = config;
+  }
+  
+  log(message) {
+    // Only log if enabled
+    this.config?.onLog?.(message);
+    
+    // Only save to file if configured
+    this.config?.fileLogger?.write?.(message);
+    
+    // Always log to console as fallback
+    console.log(message);
+  }
+}
+
+const logger = new Logger({
+  onLog: (msg) => console.log('Custom log:', msg)
+});
+
+logger.log('Test message');
+```
+
+### 3. Plugin System
+
+```javascript
+class PluginManager {
+  constructor() {
+    this.plugins = [];
+  }
+  
+  register(plugin) {
+    this.plugins.push(plugin);
+  }
+  
+  execute(eventName, data) {
+    this.plugins.forEach(plugin => {
+      // Safe plugin method calls
+      plugin?.hooks?.[eventName]?.(data);
+      plugin?.onEvent?.(eventName, data);
+    });
+  }
+}
+
+const manager = new PluginManager();
+
+manager.register({
+  hooks: {
+    beforeSave: (data) => console.log('Before save:', data)
+  }
+});
+
+manager.register({
+  onEvent: (event, data) => console.log('Event:', event, data)
+});
+
+manager.execute('beforeSave', { id: 1 });
+```
+
+## Edge Cases and Gotchas
+
+### 1. Short-Circuit Evaluation
+
+```javascript
+const obj = {
+  a: {
+    b: 0
+  }
+};
+
+// Optional chaining stops at null/undefined, not falsy values
+console.log(obj?.a?.b); // 0 (not undefined)
+console.log(obj?.a?.c); // undefined
+
+// Be careful with falsy values
+const value = obj?.a?.b ?? 'default'; // 0 (not 'default')
+```
+
+### 2. Cannot Use on Left Side of Assignment
+
+```javascript
+const obj = {};
+
+// This is INVALID
+// obj?.property = 'value'; // SyntaxError
+
+// Use regular property access for assignment
+obj.property = 'value';
+
+// Or check first
+if (obj) {
+  obj.property = 'value';
+}
+```
+
+### 3. Delete Operator
+
+```javascript
+const obj = {
+  a: {
+    b: 'value'
+  }
+};
+
+// Optional chaining with delete
+delete obj?.a?.b; // Works
+console.log(obj.a); // {}
+
+delete obj?.x?.y; // No error, just does nothing
+```
+
+## Performance Considerations
+
+```javascript
+// Optional chaining has minimal performance overhead
+// But avoid excessive chaining in hot paths
+
+// Good - reasonable chaining
+const value = data?.user?.profile?.name;
+
+// Potentially problematic in tight loops
+for (let i = 0; i < 1000000; i++) {
+  // If this is in a performance-critical loop,
+  // consider caching intermediate values
+  const name = data?.users?.[i]?.profile?.settings?.display?.name;
+}
+
+// Better for performance-critical code
+for (let i = 0; i < 1000000; i++) {
+  const user = data?.users?.[i];
+  if (user?.profile?.settings?.display) {
+    const name = user.profile.settings.display.name;
+  }
+}
+```
+
+## Browser Support and Polyfills
+
+```javascript
+// Optional chaining is supported in:
+// - Chrome 80+
+// - Firefox 74+
+// - Safari 13.1+
+// - Edge 80+
+// - Node.js 14+
+
+// For older browsers, use Babel to transpile:
+// Input:
+const name = user?.profile?.name;
+
+// Babel output (simplified):
+const name = user === null || user === void 0 
+  ? void 0 
+  : (_user$profile = user.profile) === null || _user$profile === void 0 
+    ? void 0 
+    : _user$profile.name;
+```
+
+## Best Practices
+
+1. **Use for uncertain data**: API responses, user input, optional configurations
+2. **Combine with nullish coalescing**: Provide default values when needed
+3. **Don't overuse**: If property should always exist, don't use optional chaining
+4. **Keep chains reasonable**: Extremely long chains may indicate design issues
+5. **Document assumptions**: Make it clear why optional chaining is needed
+6. **Consider TypeScript**: Provides better type safety with optional chaining
+
+## Interview Tips
+
+- **Explain the problem it solves**: Accessing nested properties safely
+- **Show syntax variations**: Property access, method calls, computed properties
+- **Demonstrate with examples**: API responses, event handlers, configurations
+- **Discuss short-circuit behavior**: Returns undefined at first null/undefined
+- **Mention combination with ??**: Optional chaining + nullish coalescing
+- **Explain limitations**: Cannot use on left side of assignment
+- **Compare with alternatives**: Traditional if checks, lodash get()
+- **Discuss browser support**: Modern feature, may need transpilation
+
+## Summary
+
+Optional chaining (`?.`) is a powerful feature that simplifies accessing nested object properties by safely handling `null` or `undefined` values. It eliminates verbose null checks and makes code more readable and maintainable. Combined with nullish coalescing (`??`), it provides a robust solution for handling optional data in modern JavaScript applications.

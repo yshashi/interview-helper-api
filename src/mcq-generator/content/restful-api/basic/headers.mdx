@@ -1,0 +1,327 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Request and Response Headers
+---
+
+# Request and Response Headers
+
+## What are HTTP Headers?
+
+HTTP headers provide additional information about the request or response, such as content type, authentication, caching, and more.
+
+## Common Request Headers
+
+```javascript
+// Example request with headers
+GET /api/users/123
+Host: api.example.com
+Accept: application/json
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+Content-Type: application/json
+User-Agent: Mozilla/5.0
+Accept-Language: en-US,en;q=0.9
+If-None-Match: "686897696a7c876b7e"
+```
+
+### Authorization
+
+```javascript
+// Node.js - Reading Authorization header
+app.get('/api/profile', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  const user = verifyToken(token);
+  res.json(user);
+});
+```
+
+```csharp
+// .NET - Authorization header
+[Authorize]
+[HttpGet("profile")]
+public async Task<ActionResult<User>> GetProfile()
+{
+    var token = Request.Headers["Authorization"].ToString();
+    // Process token
+}
+```
+
+### Content-Type
+
+```javascript
+// Specify request body format
+POST /api/users
+Content-Type: application/json
+
+{
+  "name": "John Doe",
+  "email": "john@example.com"
+}
+```
+
+### Accept
+
+```javascript
+// Client specifies desired response format
+app.get('/api/users/:id', (req, res) => {
+  const user = await User.findById(req.params.id);
+  
+  if (req.headers.accept === 'application/xml') {
+    res.set('Content-Type', 'application/xml');
+    res.send(convertToXML(user));
+  } else {
+    res.json(user);
+  }
+});
+```
+
+## Common Response Headers
+
+```javascript
+// Example response with headers
+HTTP/1.1 200 OK
+Content-Type: application/json
+Cache-Control: public, max-age=300
+ETag: "686897696a7c876b7e"
+Location: /api/users/123
+X-RateLimit-Limit: 100
+X-RateLimit-Remaining: 95
+```
+
+### Content-Type
+
+```javascript
+// Node.js - Set Content-Type
+app.get('/api/users', (req, res) => {
+  res.set('Content-Type', 'application/json');
+  res.json({ users: [] });
+});
+
+// Or use res.json() which sets it automatically
+app.get('/api/users', (req, res) => {
+  res.json({ users: [] });
+});
+```
+
+### Cache-Control
+
+```javascript
+// Enable caching
+app.get('/api/users/:id', (req, res) => {
+  res.set('Cache-Control', 'public, max-age=300'); // 5 minutes
+  res.json(user);
+});
+
+// Disable caching
+app.post('/api/users', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.status(201).json(user);
+});
+```
+
+```csharp
+// .NET - Response caching
+[HttpGet("{id}")]
+[ResponseCache(Duration = 300, Location = ResponseCacheLocation.Any)]
+public async Task<ActionResult<User>> GetUser(int id)
+{
+    var user = await _context.Users.FindAsync(id);
+    return Ok(user);
+}
+```
+
+### Location
+
+```javascript
+// Return location of created resource
+app.post('/api/users', async (req, res) => {
+  const user = await User.create(req.body);
+  res.set('Location', `/api/users/${user.id}`);
+  res.status(201).json(user);
+});
+```
+
+### ETag
+
+```javascript
+// Generate and use ETags
+const crypto = require('crypto');
+
+function generateETag(data) {
+  return crypto.createHash('md5').update(JSON.stringify(data)).digest('hex');
+}
+
+app.get('/api/users/:id', async (req, res) => {
+  const user = await User.findById(req.params.id);
+  const etag = generateETag(user);
+  
+  // Check if client has cached version
+  if (req.headers['if-none-match'] === etag) {
+    return res.status(304).send(); // Not Modified
+  }
+  
+  res.set('ETag', etag);
+  res.json(user);
+});
+```
+
+## CORS Headers
+
+```javascript
+// Node.js - CORS headers
+const cors = require('cors');
+
+app.use(cors({
+  origin: 'https://example.com',
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  exposedHeaders: ['X-Total-Count'],
+  credentials: true,
+  maxAge: 86400
+}));
+
+// Manual CORS
+app.use((req, res, next) => {
+  res.set('Access-Control-Allow-Origin', '*');
+  res.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE');
+  res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  next();
+});
+```
+
+```csharp
+// .NET - CORS
+services.AddCors(options =>
+{
+    options.AddPolicy("AllowAll",
+        builder =>
+        {
+            builder.WithOrigins("https://example.com")
+                   .AllowAnyMethod()
+                   .AllowAnyHeader()
+                   .AllowCredentials();
+        });
+});
+
+app.UseCors("AllowAll");
+```
+
+## Custom Headers
+
+```javascript
+// Add custom headers
+app.get('/api/users', async (req, res) => {
+  const users = await User.find();
+  
+  res.set('X-Total-Count', users.length);
+  res.set('X-Page', req.query.page || 1);
+  res.set('X-Per-Page', req.query.limit || 10);
+  
+  res.json(users);
+});
+```
+
+## Rate Limiting Headers
+
+```javascript
+// Rate limit headers
+app.use((req, res, next) => {
+  const limit = 100;
+  const remaining = getRemainingRequests(req.ip);
+  const reset = getResetTime(req.ip);
+  
+  res.set('X-RateLimit-Limit', limit);
+  res.set('X-RateLimit-Remaining', remaining);
+  res.set('X-RateLimit-Reset', reset);
+  
+  if (remaining <= 0) {
+    return res.status(429).json({ error: 'Rate limit exceeded' });
+  }
+  
+  next();
+});
+```
+
+## Angular - Reading Response Headers
+
+```typescript
+import { HttpResponse } from '@angular/common/http';
+
+@Injectable()
+export class UserService {
+  getUsers(): Observable<User[]> {
+    return this.http.get<User[]>(`${this.apiUrl}/users`, { observe: 'response' })
+      .pipe(
+        map((response: HttpResponse<User[]>) => {
+          const totalCount = response.headers.get('X-Total-Count');
+          const users = response.body;
+          console.log('Total users:', totalCount);
+          return users;
+        })
+      );
+  }
+}
+```
+
+## Security Headers
+
+```javascript
+// Security headers with Helmet
+const helmet = require('helmet');
+
+app.use(helmet());
+
+// Or manually
+app.use((req, res, next) => {
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.set('X-Frame-Options', 'DENY');
+  res.set('X-XSS-Protection', '1; mode=block');
+  res.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  next();
+});
+```
+
+## Conditional Request Headers
+
+```javascript
+// If-Modified-Since
+app.get('/api/users/:id', async (req, res) => {
+  const user = await User.findById(req.params.id);
+  const lastModified = user.updatedAt;
+  
+  if (req.headers['if-modified-since']) {
+    const clientDate = new Date(req.headers['if-modified-since']);
+    if (lastModified <= clientDate) {
+      return res.status(304).send();
+    }
+  }
+  
+  res.set('Last-Modified', lastModified.toUTCString());
+  res.json(user);
+});
+
+// If-None-Match (ETag)
+app.get('/api/users/:id', async (req, res) => {
+  const user = await User.findById(req.params.id);
+  const etag = generateETag(user);
+  
+  if (req.headers['if-none-match'] === etag) {
+    return res.status(304).send();
+  }
+  
+  res.set('ETag', etag);
+  res.json(user);
+});
+```
+
+## Interview Tips
+
+- **Explain headers**: Metadata about request/response
+- **Show common headers**: Authorization, Content-Type, Cache-Control
+- **Demonstrate CORS**: Cross-origin resource sharing
+- **Discuss caching**: ETag, Cache-Control
+- **Mention security**: Helmet, security headers
+- **Show examples**: Node.js, .NET, Angular
+
+## Summary
+
+HTTP headers provide metadata about requests and responses. Common request headers include Authorization, Content-Type, and Accept. Response headers include Content-Type, Cache-Control, ETag, and Location. CORS headers enable cross-origin requests. Use security headers to protect against attacks. Custom headers provide additional information. Essential for REST API communication.

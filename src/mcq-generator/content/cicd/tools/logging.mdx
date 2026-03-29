@@ -1,0 +1,425 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Logging in DevOps
+---
+
+# Logging in DevOps
+
+## Structured Logging
+
+### Node.js with Winston
+
+```javascript
+const winston = require('winston');
+
+const logger = winston.createLogger({
+  level: 'info',
+  format: winston.format.combine(
+    winston.format.timestamp(),
+    winston.format.errors({ stack: true }),
+    winston.format.json()
+  ),
+  defaultMeta: { service: 'api' },
+  transports: [
+    new winston.transports.File({ filename: 'error.log', level: 'error' }),
+    new winston.transports.File({ filename: 'combined.log' }),
+    new winston.transports.Console({
+      format: winston.format.simple()
+    })
+  ]
+});
+
+// Usage
+logger.info('User created', {
+  userId: '123',
+  email: 'user@example.com',
+  timestamp: new Date()
+});
+
+logger.error('Database connection failed', {
+  error: err.message,
+  stack: err.stack
+});
+```
+
+### .NET with Serilog
+
+```csharp
+using Serilog;
+
+public class Program
+{
+    public static void Main(string[] args)
+    {
+        Log.Logger = new LoggerConfiguration()
+            .MinimumLevel.Information()
+            .WriteTo.Console()
+            .WriteTo.File("logs/app-.log", rollingInterval: RollingInterval.Day)
+            .WriteTo.Elasticsearch(new ElasticsearchSinkOptions(new Uri("http://elasticsearch:9200"))
+            {
+                AutoRegisterTemplate = true,
+                IndexFormat = "logs-{0:yyyy.MM.dd}"
+            })
+            .CreateLogger();
+
+        try
+        {
+            Log.Information("Application starting");
+            CreateHostBuilder(args).Build().Run();
+        }
+        catch (Exception ex)
+        {
+            Log.Fatal(ex, "Application failed to start");
+        }
+        finally
+        {
+            Log.CloseAndFlush();
+        }
+    }
+}
+
+// Usage
+_logger.LogInformation("User {UserId} created order {OrderId}", userId, orderId);
+_logger.LogError(ex, "Failed to process payment for order {OrderId}", orderId);
+```
+
+## Correlation IDs
+
+```javascript
+// Express middleware
+const { v4: uuidv4 } = require('uuid');
+
+app.use((req, res, next) => {
+  req.correlationId = req.headers['x-correlation-id'] || uuidv4();
+  res.setHeader('x-correlation-id', req.correlationId);
+  
+  logger.info('Request received', {
+    correlationId: req.correlationId,
+    method: req.method,
+    path: req.path
+  });
+  
+  next();
+});
+
+// Use in services
+async function createUser(userData, correlationId) {
+  logger.info('Creating user', {
+    correlationId,
+    email: userData.email
+  });
+  
+  try {
+    const user = await db.users.create(userData);
+    logger.info('User created successfully', {
+      correlationId,
+      userId: user.id
+    });
+    return user;
+  } catch (error) {
+    logger.error('Failed to create user', {
+      correlationId,
+      error: error.message
+    });
+    throw error;
+  }
+}
+```
+
+## ELK Stack
+
+```yaml
+# docker-compose.yml
+version: '3.8'
+
+services:
+  elasticsearch:
+    image: elasticsearch:8.11.0
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+    ports:
+      - "9200:9200"
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+  
+  logstash:
+    image: logstash:8.11.0
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./logstash.conf:/usr/share/logstash/pipeline/logstash.conf
+    depends_on:
+      - elasticsearch
+  
+  kibana:
+    image: kibana:8.11.0
+    ports:
+      - "5601:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    depends_on:
+      - elasticsearch
+
+volumes:
+  elasticsearch-data:
+```
+
+```conf
+# logstash.conf
+input {
+  tcp {
+    port => 5000
+    codec => json
+  }
+}
+
+filter {
+  if [level] == "error" {
+    mutate {
+      add_tag => ["error"]
+    }
+  }
+}
+
+output {
+  elasticsearch {
+    hosts => ["elasticsearch:9200"]
+    index => "logs-%{+YYYY.MM.dd}"
+  }
+}
+```
+
+## Fluentd
+
+```yaml
+# fluentd.conf
+<source>
+  @type forward
+  port 24224
+</source>
+
+<filter **>
+  @type record_transformer
+  <record>
+    hostname "#{Socket.gethostname}"
+    environment "production"
+  </record>
+</filter>
+
+<match api.**>
+  @type elasticsearch
+  host elasticsearch
+  port 9200
+  logstash_format true
+  logstash_prefix api
+</match>
+
+<match service.**>
+  @type elasticsearch
+  host elasticsearch
+  port 9200
+  logstash_format true
+  logstash_prefix service
+</match>
+```
+
+## Log Levels
+
+```javascript
+// Use appropriate log levels
+logger.error('Critical error', { error });  // Production issues
+logger.warn('Deprecated API used', { api });  // Warnings
+logger.info('User logged in', { userId });  // Important events
+logger.debug('Cache hit', { key });  // Debugging info
+logger.trace('Function called', { args });  // Detailed tracing
+```
+
+## Kubernetes Logging
+
+```yaml
+# Fluentd DaemonSet
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: fluentd
+  namespace: kube-system
+spec:
+  selector:
+    matchLabels:
+      app: fluentd
+  template:
+    metadata:
+      labels:
+        app: fluentd
+    spec:
+      containers:
+        - name: fluentd
+          image: fluent/fluentd-kubernetes-daemonset:v1-debian-elasticsearch
+          env:
+            - name: FLUENT_ELASTICSEARCH_HOST
+              value: "elasticsearch.logging"
+            - name: FLUENT_ELASTICSEARCH_PORT
+              value: "9200"
+          volumeMounts:
+            - name: varlog
+              mountPath: /var/log
+            - name: varlibdockercontainers
+              mountPath: /var/lib/docker/containers
+              readOnly: true
+      volumes:
+        - name: varlog
+          hostPath:
+            path: /var/log
+        - name: varlibdockercontainers
+          hostPath:
+            path: /var/lib/docker/containers
+```
+
+## Application Logging
+
+```javascript
+// Express request logging
+const morgan = require('morgan');
+
+morgan.token('correlation-id', (req) => req.correlationId);
+
+app.use(morgan(':method :url :status :response-time ms - :correlation-id', {
+  stream: {
+    write: (message) => logger.info(message.trim())
+  }
+}));
+
+// Database query logging
+const db = {
+  async query(sql, params) {
+    const start = Date.now();
+    
+    logger.debug('Executing query', {
+      sql,
+      params
+    });
+    
+    try {
+      const result = await pool.query(sql, params);
+      const duration = Date.now() - start;
+      
+      logger.debug('Query completed', {
+        sql,
+        duration,
+        rows: result.rowCount
+      });
+      
+      return result;
+    } catch (error) {
+      logger.error('Query failed', {
+        sql,
+        params,
+        error: error.message
+      });
+      throw error;
+    }
+  }
+};
+```
+
+## Log Aggregation
+
+```javascript
+// Send logs to multiple destinations
+const logger = winston.createLogger({
+  transports: [
+    // Console
+    new winston.transports.Console(),
+    
+    // File
+    new winston.transports.File({ filename: 'app.log' }),
+    
+    // Elasticsearch
+    new winston.transports.Elasticsearch({
+      level: 'info',
+      clientOpts: { node: 'http://elasticsearch:9200' },
+      index: 'logs'
+    }),
+    
+    // CloudWatch
+    new WinstonCloudWatch({
+      logGroupName: 'myapp',
+      logStreamName: 'api'
+    })
+  ]
+});
+```
+
+## Sensitive Data Filtering
+
+```javascript
+// Filter sensitive data
+const sensitiveFields = ['password', 'token', 'apiKey', 'secret'];
+
+function sanitizeLog(obj) {
+  const sanitized = { ...obj };
+  
+  for (const field of sensitiveFields) {
+    if (sanitized[field]) {
+      sanitized[field] = '***REDACTED***';
+    }
+  }
+  
+  return sanitized;
+}
+
+logger.info('User data', sanitizeLog({
+  email: 'user@example.com',
+  password: 'secret123',  // Will be redacted
+  name: 'John Doe'
+}));
+```
+
+## Log Retention
+
+```yaml
+# Elasticsearch ILM policy
+PUT _ilm/policy/logs_policy
+{
+  "policy": {
+    "phases": {
+      "hot": {
+        "actions": {
+          "rollover": {
+            "max_size": "50GB",
+            "max_age": "7d"
+          }
+        }
+      },
+      "warm": {
+        "min_age": "7d",
+        "actions": {
+          "shrink": {
+            "number_of_shards": 1
+          }
+        }
+      },
+      "delete": {
+        "min_age": "30d",
+        "actions": {
+          "delete": {}
+        }
+      }
+    }
+  }
+}
+```
+
+## Interview Tips
+
+- **Explain structured logging**: JSON format with context
+- **Show correlation IDs**: Track requests across services
+- **Demonstrate ELK**: Elasticsearch, Logstash, Kibana
+- **Discuss log levels**: Error, warn, info, debug
+- **Mention filtering**: Sensitive data redaction
+- **Show aggregation**: Centralized logging
+
+## Summary
+
+Implement structured logging with JSON format. Use correlation IDs to track requests across services. Deploy ELK stack for centralized log aggregation. Apply appropriate log levels. Filter sensitive data. Configure log retention policies. Integrate with Kubernetes for container logs. Essential for debugging and monitoring in DevOps.

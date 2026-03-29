@@ -1,0 +1,262 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Jenkins
+---
+
+# Jenkins
+
+## What is Jenkins?
+
+**Jenkins** is an open-source automation server that enables continuous integration and continuous delivery through pipelines.
+
+## Jenkinsfile
+
+```groovy
+// Declarative Pipeline
+pipeline {
+    agent any
+    
+    environment {
+        NODE_VERSION = '18'
+        DOTNET_VERSION = '8.0'
+    }
+    
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+        
+        stage('Build') {
+            steps {
+                sh 'npm ci'
+                sh 'npm run build'
+            }
+        }
+        
+        stage('Test') {
+            steps {
+                sh 'npm test'
+            }
+        }
+        
+        stage('Deploy') {
+            when {
+                branch 'main'
+            }
+            steps {
+                sh './deploy.sh'
+            }
+        }
+    }
+    
+    post {
+        success {
+            echo 'Pipeline succeeded!'
+        }
+        failure {
+            echo 'Pipeline failed!'
+        }
+    }
+}
+```
+
+## Multi-Stack Pipeline
+
+```groovy
+pipeline {
+    agent any
+    
+    stages {
+        stage('Build & Test') {
+            parallel {
+                stage('Angular') {
+                    agent {
+                        docker {
+                            image 'node:18'
+                        }
+                    }
+                    steps {
+                        dir('frontend') {
+                            sh 'npm ci'
+                            sh 'ng lint'
+                            sh 'ng test --watch=false'
+                            sh 'ng build --prod'
+                        }
+                    }
+                }
+                
+                stage('.NET API') {
+                    agent {
+                        docker {
+                            image 'mcr.microsoft.com/dotnet/sdk:8.0'
+                        }
+                    }
+                    steps {
+                        dir('api') {
+                            sh 'dotnet restore'
+                            sh 'dotnet build -c Release'
+                            sh 'dotnet test -c Release'
+                            sh 'dotnet publish -c Release -o ./publish'
+                        }
+                    }
+                }
+                
+                stage('Node.js Service') {
+                    agent {
+                        docker {
+                            image 'node:18'
+                        }
+                    }
+                    steps {
+                        dir('service') {
+                            sh 'npm ci'
+                            sh 'npm test'
+                            sh 'npm run build'
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('Deploy') {
+            steps {
+                sh './deploy-all.sh'
+            }
+        }
+    }
+}
+```
+
+## Database Integration
+
+```groovy
+pipeline {
+    agent any
+    
+    stages {
+        stage('Test with Databases') {
+            steps {
+                script {
+                    docker.image('postgres:15').withRun('-e POSTGRES_PASSWORD=postgres') { postgres ->
+                        docker.image('mongo:6').withRun() { mongo ->
+                            docker.image('redis:7').withRun() { redis ->
+                                sh '''
+                                    export DATABASE_URL=postgresql://postgres:postgres@${postgres.host}:5432/test
+                                    export MONGODB_URL=mongodb://${mongo.host}:27017/test
+                                    export REDIS_URL=redis://${redis.host}:6379
+                                    npm run migrate
+                                    npm test
+                                '''
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+```
+
+## Credentials
+
+```groovy
+pipeline {
+    agent any
+    
+    stages {
+        stage('Deploy') {
+            steps {
+                withCredentials([
+                    string(credentialsId: 'api-key', variable: 'API_KEY'),
+                    usernamePassword(credentialsId: 'db-creds', usernameVariable: 'DB_USER', passwordVariable: 'DB_PASS')
+                ]) {
+                    sh '''
+                        export API_KEY=${API_KEY}
+                        export DATABASE_URL=postgresql://${DB_USER}:${DB_PASS}@localhost/mydb
+                        ./deploy.sh
+                    '''
+                }
+            }
+        }
+    }
+}
+```
+
+## Parameters
+
+```groovy
+pipeline {
+    agent any
+    
+    parameters {
+        choice(name: 'ENVIRONMENT', choices: ['dev', 'staging', 'production'], description: 'Deployment environment')
+        string(name: 'VERSION', defaultValue: 'latest', description: 'Version to deploy')
+        booleanParam(name: 'RUN_TESTS', defaultValue: true, description: 'Run tests?')
+    }
+    
+    stages {
+        stage('Test') {
+            when {
+                expression { params.RUN_TESTS }
+            }
+            steps {
+                sh 'npm test'
+            }
+        }
+        
+        stage('Deploy') {
+            steps {
+                sh "./deploy.sh ${params.ENVIRONMENT} ${params.VERSION}"
+            }
+        }
+    }
+}
+```
+
+## Shared Libraries
+
+```groovy
+// vars/buildNodeApp.groovy
+def call(Map config) {
+    pipeline {
+        agent any
+        stages {
+            stage('Build') {
+                steps {
+                    sh "npm ci"
+                    sh "npm run build"
+                }
+            }
+            stage('Test') {
+                steps {
+                    sh "npm test"
+                }
+            }
+        }
+    }
+}
+```
+
+```groovy
+// Jenkinsfile
+@Library('my-shared-library') _
+
+buildNodeApp(
+    nodeVersion: '18'
+)
+```
+
+## Interview Tips
+
+- **Explain Jenkins**: Open-source automation server
+- **Show Jenkinsfile**: Declarative pipeline syntax
+- **Demonstrate multi-stack**: Parallel builds
+- **Discuss Docker**: Agent containers
+- **Mention credentials**: Secure secrets
+- **Show parameters**: Configurable builds
+
+## Summary
+
+Jenkins automates CI/CD through pipelines defined in Jenkinsfiles. Supports parallel execution for multi-stack applications. Use Docker agents for isolated builds. Integrate with databases for testing. Manage credentials securely. Configure with parameters for flexibility.

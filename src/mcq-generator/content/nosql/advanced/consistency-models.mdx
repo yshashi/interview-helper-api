@@ -1,0 +1,457 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Consistency Models
+---
+
+# Consistency Models
+
+## Consistency Spectrum
+
+```
+Strong ←──────────────────────────→ Weak
+  │         │           │           │
+Linearizable  Sequential  Causal  Eventual
+```
+
+## 1. Strong Consistency (Linearizable)
+
+```javascript
+// All reads see most recent write
+// Example: MongoDB with majority read/write concern
+
+const session = client.startSession();
+await db.collection('accounts').updateOne(
+  { _id: 'account1' },
+  { $set: { balance: 1000 } },
+  { session, writeConcern: { w: 'majority' } }
+);
+
+// Immediately visible to all readers
+const account = await db.collection('accounts').findOne(
+  { _id: 'account1' },
+  { session, readConcern: { level: 'majority' } }
+);
+// balance === 1000 (guaranteed)
+```
+
+## 2. Sequential Consistency
+
+```javascript
+// All operations appear in same order to all nodes
+// But may not reflect real-time ordering
+
+// Node A writes: x = 1, y = 2
+// Node B writes: x = 3, y = 4
+
+// All nodes see either:
+// x=1, y=2, x=3, y=4 OR x=3, y=4, x=1, y=2
+// But NOT: x=1, y=4 or x=3, y=2
+```
+
+## 3. Causal Consistency
+
+```javascript
+// Causally related operations seen in order
+// Concurrent operations may be seen differently
+
+// User posts comment
+await db.posts.insertOne({
+  id: 'post1',
+  content: 'Hello',
+  timestamp: Date.now()
+});
+
+// User edits comment (causally related)
+await db.posts.updateOne(
+  { id: 'post1' },
+  { $set: { content: 'Hello World' } }
+);
+
+// All readers see: Hello → Hello World
+// Never see: Hello World → Hello
+```
+
+## 4. Eventual Consistency
+
+```javascript
+// All replicas eventually converge
+// Temporary inconsistencies allowed
+
+// Cassandra with eventual consistency
+await client.execute(
+  'INSERT INTO users (id, name) VALUES (?, ?)',
+  [userId, 'John'],
+  { consistency: cassandra.types.consistencies.one }
+);
+
+// Immediately after, different nodes may return:
+// Node 1: { id: userId, name: 'John' }
+// Node 2: null (not yet replicated)
+// Eventually: All nodes return { id: userId, name: 'John' }
+```
+
+## MongoDB Consistency Levels
+
+### Read Concerns
+
+```javascript
+const readConcerns = {
+  local: {
+    description: 'Return latest data from node',
+    consistency: 'May read uncommitted data',
+    use: 'Fastest reads, eventual consistency'
+  },
+  
+  available: {
+    description: 'Same as local for replica sets',
+    consistency: 'May read stale data',
+    use: 'Sharded clusters, fastest'
+  },
+  
+  majority: {
+    description: 'Data acknowledged by majority',
+    consistency: 'Strong consistency',
+    use: 'Critical reads'
+  },
+  
+  linearizable: {
+    description: 'Read reflects all writes before read',
+    consistency: 'Strongest consistency',
+    use: 'Single document reads only'
+  },
+  
+  snapshot: {
+    description: 'Consistent snapshot across shards',
+    consistency: 'Point-in-time consistency',
+    use: 'Multi-document transactions'
+  }
+};
+
+// Example usage
+const user = await db.collection('users').findOne(
+  { _id: userId },
+  { readConcern: { level: 'majority' } }
+);
+```
+
+### Write Concerns
+
+```javascript
+const writeConcerns = {
+  w1: {
+    value: { w: 1 },
+    description: 'Acknowledged by primary',
+    durability: 'Low',
+    speed: 'Fastest'
+  },
+  
+  wMajority: {
+    value: { w: 'majority' },
+    description: 'Acknowledged by majority',
+    durability: 'High',
+    speed: 'Slower'
+  },
+  
+  wAll: {
+    value: { w: 3 },
+    description: 'Acknowledged by all nodes',
+    durability: 'Highest',
+    speed: 'Slowest'
+  },
+  
+  journal: {
+    value: { w: 1, j: true },
+    description: 'Written to journal',
+    durability: 'Survives restart',
+    speed: 'Moderate'
+  }
+};
+
+// Example
+await db.collection('users').insertOne(
+  { name: 'John' },
+  { writeConcern: { w: 'majority', j: true, wtimeout: 5000 } }
+);
+```
+
+## Cassandra Consistency Levels
+
+```javascript
+const cassandraConsistency = {
+  ONE: {
+    reads: 'One replica responds',
+    writes: 'One replica acknowledges',
+    consistency: 'Weak',
+    availability: 'High'
+  },
+  
+  QUORUM: {
+    reads: 'Majority responds',
+    writes: 'Majority acknowledges',
+    consistency: 'Strong (with QUORUM writes)',
+    availability: 'Medium'
+  },
+  
+  ALL: {
+    reads: 'All replicas respond',
+    writes: 'All replicas acknowledge',
+    consistency: 'Strongest',
+    availability: 'Low'
+  },
+  
+  LOCAL_QUORUM: {
+    reads: 'Quorum in local datacenter',
+    writes: 'Quorum in local datacenter',
+    consistency: 'Strong locally',
+    availability: 'High'
+  },
+  
+  EACH_QUORUM: {
+    reads: 'N/A',
+    writes: 'Quorum in each datacenter',
+    consistency: 'Strong globally',
+    availability: 'Medium'
+  }
+};
+
+// Example
+await client.execute(
+  'SELECT * FROM users WHERE id = ?',
+  [userId],
+  { consistency: cassandra.types.consistencies.quorum }
+);
+```
+
+## DynamoDB Consistency
+
+```javascript
+// Eventually consistent read (default)
+const command = new GetCommand({
+  TableName: 'Users',
+  Key: { userId: '123' }
+});
+
+// Strongly consistent read
+const strongCommand = new GetCommand({
+  TableName: 'Users',
+  Key: { userId: '123' },
+  ConsistentRead: true
+});
+
+// Transactions (always strongly consistent)
+const transactCommand = new TransactWriteCommand({
+  TransactItems: [
+    {
+      Put: {
+        TableName: 'Users',
+        Item: { userId: '123', name: 'John' }
+      }
+    }
+  ]
+});
+```
+
+## Redis Consistency
+
+```javascript
+// Master-slave replication (eventual consistency)
+const redis = new Redis({
+  sentinels: [
+    { host: 'sentinel1', port: 26379 },
+    { host: 'sentinel2', port: 26379 }
+  ],
+  name: 'mymaster'
+});
+
+// Write to master
+await redis.set('key', 'value');
+
+// Read from slave (may be stale)
+await redis.get('key');
+
+// WAIT command for synchronous replication
+await redis.set('key', 'value');
+await redis.wait(2, 1000);  // Wait for 2 replicas, timeout 1s
+```
+
+## Tunable Consistency
+
+```javascript
+// Adjust per operation based on requirements
+
+class UserService {
+  // Critical operation - strong consistency
+  async updateBalance(userId, amount) {
+    return await db.collection('users').updateOne(
+      { _id: userId },
+      { $inc: { balance: amount } },
+      {
+        writeConcern: { w: 'majority', j: true },
+        readConcern: { level: 'majority' }
+      }
+    );
+  }
+  
+  // Non-critical operation - eventual consistency
+  async updateLastLogin(userId) {
+    return await db.collection('users').updateOne(
+      { _id: userId },
+      { $set: { lastLogin: new Date() } },
+      { writeConcern: { w: 1 } }
+    );
+  }
+  
+  // Analytics query - eventual consistency OK
+  async getUserStats() {
+    return await db.collection('users').aggregate([
+      { $group: { _id: null, total: { $sum: 1 } } }
+    ], {
+      readConcern: { level: 'local' }
+    }).toArray();
+  }
+}
+```
+
+## Consistency vs Availability Trade-off
+
+```javascript
+const tradeoffs = {
+  strongConsistency: {
+    pros: ['Always see latest data', 'Easier to reason about'],
+    cons: ['Lower availability', 'Higher latency', 'May reject requests'],
+    use: 'Banking, inventory, critical data'
+  },
+  
+  eventualConsistency: {
+    pros: ['High availability', 'Low latency', 'Always accepts requests'],
+    cons: ['Temporary inconsistencies', 'Complex conflict resolution'],
+    use: 'Social media, analytics, caching'
+  }
+};
+```
+
+## Conflict Resolution
+
+```javascript
+// Last-Write-Wins (LWW)
+class LWWService {
+  async update(key, value) {
+    await db.collection('data').updateOne(
+      { _id: key },
+      {
+        $set: {
+          value,
+          timestamp: Date.now()
+        }
+      },
+      { upsert: true }
+    );
+  }
+  
+  async resolve(key) {
+    // Latest timestamp wins
+    const doc = await db.collection('data')
+      .find({ _id: key })
+      .sort({ timestamp: -1 })
+      .limit(1)
+      .toArray();
+    
+    return doc[0];
+  }
+}
+
+// Application-level merge
+class MergeService {
+  async mergeUserPreferences(userId, newPrefs) {
+    const current = await db.collection('users').findOne({ _id: userId });
+    
+    const merged = {
+      ...current.preferences,
+      ...newPrefs,
+      _mergedAt: Date.now()
+    };
+    
+    await db.collection('users').updateOne(
+      { _id: userId },
+      { $set: { preferences: merged } }
+    );
+  }
+}
+```
+
+## .NET Consistency Configuration
+
+```csharp
+using MongoDB.Driver;
+
+public class ConsistencyService
+{
+    private readonly IMongoClient _client;
+    
+    public async Task<User> GetUserStrong(string userId)
+    {
+        var db = _client.GetDatabase("myapp");
+        var collection = db.GetCollection<User>("users")
+            .WithReadConcern(ReadConcern.Majority)
+            .WithReadPreference(ReadPreference.Primary);
+        
+        return await collection.Find(u => u.Id == userId).FirstOrDefaultAsync();
+    }
+    
+    public async Task<User> GetUserEventual(string userId)
+    {
+        var db = _client.GetDatabase("myapp");
+        var collection = db.GetCollection<User>("users")
+            .WithReadConcern(ReadConcern.Local)
+            .WithReadPreference(ReadPreference.SecondaryPreferred);
+        
+        return await collection.Find(u => u.Id == userId).FirstOrDefaultAsync();
+    }
+    
+    public async Task UpdateUserStrong(string userId, User user)
+    {
+        var db = _client.GetDatabase("myapp");
+        var collection = db.GetCollection<User>("users");
+        
+        await collection.ReplaceOneAsync(
+            u => u.Id == userId,
+            user,
+            new ReplaceOptions
+            {
+                WriteConcern = WriteConcern.WMajority
+            }
+        );
+    }
+}
+```
+
+## Monitoring Consistency
+
+```javascript
+// Check replication lag
+const status = rs.status();
+const primary = status.members.find(m => m.state === 1);
+const secondaries = status.members.filter(m => m.state === 2);
+
+secondaries.forEach(secondary => {
+  const lag = primary.optimeDate - secondary.optimeDate;
+  console.log(`${secondary.name} lag: ${lag}ms`);
+  
+  if (lag > 1000) {
+    console.warn('High replication lag detected');
+  }
+});
+```
+
+## Interview Tips
+
+- **Explain spectrum**: Strong to eventual consistency
+- **Show MongoDB**: Read/write concerns
+- **Demonstrate Cassandra**: Tunable consistency levels
+- **Discuss trade-offs**: Consistency vs availability
+- **Mention CAP**: Consistency, availability, partition tolerance
+- **Show examples**: When to use each level
+
+## Summary
+
+Consistency models range from strong (linearizable) to weak (eventual). MongoDB offers tunable read/write concerns: local, majority, linearizable. Cassandra provides ONE, QUORUM, ALL consistency levels. DynamoDB supports eventual and strong consistent reads. Choose based on requirements: strong for critical data, eventual for high availability. Trade-off between consistency and availability. Monitor replication lag. Implement conflict resolution for eventual consistency. Essential for distributed NoSQL systems.

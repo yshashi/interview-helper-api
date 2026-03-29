@@ -1,0 +1,153 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Synchronous vs Asynchronous Communication
+---
+
+# Synchronous vs Asynchronous Communication
+
+## Synchronous Communication
+
+Client waits for response before continuing.
+
+```javascript
+// Synchronous HTTP call
+async function placeOrder(orderData) {
+  // Wait for user validation
+  const user = await axios.get(`http://user-service/users/${orderData.userId}`);
+  
+  // Wait for inventory check
+  const inventory = await axios.post(`http://inventory-service/check`, {
+    productId: orderData.productId,
+    quantity: orderData.quantity
+  });
+  
+  // Wait for payment processing
+  const payment = await axios.post(`http://payment-service/charge`, {
+    amount: orderData.amount,
+    userId: orderData.userId
+  });
+  
+  // Create order
+  const order = await Order.create(orderData);
+  
+  return order;
+}
+```
+
+### Pros
+- Simple to understand
+- Immediate response
+- Easy error handling
+- Request-response pattern
+
+### Cons
+- Tight coupling
+- Cascading failures
+- Reduced availability
+- Performance bottlenecks
+
+## Asynchronous Communication
+
+Client doesn't wait for response.
+
+```javascript
+// Asynchronous event-driven
+async function placeOrder(orderData) {
+  // Create order immediately
+  const order = await Order.create({
+    ...orderData,
+    status: 'PENDING'
+  });
+  
+  // Publish event (don't wait)
+  await publishEvent('order.created', order);
+  
+  // Return immediately
+  return order;
+}
+
+// Other services process asynchronously
+async function handleOrderCreated(order) {
+  await validateUser(order.userId);
+  await checkInventory(order.productId);
+  await processPayment(order.amount);
+  await updateOrderStatus(order.id, 'CONFIRMED');
+}
+```
+
+### Pros
+- Loose coupling
+- Better resilience
+- Higher availability
+- Scalability
+
+### Cons
+- Complex to implement
+- Eventual consistency
+- Harder debugging
+- Message ordering issues
+
+## When to Use Each
+
+### Use Synchronous When:
+- Need immediate response
+- Simple CRUD operations
+- Data consistency critical
+- Low latency required
+
+```javascript
+// Get user profile - synchronous
+app.get('/users/:id', async (req, res) => {
+  const user = await User.findById(req.params.id);
+  res.json(user);
+});
+```
+
+### Use Asynchronous When:
+- Long-running operations
+- Event notifications
+- Fire-and-forget actions
+- High availability needed
+
+```javascript
+// Send email - asynchronous
+async function sendWelcomeEmail(userId) {
+  await publishEvent('user.registered', { userId });
+  // Don't wait for email to be sent
+}
+```
+
+## Hybrid Approach
+
+```javascript
+// Synchronous for critical path
+async function createOrder(orderData) {
+  // Sync: Validate user (must exist)
+  const user = await axios.get(`http://user-service/users/${orderData.userId}`);
+  
+  // Sync: Check inventory (must be available)
+  const inventory = await axios.post(`http://inventory-service/reserve`, {
+    productId: orderData.productId
+  });
+  
+  // Create order
+  const order = await Order.create(orderData);
+  
+  // Async: Send notifications (can happen later)
+  await publishEvent('order.created', order);
+  
+  return order;
+}
+```
+
+## Interview Tips
+
+- **Explain both patterns**: Sync waits, async doesn't
+- **Show use cases**: When to use each
+- **Discuss trade-offs**: Coupling vs complexity
+- **Demonstrate hybrid**: Combine both approaches
+- **Mention consistency**: Eventual vs immediate
+
+## Summary
+
+Synchronous communication waits for responses, offering simplicity and immediate results but tight coupling. Asynchronous communication doesn't wait, providing loose coupling and resilience but complexity. Use synchronous for CRUD operations, asynchronous for events and notifications. Hybrid approach combines both for optimal results.

@@ -1,0 +1,161 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Change Tracking in EF Core
+---
+
+# Change Tracking in EF Core
+
+## What is Change Tracking?
+
+**Change tracking** is the mechanism by which EF Core keeps track of changes made to entities so it can generate appropriate SQL commands when `SaveChanges()` is called.
+
+## Entity States
+
+```csharp
+public enum EntityState
+{
+    Detached,   // Not tracked
+    Unchanged,  // Tracked, not modified
+    Added,      // New entity, will be inserted
+    Modified,   // Tracked and modified
+    Deleted     // Marked for deletion
+}
+```
+
+## Checking Entity State
+
+```csharp
+var product = context.Products.Find(1);
+var state = context.Entry(product).State;
+
+Console.WriteLine(state); // Unchanged
+
+product.Price = 99.99m;
+state = context.Entry(product).State;
+Console.WriteLine(state); // Modified
+```
+
+## Change Tracker
+
+```csharp
+// Access all tracked entities
+var entries = context.ChangeTracker.Entries();
+
+// Get modified entities
+var modifiedEntries = context.ChangeTracker.Entries()
+    .Where(e => e.State == EntityState.Modified);
+
+// Detect changes manually
+context.ChangeTracker.DetectChanges();
+
+// Clear all tracked entities
+context.ChangeTracker.Clear();
+```
+
+## Tracking Behavior
+
+### Default Tracking
+
+```csharp
+// Entities are tracked by default
+var products = context.Products.ToList();
+products[0].Price = 99.99m;
+await context.SaveChangesAsync(); // Updates tracked
+```
+
+### No Tracking
+
+```csharp
+// Read-only queries
+var products = context.Products
+    .AsNoTracking()
+    .ToList();
+
+// Changes won't be saved
+products[0].Price = 99.99m;
+await context.SaveChangesAsync(); // No update
+```
+
+### No Tracking with Identity Resolution
+
+```csharp
+var products = context.Products
+    .AsNoTrackingWithIdentityResolution()
+    .Include(p => p.Category)
+    .ToList();
+```
+
+## Modifying Tracked Entities
+
+```csharp
+// Modify tracked entity
+var product = await context.Products.FindAsync(1);
+product.Price = 99.99m;
+await context.SaveChangesAsync();
+
+// Modify specific properties
+var product = await context.Products.FindAsync(1);
+context.Entry(product).Property(p => p.Price).CurrentValue = 99.99m;
+await context.SaveChangesAsync();
+```
+
+## Attaching Entities
+
+```csharp
+// Attach disconnected entity
+var product = new Product { Id = 1, Name = "Updated", Price = 99.99m };
+context.Products.Attach(product);
+context.Entry(product).State = EntityState.Modified;
+await context.SaveChangesAsync();
+
+// Update disconnected entity
+context.Products.Update(product);
+await context.SaveChangesAsync();
+```
+
+## Change Tracking Events
+
+```csharp
+public class ApplicationDbContext : DbContext
+{
+    public ApplicationDbContext(DbContextOptions options) : base(options)
+    {
+        ChangeTracker.Tracked += OnEntityTracked;
+        ChangeTracker.StateChanged += OnEntityStateChanged;
+    }
+    
+    private void OnEntityTracked(object sender, EntityTrackedEventArgs e)
+    {
+        Console.WriteLine($"Entity tracked: {e.Entry.Entity.GetType().Name}");
+    }
+    
+    private void OnEntityStateChanged(object sender, EntityStateChangedEventArgs e)
+    {
+        Console.WriteLine($"State changed from {e.OldState} to {e.NewState}");
+    }
+}
+```
+
+## Performance Optimization
+
+```csharp
+// Disable tracking for read-only scenarios
+services.AddDbContext<ApplicationDbContext>(options =>
+    options.UseSqlServer(connectionString)
+           .UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking));
+
+// Disable change detection
+context.ChangeTracker.AutoDetectChangesEnabled = false;
+try
+{
+    // Bulk operations
+}
+finally
+{
+    context.ChangeTracker.AutoDetectChangesEnabled = true;
+}
+```
+
+## Summary
+
+Change tracking in EF Core monitors entity states (Detached, Unchanged, Added, Modified, Deleted) to generate appropriate SQL commands. Use AsNoTracking() for read-only queries to improve performance.

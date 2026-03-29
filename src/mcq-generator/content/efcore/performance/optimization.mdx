@@ -1,0 +1,237 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: EF Core Performance Optimization
+---
+
+# EF Core Performance Optimization
+
+## Query Optimization
+
+### Use AsNoTracking for Read-Only Queries
+
+```csharp
+// Faster for read-only scenarios
+var products = await context.Products
+    .AsNoTracking()
+    .ToListAsync();
+```
+
+### Select Only Required Columns
+
+```csharp
+// Instead of loading full entities
+var productNames = await context.Products
+    .Select(p => new { p.Id, p.Name, p.Price })
+    .ToListAsync();
+```
+
+### Use Eager Loading Wisely
+
+```csharp
+// Good - load what you need
+var orders = await context.Orders
+    .Include(o => o.Customer)
+    .Include(o => o.OrderItems)
+    .ToListAsync();
+
+// Bad - loading too much
+var orders = await context.Orders
+    .Include(o => o.Customer)
+        .ThenInclude(c => c.Orders)
+            .ThenInclude(o => o.OrderItems)
+    .ToListAsync();
+```
+
+### Avoid N+1 Queries
+
+```csharp
+// BAD - N+1 problem
+var blogs = await context.Blogs.ToListAsync();
+foreach (var blog in blogs)
+{
+    var posts = blog.Posts.ToList(); // Separate query for each blog
+}
+
+// GOOD - Single query with Include
+var blogs = await context.Blogs
+    .Include(b => b.Posts)
+    .ToListAsync();
+```
+
+### Use Split Queries for Multiple Collections
+
+```csharp
+var blogs = await context.Blogs
+    .AsSplitQuery()
+    .Include(b => b.Posts)
+    .Include(b => b.Contributors)
+    .ToListAsync();
+```
+
+## Batch Operations
+
+### Bulk Insert
+
+```csharp
+// Instead of adding one by one
+var products = new List<Product>();
+for (int i = 0; i < 1000; i++)
+{
+    products.Add(new Product { Name = $"Product {i}" });
+}
+context.Products.AddRange(products);
+await context.SaveChangesAsync();
+```
+
+### Bulk Update (.NET 7+)
+
+```csharp
+await context.Products
+    .Where(p => p.CategoryId == 5)
+    .ExecuteUpdateAsync(p => p.SetProperty(x => x.Price, x => x.Price * 0.9m));
+```
+
+### Bulk Delete (.NET 7+)
+
+```csharp
+await context.Products
+    .Where(p => p.IsDiscontinued)
+    .ExecuteDeleteAsync();
+```
+
+## Connection Management
+
+### Connection Pooling
+
+```csharp
+services.AddDbContext<ApplicationDbContext>(options =>
+    options.UseSqlServer(connectionString, sqlOptions =>
+    {
+        sqlOptions.EnableRetryOnFailure(
+            maxRetryCount: 5,
+            maxRetryDelay: TimeSpan.FromSeconds(30),
+            errorNumbersToAdd: null);
+    }));
+```
+
+### Connection Resiliency
+
+```csharp
+services.AddDbContext<ApplicationDbContext>(options =>
+    options.UseSqlServer(connectionString, sqlOptions =>
+    {
+        sqlOptions.EnableRetryOnFailure();
+        sqlOptions.CommandTimeout(30);
+    }));
+```
+
+## Compiled Queries
+
+```csharp
+private static readonly Func<ApplicationDbContext, int, IEnumerable<Product>> _getProductsByCategory =
+    EF.CompileQuery((ApplicationDbContext context, int categoryId) =>
+        context.Products.Where(p => p.CategoryId == categoryId));
+```
+
+## Disable Change Tracking When Not Needed
+
+```csharp
+// Global setting
+services.AddDbContext<ApplicationDbContext>(options =>
+    options.UseSqlServer(connectionString)
+           .UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking));
+
+// Per query
+var products = await context.Products
+    .AsNoTracking()
+    .ToListAsync();
+```
+
+## Use Pagination
+
+```csharp
+public async Task<PagedResult<Product>> GetProducts(int page, int pageSize)
+{
+    var query = context.Products.AsNoTracking();
+    
+    var total = await query.CountAsync();
+    var items = await query
+        .Skip((page - 1) * pageSize)
+        .Take(pageSize)
+        .ToListAsync();
+    
+    return new PagedResult<Product>
+    {
+        Items = items,
+        TotalCount = total,
+        Page = page,
+        PageSize = pageSize
+    };
+}
+```
+
+## Avoid Cartesian Explosion
+
+```csharp
+// Can cause cartesian explosion
+var blogs = await context.Blogs
+    .Include(b => b.Posts)
+    .Include(b => b.Contributors)
+    .ToListAsync();
+
+// Use split queries
+var blogs = await context.Blogs
+    .AsSplitQuery()
+    .Include(b => b.Posts)
+    .Include(b => b.Contributors)
+    .ToListAsync();
+```
+
+## Use Indexes
+
+```csharp
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    modelBuilder.Entity<Product>()
+        .HasIndex(p => p.Name);
+    
+    modelBuilder.Entity<Product>()
+        .HasIndex(p => new { p.CategoryId, p.IsActive });
+}
+```
+
+## Monitoring and Profiling
+
+### Enable Sensitive Data Logging (Development Only)
+
+```csharp
+services.AddDbContext<ApplicationDbContext>(options =>
+    options.UseSqlServer(connectionString)
+           .EnableSensitiveDataLogging()
+           .EnableDetailedErrors());
+```
+
+### Log SQL Queries
+
+```csharp
+services.AddDbContext<ApplicationDbContext>(options =>
+    options.UseSqlServer(connectionString)
+           .LogTo(Console.WriteLine, LogLevel.Information));
+```
+
+## Best Practices Summary
+
+1. **Use AsNoTracking** for read-only queries
+2. **Project only needed columns** with Select
+3. **Avoid N+1 queries** with Include
+4. **Use split queries** for multiple collections
+5. **Batch operations** when possible
+6. **Implement pagination** for large datasets
+7. **Use compiled queries** for frequent queries
+8. **Add appropriate indexes** on frequently queried columns
+9. **Monitor query performance** with logging
+10. **Use connection pooling** and resiliency
+
+## Summary
+
+EF Core performance optimization involves using AsNoTracking, avoiding N+1 queries, implementing pagination, using bulk operations, and monitoring query performance. Always profile and measure before optimizing.

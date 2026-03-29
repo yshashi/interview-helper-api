@@ -1,0 +1,294 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: API Versioning
+---
+
+# API Versioning
+
+## Why Version APIs?
+
+- **Breaking changes**: Modify existing functionality
+- **Backward compatibility**: Support old clients
+- **Gradual migration**: Allow time for updates
+- **Multiple clients**: Different versions for different apps
+
+## Versioning Strategies
+
+### 1. URL Path Versioning
+
+```javascript
+// Node.js/Express
+app.get('/api/v1/users', async (req, res) => {
+  const users = await User.find();
+  res.json(users);
+});
+
+app.get('/api/v2/users', async (req, res) => {
+  const users = await User.find();
+  res.json({
+    version: 2,
+    data: users,
+    metadata: { total: users.length }
+  });
+});
+```
+
+```csharp
+// .NET
+[Route("api/v1/[controller]")]
+public class UsersV1Controller : ControllerBase
+{
+    [HttpGet]
+    public async Task<ActionResult<IEnumerable<User>>> GetUsers()
+    {
+        return await _context.Users.ToListAsync();
+    }
+}
+
+[Route("api/v2/[controller]")]
+public class UsersV2Controller : ControllerBase
+{
+    [HttpGet]
+    public async Task<ActionResult<object>> GetUsers()
+    {
+        var users = await _context.Users.ToListAsync();
+        return new { version = 2, data = users };
+    }
+}
+```
+
+### 2. Query Parameter Versioning
+
+```javascript
+// Version in query string
+GET /api/users?version=1
+GET /api/users?version=2
+
+app.get('/api/users', async (req, res) => {
+  const version = req.query.version || '1';
+  const users = await User.find();
+  
+  if (version === '2') {
+    res.json({
+      version: 2,
+      data: users,
+      metadata: { total: users.length }
+    });
+  } else {
+    res.json(users);
+  }
+});
+```
+
+### 3. Header Versioning
+
+```javascript
+// Custom header
+GET /api/users
+X-API-Version: 2
+
+app.get('/api/users', async (req, res) => {
+  const version = req.headers['x-api-version'] || '1';
+  const users = await User.find();
+  
+  if (version === '2') {
+    res.json({ version: 2, data: users });
+  } else {
+    res.json(users);
+  }
+});
+```
+
+### 4. Accept Header Versioning
+
+```javascript
+// Media type versioning
+GET /api/users
+Accept: application/vnd.myapi.v2+json
+
+app.get('/api/users', async (req, res) => {
+  const accept = req.headers.accept || '';
+  const users = await User.find();
+  
+  if (accept.includes('v2')) {
+    res.json({ version: 2, data: users });
+  } else {
+    res.json(users);
+  }
+});
+```
+
+## .NET API Versioning
+
+```csharp
+// Install: Microsoft.AspNetCore.Mvc.Versioning
+
+// Startup.cs
+services.AddApiVersioning(options =>
+{
+    options.DefaultApiVersion = new ApiVersion(1, 0);
+    options.AssumeDefaultVersionWhenUnspecified = true;
+    options.ReportApiVersions = true;
+    options.ApiVersionReader = new UrlSegmentApiVersionReader();
+});
+
+// Controller
+[ApiVersion("1.0")]
+[Route("api/v{version:apiVersion}/[controller]")]
+public class UsersController : ControllerBase
+{
+    [HttpGet]
+    public async Task<ActionResult<IEnumerable<User>>> GetUsers()
+    {
+        return await _context.Users.ToListAsync();
+    }
+}
+
+[ApiVersion("2.0")]
+[Route("api/v{version:apiVersion}/[controller]")]
+public class UsersController : ControllerBase
+{
+    [HttpGet]
+    public async Task<ActionResult<object>> GetUsers()
+    {
+        var users = await _context.Users.ToListAsync();
+        return new { version = 2, data = users };
+    }
+}
+```
+
+## Angular - Calling Versioned APIs
+
+```typescript
+@Injectable()
+export class UserService {
+  private apiV1 = 'http://localhost:3000/api/v1';
+  private apiV2 = 'http://localhost:3000/api/v2';
+  
+  getUsersV1(): Observable<User[]> {
+    return this.http.get<User[]>(`${this.apiV1}/users`);
+  }
+  
+  getUsersV2(): Observable<{ version: number; data: User[] }> {
+    return this.http.get<{ version: number; data: User[] }>(`${this.apiV2}/users`);
+  }
+  
+  // With header versioning
+  getUsersWithVersion(version: string): Observable<any> {
+    const headers = new HttpHeaders({
+      'X-API-Version': version
+    });
+    
+    return this.http.get(`${this.apiUrl}/users`, { headers });
+  }
+}
+```
+
+## Version Migration
+
+```javascript
+// Shared logic with version-specific transformations
+class UserService {
+  async getUsers(version = '1') {
+    const users = await User.find();
+    
+    if (version === '2') {
+      return {
+        version: 2,
+        data: users.map(u => this.transformV2(u)),
+        metadata: {
+          total: users.length,
+          timestamp: new Date()
+        }
+      };
+    }
+    
+    return users.map(u => this.transformV1(u));
+  }
+  
+  transformV1(user) {
+    return {
+      id: user._id,
+      name: user.name,
+      email: user.email
+    };
+  }
+  
+  transformV2(user) {
+    return {
+      id: user._id,
+      fullName: user.name,
+      emailAddress: user.email,
+      profile: {
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt
+      }
+    };
+  }
+}
+```
+
+## Deprecation
+
+```javascript
+// Deprecation warning
+app.get('/api/v1/users', (req, res) => {
+  res.set('X-API-Deprecated', 'true');
+  res.set('X-API-Deprecation-Date', '2024-12-31');
+  res.set('X-API-Sunset-Date', '2025-03-31');
+  res.set('Link', '</api/v2/users>; rel="successor-version"');
+  
+  // Return v1 response
+  res.json(users);
+});
+```
+
+## Version Strategy Comparison
+
+| Strategy | Pros | Cons |
+|----------|------|------|
+| **URL Path** | Clear, cacheable, easy to route | URL changes, multiple endpoints |
+| **Query Param** | Simple, no URL change | Not cacheable, easy to forget |
+| **Header** | Clean URLs, flexible | Not visible, harder to test |
+| **Accept Header** | RESTful, content negotiation | Complex, not intuitive |
+
+## Best Practices
+
+```javascript
+// 1. Use semantic versioning
+v1.0.0 → v1.1.0 → v2.0.0
+
+// 2. Support at least 2 versions
+/api/v1/users (deprecated)
+/api/v2/users (current)
+/api/v3/users (beta)
+
+// 3. Document breaking changes
+// v2.0.0 Breaking Changes:
+// - Renamed 'name' to 'fullName'
+// - Changed response structure
+// - Removed 'phone' field
+
+// 4. Provide migration guide
+// Migration from v1 to v2:
+// - Update endpoint: /api/v1/users → /api/v2/users
+// - Update response handling: data.name → data.fullName
+// - Add error handling for new structure
+
+// 5. Set deprecation timeline
+// v1: Deprecated 2024-06-01, Sunset 2024-12-31
+// v2: Current version
+```
+
+## Interview Tips
+
+- **Explain versioning**: Why and when to version
+- **Show strategies**: URL, query, header, accept
+- **Demonstrate implementation**: Node.js, .NET, Angular
+- **Discuss deprecation**: Warning headers, timeline
+- **Mention best practices**: Semantic versioning, support multiple
+- **Compare strategies**: Pros and cons
+
+## Summary
+
+API versioning manages breaking changes while maintaining backward compatibility. Common strategies include URL path (/api/v1), query parameters (?version=1), custom headers (X-API-Version), and Accept header (application/vnd.api.v2+json). URL path versioning is most popular for clarity. Support multiple versions during migration. Deprecate old versions with proper warnings. Essential for evolving REST APIs.

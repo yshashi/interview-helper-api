@@ -1,0 +1,350 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: ArgoCD
+---
+
+# ArgoCD
+
+## What is ArgoCD?
+
+**ArgoCD** is a declarative GitOps continuous delivery tool for Kubernetes that automatically syncs applications from Git repositories.
+
+## Installation
+
+```bash
+# Install ArgoCD
+kubectl create namespace argocd
+kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+
+# Access ArgoCD UI
+kubectl port-forward svc/argocd-server -n argocd 8080:443
+
+# Get admin password
+kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
+```
+
+## Application Definition
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: myapp
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/myorg/myapp
+    targetRevision: main
+    path: k8s
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: production
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+    syncOptions:
+      - CreateNamespace=true
+```
+
+## Multi-Stack Application
+
+```yaml
+# Angular Frontend
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: frontend
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/myorg/myapp
+    targetRevision: main
+    path: k8s/frontend
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: production
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+
+---
+# .NET API
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: api
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/myorg/myapp
+    targetRevision: main
+    path: k8s/api
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: production
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+
+---
+# Node.js Service
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: service
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/myorg/myapp
+    targetRevision: main
+    path: k8s/service
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: production
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+```
+
+## Helm Integration
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: myapp
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/myorg/myapp
+    targetRevision: main
+    path: helm/myapp
+    helm:
+      valueFiles:
+        - values-production.yaml
+      parameters:
+        - name: api.replicaCount
+          value: "10"
+        - name: frontend.image.tag
+          value: "v1.0.0"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: production
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+```
+
+## App of Apps Pattern
+
+```yaml
+# Root application
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root-app
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/myorg/myapp
+    targetRevision: main
+    path: argocd/apps
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+```
+
+```yaml
+# argocd/apps/frontend.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: frontend
+spec:
+  source:
+    repoURL: https://github.com/myorg/myapp
+    path: k8s/frontend
+  destination:
+    namespace: production
+```
+
+## Environment Promotion
+
+```yaml
+# Development
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: myapp-dev
+spec:
+  source:
+    repoURL: https://github.com/myorg/myapp
+    targetRevision: develop
+    path: k8s/overlays/dev
+  destination:
+    namespace: dev
+
+---
+# Staging
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: myapp-staging
+spec:
+  source:
+    repoURL: https://github.com/myorg/myapp
+    targetRevision: main
+    path: k8s/overlays/staging
+  destination:
+    namespace: staging
+
+---
+# Production
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: myapp-prod
+spec:
+  source:
+    repoURL: https://github.com/myorg/myapp
+    targetRevision: v1.0.0
+    path: k8s/overlays/production
+  destination:
+    namespace: production
+  syncPolicy:
+    automated:
+      prune: false  # Manual approval for production
+      selfHeal: false
+```
+
+## CLI Commands
+
+```bash
+# Login
+argocd login localhost:8080
+
+# Create application
+argocd app create myapp \
+  --repo https://github.com/myorg/myapp \
+  --path k8s \
+  --dest-server https://kubernetes.default.svc \
+  --dest-namespace production
+
+# Sync application
+argocd app sync myapp
+
+# Get application status
+argocd app get myapp
+
+# List applications
+argocd app list
+
+# Delete application
+argocd app delete myapp
+```
+
+## Sync Waves
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: database
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"  # Deploy first
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"  # Deploy second
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"  # Deploy last
+```
+
+## Health Checks
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: myapp
+spec:
+  source:
+    repoURL: https://github.com/myorg/myapp
+    path: k8s
+  destination:
+    namespace: production
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+```
+
+## Notifications
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-notifications-cm
+  namespace: argocd
+data:
+  service.slack: |
+    token: $slack-token
+  trigger.on-deployed: |
+    - when: app.status.operationState.phase in ['Succeeded']
+      send: [app-deployed]
+  template.app-deployed: |
+    message: |
+      Application {{.app.metadata.name}} deployed successfully!
+    slack:
+      attachments: |
+        [{
+          "title": "{{.app.metadata.name}}",
+          "color": "good"
+        }]
+```
+
+## Interview Tips
+
+- **Explain ArgoCD**: GitOps CD tool for Kubernetes
+- **Show applications**: Multi-stack deployment
+- **Demonstrate Helm**: Integration with Helm charts
+- **Discuss sync**: Automated vs manual
+- **Mention environments**: Dev, staging, production
+- **Show CLI**: Common commands
+
+## Summary
+
+ArgoCD automates Kubernetes deployments using GitOps principles. Define applications declaratively pointing to Git repositories. Supports Helm charts and Kustomize. Implements automated sync with self-healing. Use app-of-apps pattern for complex deployments. Provides environment promotion and sync waves. Essential for GitOps-based Kubernetes deployments.

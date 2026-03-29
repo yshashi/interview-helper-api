@@ -1,0 +1,176 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Microservices Communication
+---
+
+# Microservices Communication
+
+## Communication Patterns
+
+Microservices communicate through well-defined APIs using synchronous or asynchronous patterns.
+
+## Synchronous Communication
+
+### HTTP/REST
+
+```javascript
+// Order Service calling User Service
+const axios = require('axios');
+
+async function createOrder(orderData) {
+  // Synchronous HTTP call
+  const user = await axios.get(`http://user-service:3001/users/${orderData.userId}`);
+  
+  if (!user.data) {
+    throw new Error('User not found');
+  }
+  
+  const order = await Order.create({
+    userId: user.data.id,
+    productId: orderData.productId,
+    amount: orderData.amount
+  });
+  
+  return order;
+}
+```
+
+### gRPC
+
+```protobuf
+// user.proto
+syntax = "proto3";
+
+service UserService {
+  rpc GetUser (UserRequest) returns (UserResponse);
+}
+
+message UserRequest {
+  string userId = 1;
+}
+
+message UserResponse {
+  string id = 1;
+  string name = 2;
+  string email = 3;
+}
+```
+
+```javascript
+// gRPC client
+const grpc = require('@grpc/grpc-js');
+const protoLoader = require('@grpc/proto-loader');
+
+const packageDefinition = protoLoader.loadSync('user.proto');
+const userProto = grpc.loadPackageDefinition(packageDefinition);
+
+const client = new userProto.UserService(
+  'user-service:50051',
+  grpc.credentials.createInsecure()
+);
+
+client.GetUser({ userId: '123' }, (error, response) => {
+  console.log(response);
+});
+```
+
+## Asynchronous Communication
+
+### Message Queue (RabbitMQ)
+
+```javascript
+const amqp = require('amqplib');
+
+// Publisher (Order Service)
+async function publishOrderCreated(order) {
+  const connection = await amqp.connect('amqp://localhost');
+  const channel = await connection.createChannel();
+  
+  await channel.assertQueue('order.created');
+  channel.sendToQueue('order.created', Buffer.from(JSON.stringify(order)));
+  
+  console.log('Order created event published');
+}
+
+// Consumer (Email Service)
+async function consumeOrderCreated() {
+  const connection = await amqp.connect('amqp://localhost');
+  const channel = await connection.createChannel();
+  
+  await channel.assertQueue('order.created');
+  
+  channel.consume('order.created', (msg) => {
+    const order = JSON.parse(msg.content.toString());
+    console.log('Sending email for order:', order.id);
+    sendOrderConfirmationEmail(order);
+    channel.ack(msg);
+  });
+}
+```
+
+### Apache Kafka
+
+```javascript
+const { Kafka } = require('kafkajs');
+
+const kafka = new Kafka({
+  clientId: 'order-service',
+  brokers: ['kafka:9092']
+});
+
+// Producer
+const producer = kafka.producer();
+
+async function publishEvent(topic, message) {
+  await producer.connect();
+  await producer.send({
+    topic,
+    messages: [{ value: JSON.stringify(message) }]
+  });
+}
+
+// Consumer
+const consumer = kafka.consumer({ groupId: 'email-service' });
+
+async function consumeEvents() {
+  await consumer.connect();
+  await consumer.subscribe({ topic: 'order.created' });
+  
+  await consumer.run({
+    eachMessage: async ({ topic, partition, message }) => {
+      const order = JSON.parse(message.value.toString());
+      await processOrder(order);
+    }
+  });
+}
+```
+
+## Comparison
+
+| Aspect | Synchronous | Asynchronous |
+|--------|-------------|--------------|
+| **Coupling** | Tight | Loose |
+| **Response** | Immediate | Eventual |
+| **Failure** | Blocks caller | Doesn't block |
+| **Complexity** | Simple | More complex |
+| **Use Case** | CRUD operations | Events, notifications |
+
+## Best Practices
+
+1. **Use async for events**
+2. **Implement timeouts**
+3. **Handle failures gracefully**
+4. **Use circuit breakers**
+5. **Implement retries**
+
+## Interview Tips
+
+- **Explain patterns**: Sync vs async communication
+- **Show protocols**: HTTP/REST, gRPC, message queues
+- **Demonstrate use cases**: When to use each
+- **Discuss trade-offs**: Coupling, complexity, reliability
+- **Mention tools**: RabbitMQ, Kafka, gRPC
+
+## Summary
+
+Microservices communicate via synchronous (HTTP/REST, gRPC) or asynchronous (message queues, Kafka) patterns. Synchronous provides immediate responses but tight coupling. Asynchronous offers loose coupling and resilience but adds complexity. Choose based on use case requirements.

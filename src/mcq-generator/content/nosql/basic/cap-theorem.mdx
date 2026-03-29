@@ -1,0 +1,347 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: CAP Theorem
+---
+
+# CAP Theorem
+
+## What is CAP Theorem?
+
+**CAP Theorem** states that a distributed database system can only guarantee two out of three properties: Consistency, Availability, and Partition Tolerance.
+
+## The Three Properties
+
+```
+       CAP Theorem
+          / \
+         /   \
+        /     \
+       C       A
+        \     /
+         \   /
+          \ /
+           P
+```
+
+### Consistency (C)
+- All nodes see the same data at the same time
+- Every read receives the most recent write
+- Strong consistency guarantee
+
+### Availability (A)
+- Every request receives a response
+- System remains operational
+- No guarantee data is most recent
+
+### Partition Tolerance (P)
+- System continues despite network failures
+- Handles network partitions
+- Essential for distributed systems
+
+## CAP Trade-offs
+
+```javascript
+const capTradeoffs = {
+  CP: {
+    properties: 'Consistency + Partition Tolerance',
+    sacrifice: 'Availability',
+    databases: ['MongoDB', 'HBase', 'Redis'],
+    behavior: 'May reject requests during partition'
+  },
+  
+  AP: {
+    properties: 'Availability + Partition Tolerance',
+    sacrifice: 'Consistency',
+    databases: ['Cassandra', 'DynamoDB', 'CouchDB'],
+    behavior: 'Returns stale data during partition'
+  },
+  
+  CA: {
+    properties: 'Consistency + Availability',
+    sacrifice: 'Partition Tolerance',
+    databases: ['Traditional RDBMS (single node)'],
+    behavior: 'Not suitable for distributed systems'
+  }
+};
+```
+
+## CP Systems (Consistency + Partition Tolerance)
+
+```javascript
+// MongoDB - CP system
+// During network partition, prioritizes consistency
+
+// Example: Write to primary
+await db.collection('users').insertOne(
+  { name: 'John' },
+  { writeConcern: { w: 'majority' } }  // Wait for majority
+);
+
+// If partition occurs:
+// - Primary can't reach majority → Write fails
+// - Ensures consistency but sacrifices availability
+
+// Read from primary
+const user = await db.collection('users').findOne(
+  { _id: userId },
+  { readPreference: 'primary' }  // Always read from primary
+);
+```
+
+```csharp
+// .NET with MongoDB - CP configuration
+var settings = MongoClientSettings.FromConnectionString(connectionString);
+settings.WriteConcern = WriteConcern.WMajority;  // Consistency
+settings.ReadPreference = ReadPreference.Primary;
+
+var client = new MongoClient(settings);
+```
+
+## AP Systems (Availability + Partition Tolerance)
+
+```javascript
+// Cassandra - AP system
+// During network partition, prioritizes availability
+
+const cassandra = require('cassandra-driver');
+
+const client = new cassandra.Client({
+  contactPoints: ['node1', 'node2', 'node3'],
+  localDataCenter: 'datacenter1',
+  keyspace: 'myapp'
+});
+
+// Write with eventual consistency
+await client.execute(
+  'INSERT INTO users (id, name) VALUES (?, ?)',
+  [userId, 'John'],
+  { consistency: cassandra.types.consistencies.one }  // ANY node
+);
+
+// Read with eventual consistency
+const result = await client.execute(
+  'SELECT * FROM users WHERE id = ?',
+  [userId],
+  { consistency: cassandra.types.consistencies.one }
+);
+
+// During partition:
+// - Writes/reads succeed on available nodes
+// - May return stale data but system stays available
+```
+
+## Consistency Levels
+
+### Strong Consistency (CP)
+
+```javascript
+// MongoDB - Strong consistency
+await db.collection('users').findOne(
+  { _id: userId },
+  { 
+    readPreference: 'primary',
+    readConcern: { level: 'majority' }
+  }
+);
+
+// Guarantees: Always read latest write
+// Trade-off: May fail during partition
+```
+
+### Eventual Consistency (AP)
+
+```javascript
+// Cassandra - Eventual consistency
+await client.execute(
+  'SELECT * FROM users WHERE id = ?',
+  [userId],
+  { consistency: cassandra.types.consistencies.one }
+);
+
+// Guarantees: Eventually all nodes will have same data
+// Trade-off: May read stale data temporarily
+```
+
+## Real-World Examples
+
+### Banking System (CP)
+
+```javascript
+// Requires strong consistency
+// Cannot show incorrect balance
+
+class BankingService {
+  async transfer(fromAccount, toAccount, amount) {
+    // MongoDB with majority write concern
+    const session = client.startSession();
+    
+    try {
+      await session.withTransaction(async () => {
+        // Debit
+        await db.collection('accounts').updateOne(
+          { _id: fromAccount },
+          { $inc: { balance: -amount } },
+          { session, writeConcern: { w: 'majority' } }
+        );
+        
+        // Credit
+        await db.collection('accounts').updateOne(
+          { _id: toAccount },
+          { $inc: { balance: amount } },
+          { session, writeConcern: { w: 'majority' } }
+        );
+      });
+    } finally {
+      await session.endSession();
+    }
+  }
+}
+
+// During partition: Transaction fails
+// Better to reject than show wrong balance
+```
+
+### Social Media Feed (AP)
+
+```javascript
+// Can tolerate eventual consistency
+// Okay if feed is slightly stale
+
+class SocialMediaService {
+  async addPost(userId, content) {
+    // Cassandra with eventual consistency
+    await client.execute(
+      'INSERT INTO posts (user_id, post_id, content, timestamp) VALUES (?, ?, ?, ?)',
+      [userId, uuid(), content, Date.now()],
+      { consistency: cassandra.types.consistencies.one }
+    );
+    
+    // Post immediately available on local node
+    // Propagates to other nodes eventually
+  }
+  
+  async getFeed(userId) {
+    // Read from any available node
+    const result = await client.execute(
+      'SELECT * FROM posts WHERE user_id = ? LIMIT 50',
+      [userId],
+      { consistency: cassandra.types.consistencies.one }
+    );
+    
+    return result.rows;
+  }
+}
+
+// During partition: Feed still works
+// May miss some recent posts temporarily
+```
+
+## PACELC Theorem
+
+```javascript
+// Extension of CAP: If Partition, choose A or C
+//                   Else, choose Latency or Consistency
+
+const pacelc = {
+  'MongoDB': 'PC/EC - Consistent during partition and normal',
+  'Cassandra': 'PA/EL - Available during partition, low latency',
+  'DynamoDB': 'PA/EL - Available during partition, low latency'
+};
+```
+
+## Tunable Consistency
+
+```javascript
+// Cassandra allows tuning per query
+
+// Strong consistency (CP-like)
+await client.execute(
+  query,
+  params,
+  { consistency: cassandra.types.consistencies.quorum }
+);
+
+// Eventual consistency (AP-like)
+await client.execute(
+  query,
+  params,
+  { consistency: cassandra.types.consistencies.one }
+);
+
+// All replicas (strongest)
+await client.execute(
+  query,
+  params,
+  { consistency: cassandra.types.consistencies.all }
+);
+```
+
+## Choosing Based on CAP
+
+```javascript
+const chooseDatabase = (requirements) => {
+  if (requirements.mustBeConsistent && requirements.canTolerateDow ntime) {
+    return 'CP system (MongoDB, HBase)';
+  }
+  
+  if (requirements.mustBeAvailable && requirements.canTolerateStaleData) {
+    return 'AP system (Cassandra, DynamoDB)';
+  }
+  
+  if (!requirements.distributed) {
+    return 'CA system (PostgreSQL, MySQL)';
+  }
+  
+  return 'Consider tunable consistency (Cassandra)';
+};
+
+// Examples
+const bankingDB = chooseDatabase({
+  mustBeConsistent: true,
+  canTolerateDowntime: true,
+  distributed: true
+});  // CP system
+
+const socialMediaDB = chooseDatabase({
+  mustBeAvailable: true,
+  canTolerateStaleData: true,
+  distributed: true
+});  // AP system
+```
+
+## Network Partition Scenarios
+
+```javascript
+// Scenario 1: CP System during partition
+const cpBehavior = {
+  beforePartition: 'All writes/reads succeed',
+  duringPartition: {
+    majorityAvailable: 'Writes/reads succeed',
+    minorityAvailable: 'Writes/reads fail'
+  },
+  afterPartition: 'All nodes consistent'
+};
+
+// Scenario 2: AP System during partition
+const apBehavior = {
+  beforePartition: 'All writes/reads succeed',
+  duringPartition: {
+    allNodes: 'Writes/reads succeed on available nodes',
+    dataState: 'Nodes may have different data'
+  },
+  afterPartition: 'Nodes sync, eventual consistency'
+};
+```
+
+## Interview Tips
+
+- **Explain CAP**: Consistency, Availability, Partition Tolerance
+- **Show trade-offs**: Can only guarantee two of three
+- **Demonstrate CP**: MongoDB, strong consistency
+- **Demonstrate AP**: Cassandra, eventual consistency
+- **Discuss use cases**: When to choose CP vs AP
+- **Mention PACELC**: Extension considering latency
+
+## Summary
+
+CAP Theorem states distributed systems can guarantee only two of: Consistency, Availability, Partition Tolerance. CP systems (MongoDB) prioritize consistency, may reject requests during partitions. AP systems (Cassandra, DynamoDB) prioritize availability, may return stale data. CA systems only work for non-distributed databases. Choose CP for banking, financial systems. Choose AP for social media, content delivery. Some databases offer tunable consistency. Essential for understanding distributed database trade-offs.

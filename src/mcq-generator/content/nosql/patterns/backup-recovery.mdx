@@ -1,0 +1,539 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Backup and Recovery
+---
+
+# Backup and Recovery
+
+## MongoDB Backup Strategies
+
+### mongodump/mongorestore
+
+```bash
+# Full database backup
+mongodump --uri="mongodb://localhost:27017" --out=/backup/$(date +%Y%m%d)
+
+# Specific database
+mongodump --db=myapp --out=/backup/myapp
+
+# Specific collection
+mongodump --db=myapp --collection=users --out=/backup/users
+
+# Compressed backup
+mongodump --archive=/backup/myapp.gz --gzip --db=myapp
+
+# Restore
+mongorestore --archive=/backup/myapp.gz --gzip
+
+# Restore to different database
+mongorestore --archive=/backup/myapp.gz --gzip --nsFrom='myapp.*' --nsTo='myapp_restored.*'
+```
+
+### Replica Set Backup
+
+```javascript
+// Backup from secondary (no impact on primary)
+const { MongoClient } = require('mongodb');
+
+const client = new MongoClient('mongodb://secondary:27017', {
+  readPreference: 'secondary'
+});
+
+// Or use mongodump from secondary
+// mongodump --host=secondary:27017 --out=/backup
+```
+
+### Point-in-Time Recovery
+
+```bash
+# Enable oplog
+mongod --replSet rs0 --oplogSize 1024
+
+# Backup with oplog
+mongodump --oplog --out=/backup/$(date +%Y%m%d)
+
+# Restore to specific point in time
+mongorestore --oplogReplay --oplogLimit="1609459200:1" /backup/20240101
+```
+
+### Automated Backups
+
+```javascript
+const cron = require('node-cron');
+const { exec } = require('child_process');
+const { promisify } = require('util');
+const execPromise = promisify(exec);
+
+class BackupService {
+  constructor() {
+    // Run daily at 2 AM
+    cron.schedule('0 2 * * *', () => this.performBackup());
+  }
+  
+  async performBackup() {
+    const timestamp = new Date().toISOString().split('T')[0];
+    const backupPath = `/backup/${timestamp}`;
+    
+    try {
+      // Create backup
+      await execPromise(`mongodump --out=${backupPath} --gzip`);
+      
+      // Upload to S3
+      await this.uploadToS3(backupPath);
+      
+      // Clean old backups (keep last 30 days)
+      await this.cleanOldBackups(30);
+      
+      console.log(`Backup completed: ${timestamp}`);
+    } catch (error) {
+      console.error('Backup failed:', error);
+      await this.notifyAdmin(error);
+    }
+  }
+  
+  async uploadToS3(backupPath) {
+    const AWS = require('aws-sdk');
+    const s3 = new AWS.S3();
+    const fs = require('fs');
+    
+    const files = fs.readdirSync(backupPath);
+    
+    for (const file of files) {
+      const fileContent = fs.readFileSync(`${backupPath}/${file}`);
+      
+      await s3.putObject({
+        Bucket: 'my-backups',
+        Key: `mongodb/${backupPath}/${file}`,
+        Body: fileContent
+      }).promise();
+    }
+  }
+  
+  async cleanOldBackups(daysToKeep) {
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - daysToKeep);
+    
+    const backups = fs.readdirSync('/backup');
+    
+    for (const backup of backups) {
+      const backupDate = new Date(backup);
+      if (backupDate < cutoffDate) {
+        await execPromise(`rm -rf /backup/${backup}`);
+      }
+    }
+  }
+}
+```
+
+## Cassandra Backup
+
+### Snapshot Backup
+
+```bash
+# Create snapshot
+nodetool snapshot -t snapshot-$(date +%Y%m%d) myapp
+
+# Snapshots stored in data directory
+# /var/lib/cassandra/data/myapp/users-*/snapshots/
+
+# Copy snapshots to backup location
+cp -r /var/lib/cassandra/data/myapp/*/snapshots/snapshot-20240101 /backup/
+
+# Clear old snapshots
+nodetool clearsnapshot -t snapshot-20240101
+```
+
+### Incremental Backup
+
+```bash
+# Enable incremental backups
+nodetool enablebackup
+
+# Backups stored in backups directory
+# /var/lib/cassandra/data/myapp/users-*/backups/
+
+# Restore from incremental backup
+# 1. Stop Cassandra
+# 2. Clear data directory
+# 3. Copy snapshot
+# 4. Copy incremental backups
+# 5. Start Cassandra
+```
+
+## Redis Backup
+
+### RDB Snapshots
+
+```bash
+# redis.conf
+save 900 1      # Save if 1 key changed in 900 seconds
+save 300 10     # Save if 10 keys changed in 300 seconds
+save 60 10000   # Save if 10000 keys changed in 60 seconds
+
+# Manual snapshot
+redis-cli SAVE
+
+# Background snapshot
+redis-cli BGSAVE
+
+# Copy RDB file
+cp /var/lib/redis/dump.rdb /backup/dump-$(date +%Y%m%d).rdb
+```
+
+### AOF Persistence
+
+```bash
+# redis.conf
+appendonly yes
+appendfilename "appendonly.aof"
+appendfsync everysec
+
+# Rewrite AOF
+redis-cli BGREWRITEAOF
+
+# Backup AOF
+cp /var/lib/redis/appendonly.aof /backup/aof-$(date +%Y%m%d).aof
+```
+
+### Redis Backup Script
+
+```javascript
+const redis = require('redis');
+const { exec } = require('child_process');
+const { promisify } = require('util');
+const execPromise = promisify(exec);
+
+class RedisBackupService {
+  async performBackup() {
+    const client = redis.createClient();
+    await client.connect();
+    
+    try {
+      // Trigger background save
+      await client.bgSave();
+      
+      // Wait for save to complete
+      await this.waitForSave(client);
+      
+      // Copy RDB file
+      const timestamp = new Date().toISOString().split('T')[0];
+      await execPromise(`cp /var/lib/redis/dump.rdb /backup/dump-${timestamp}.rdb`);
+      
+      console.log('Redis backup completed');
+    } finally {
+      await client.quit();
+    }
+  }
+  
+  async waitForSave(client) {
+    let saving = true;
+    while (saving) {
+      const info = await client.info('persistence');
+      saving = info.includes('rdb_bgsave_in_progress:1');
+      if (saving) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+  }
+}
+```
+
+## DynamoDB Backup
+
+### On-Demand Backup
+
+```javascript
+const { DynamoDBClient, CreateBackupCommand } = require('@aws-sdk/client-dynamodb');
+
+const client = new DynamoDBClient({ region: 'us-east-1' });
+
+async function createBackup(tableName) {
+  const timestamp = new Date().toISOString();
+  
+  const command = new CreateBackupCommand({
+    TableName: tableName,
+    BackupName: `${tableName}-${timestamp}`
+  });
+  
+  const response = await client.send(command);
+  console.log('Backup created:', response.BackupDetails.BackupArn);
+}
+```
+
+### Point-in-Time Recovery
+
+```javascript
+const { UpdateContinuousBackupsCommand, RestoreTableToPointInTimeCommand } = require('@aws-sdk/client-dynamodb');
+
+// Enable PITR
+async function enablePITR(tableName) {
+  const command = new UpdateContinuousBackupsCommand({
+    TableName: tableName,
+    PointInTimeRecoverySpecification: {
+      PointInTimeRecoveryEnabled: true
+    }
+  });
+  
+  await client.send(command);
+}
+
+// Restore to point in time
+async function restoreToPointInTime(sourceTable, targetTable, restoreDateTime) {
+  const command = new RestoreTableToPointInTimeCommand({
+    SourceTableName: sourceTable,
+    TargetTableName: targetTable,
+    RestoreDateTime: restoreDateTime
+  });
+  
+  await client.send(command);
+}
+```
+
+## Disaster Recovery
+
+### Recovery Time Objective (RTO)
+
+```javascript
+const recoveryStrategies = {
+  hotStandby: {
+    rto: '< 1 minute',
+    cost: 'High',
+    setup: 'Active-active replication'
+  },
+  
+  warmStandby: {
+    rto: '< 1 hour',
+    cost: 'Medium',
+    setup: 'Replica set with automated failover'
+  },
+  
+  coldStandby: {
+    rto: '< 24 hours',
+    cost: 'Low',
+    setup: 'Daily backups, manual restore'
+  }
+};
+```
+
+### Disaster Recovery Plan
+
+```javascript
+class DisasterRecoveryService {
+  async executeRecoveryPlan() {
+    console.log('Starting disaster recovery...');
+    
+    // 1. Assess damage
+    const status = await this.assessDatabaseStatus();
+    
+    if (status.corrupted) {
+      // 2. Stop application
+      await this.stopApplication();
+      
+      // 3. Restore from backup
+      await this.restoreFromBackup();
+      
+      // 4. Verify data integrity
+      await this.verifyDataIntegrity();
+      
+      // 5. Start application
+      await this.startApplication();
+      
+      // 6. Monitor
+      await this.monitorRecovery();
+    }
+  }
+  
+  async restoreFromBackup() {
+    // Get latest backup
+    const latestBackup = await this.getLatestBackup();
+    
+    // Restore
+    await execPromise(`mongorestore --archive=${latestBackup} --gzip --drop`);
+    
+    // Apply oplog if available
+    if (this.hasOplog(latestBackup)) {
+      await execPromise(`mongorestore --oplogReplay ${latestBackup}`);
+    }
+  }
+  
+  async verifyDataIntegrity() {
+    // Check document counts
+    const collections = await db.listCollections().toArray();
+    
+    for (const collection of collections) {
+      const count = await db.collection(collection.name).countDocuments();
+      console.log(`${collection.name}: ${count} documents`);
+    }
+    
+    // Verify indexes
+    for (const collection of collections) {
+      const indexes = await db.collection(collection.name).indexes();
+      console.log(`${collection.name} indexes:`, indexes.length);
+    }
+  }
+}
+```
+
+## Backup Testing
+
+```javascript
+class BackupTestingService {
+  async testBackupRestore() {
+    console.log('Testing backup restore...');
+    
+    // 1. Create test database
+    const testDb = 'myapp_restore_test';
+    
+    // 2. Restore backup to test database
+    await execPromise(`mongorestore --archive=/backup/latest.gz --gzip --nsFrom='myapp.*' --nsTo='${testDb}.*'`);
+    
+    // 3. Verify data
+    const client = new MongoClient('mongodb://localhost:27017');
+    await client.connect();
+    
+    const db = client.db(testDb);
+    const collections = await db.listCollections().toArray();
+    
+    for (const collection of collections) {
+      const count = await db.collection(collection.name).countDocuments();
+      console.log(`${collection.name}: ${count} documents`);
+    }
+    
+    // 4. Clean up test database
+    await db.dropDatabase();
+    await client.close();
+    
+    console.log('Backup restore test completed');
+  }
+  
+  // Schedule monthly restore tests
+  scheduleRestoreTests() {
+    cron.schedule('0 3 1 * *', () => this.testBackupRestore());
+  }
+}
+```
+
+## .NET Backup Service
+
+```csharp
+using MongoDB.Driver;
+using System.Diagnostics;
+
+public class BackupService
+{
+    public async Task CreateBackup(string databaseName)
+    {
+        var timestamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss");
+        var backupPath = $"/backup/{databaseName}-{timestamp}";
+        
+        var process = new Process
+        {
+            StartInfo = new ProcessStartInfo
+            {
+                FileName = "mongodump",
+                Arguments = $"--db={databaseName} --out={backupPath} --gzip",
+                RedirectStandardOutput = true,
+                UseShellExecute = false
+            }
+        };
+        
+        process.Start();
+        await process.WaitForExitAsync();
+        
+        if (process.ExitCode == 0)
+        {
+            Console.WriteLine($"Backup created: {backupPath}");
+            await UploadToCloud(backupPath);
+        }
+        else
+        {
+            throw new Exception("Backup failed");
+        }
+    }
+    
+    public async Task RestoreBackup(string backupPath, string databaseName)
+    {
+        var process = new Process
+        {
+            StartInfo = new ProcessStartInfo
+            {
+                FileName = "mongorestore",
+                Arguments = $"--archive={backupPath} --gzip --db={databaseName} --drop",
+                RedirectStandardOutput = true,
+                UseShellExecute = false
+            }
+        };
+        
+        process.Start();
+        await process.WaitForExitAsync();
+        
+        if (process.ExitCode == 0)
+        {
+            Console.WriteLine("Restore completed");
+        }
+        else
+        {
+            throw new Exception("Restore failed");
+        }
+    }
+}
+```
+
+## Backup Best Practices
+
+```javascript
+const backupBestPractices = [
+  'Automate backups with cron jobs',
+  'Test restore procedures regularly',
+  'Store backups in multiple locations',
+  'Encrypt backups',
+  'Monitor backup success/failure',
+  'Document recovery procedures',
+  'Set retention policies',
+  'Use incremental backups for large datasets',
+  'Backup from secondary replicas',
+  'Verify backup integrity',
+  'Keep backups off-site',
+  'Practice disaster recovery drills'
+];
+```
+
+## Backup Monitoring
+
+```javascript
+class BackupMonitor {
+  async checkBackupHealth() {
+    const latestBackup = await this.getLatestBackup();
+    const backupAge = Date.now() - latestBackup.timestamp;
+    
+    // Alert if backup older than 25 hours
+    if (backupAge > 25 * 60 * 60 * 1000) {
+      await this.sendAlert('Backup is overdue');
+    }
+    
+    // Verify backup size
+    const backupSize = await this.getBackupSize(latestBackup.path);
+    if (backupSize < this.minExpectedSize) {
+      await this.sendAlert('Backup size is suspiciously small');
+    }
+    
+    // Test restore
+    if (this.shouldTestRestore()) {
+      await this.testBackupRestore();
+    }
+  }
+}
+```
+
+## Interview Tips
+
+- **Explain strategies**: mongodump, snapshots, PITR
+- **Show automation**: Cron jobs, scheduled backups
+- **Demonstrate restore**: Recovery procedures
+- **Discuss testing**: Regular restore tests
+- **Mention DR**: Disaster recovery planning
+- **Show examples**: MongoDB, Cassandra, Redis, DynamoDB
+
+## Summary
+
+Implement automated backups with mongodump, snapshots, or cloud-native solutions. Use replica sets to backup from secondaries. Enable point-in-time recovery for critical data. Store backups in multiple locations with encryption. Test restore procedures regularly. Document disaster recovery plans. Monitor backup health and age. Set retention policies. Practice recovery drills. Use incremental backups for large datasets. Essential for data protection and business continuity.

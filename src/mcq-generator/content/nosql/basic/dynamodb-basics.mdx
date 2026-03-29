@@ -1,0 +1,426 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: DynamoDB Basics
+---
+
+# DynamoDB Basics
+
+## What is DynamoDB?
+
+**Amazon DynamoDB** is a fully managed, serverless NoSQL database service that provides fast and predictable performance with seamless scalability.
+
+## Key Features
+
+```javascript
+const dynamodbFeatures = {
+  managed: 'Fully managed by AWS',
+  serverless: 'No servers to manage',
+  performance: 'Single-digit millisecond latency',
+  scalability: 'Automatic scaling',
+  availability: '99.99% SLA',
+  dataModel: 'Key-value and document'
+};
+```
+
+## Core Concepts
+
+```javascript
+const concepts = {
+  table: 'Collection of items',
+  item: 'Collection of attributes (like row)',
+  attribute: 'Key-value pair (like column)',
+  partitionKey: 'Primary key for distribution',
+  sortKey: 'Optional key for sorting',
+  index: 'GSI or LSI for alternate queries'
+};
+```
+
+## Installation and Setup
+
+```bash
+# Install AWS SDK
+npm install @aws-sdk/client-dynamodb
+npm install @aws-sdk/lib-dynamodb
+
+# Configure AWS credentials
+aws configure
+```
+
+## Node.js with DynamoDB
+
+```javascript
+const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
+const {
+  DynamoDBDocumentClient,
+  PutCommand,
+  GetCommand,
+  UpdateCommand,
+  DeleteCommand,
+  QueryCommand,
+  ScanCommand
+} = require('@aws-sdk/lib-dynamodb');
+
+const client = new DynamoDBClient({ region: 'us-east-1' });
+const docClient = DynamoDBDocumentClient.from(client);
+
+// Create item
+async function createUser(userId, name, email) {
+  const command = new PutCommand({
+    TableName: 'Users',
+    Item: {
+      userId,
+      name,
+      email,
+      createdAt: new Date().toISOString()
+    }
+  });
+  
+  await docClient.send(command);
+}
+
+// Get item
+async function getUser(userId) {
+  const command = new GetCommand({
+    TableName: 'Users',
+    Key: { userId }
+  });
+  
+  const response = await docClient.send(command);
+  return response.Item;
+}
+
+// Update item
+async function updateUser(userId, age) {
+  const command = new UpdateCommand({
+    TableName: 'Users',
+    Key: { userId },
+    UpdateExpression: 'SET age = :age, updatedAt = :updatedAt',
+    ExpressionAttributeValues: {
+      ':age': age,
+      ':updatedAt': new Date().toISOString()
+    },
+    ReturnValues: 'ALL_NEW'
+  });
+  
+  const response = await docClient.send(command);
+  return response.Attributes;
+}
+
+// Delete item
+async function deleteUser(userId) {
+  const command = new DeleteCommand({
+    TableName: 'Users',
+    Key: { userId }
+  });
+  
+  await docClient.send(command);
+}
+```
+
+## Primary Keys
+
+### Partition Key Only
+
+```javascript
+// Simple primary key
+const tableSchema = {
+  TableName: 'Users',
+  KeySchema: [
+    { AttributeName: 'userId', KeyType: 'HASH' }  // Partition key
+  ],
+  AttributeDefinitions: [
+    { AttributeName: 'userId', AttributeType: 'S' }
+  ]
+};
+
+// Query by partition key
+const command = new GetCommand({
+  TableName: 'Users',
+  Key: { userId: '123' }
+});
+```
+
+### Partition Key + Sort Key
+
+```javascript
+// Composite primary key
+const tableSchema = {
+  TableName: 'UserPosts',
+  KeySchema: [
+    { AttributeName: 'userId', KeyType: 'HASH' },      // Partition key
+    { AttributeName: 'timestamp', KeyType: 'RANGE' }   // Sort key
+  ],
+  AttributeDefinitions: [
+    { AttributeName: 'userId', AttributeType: 'S' },
+    { AttributeName: 'timestamp', AttributeType: 'N' }
+  ]
+};
+
+// Query by partition key and sort key
+const command = new QueryCommand({
+  TableName: 'UserPosts',
+  KeyConditionExpression: 'userId = :userId AND #ts > :timestamp',
+  ExpressionAttributeNames: {
+    '#ts': 'timestamp'
+  },
+  ExpressionAttributeValues: {
+    ':userId': '123',
+    ':timestamp': Date.now() - 86400000  // Last 24 hours
+  }
+});
+```
+
+## Query vs Scan
+
+```javascript
+// Query - Efficient (uses index)
+async function getUserPosts(userId) {
+  const command = new QueryCommand({
+    TableName: 'UserPosts',
+    KeyConditionExpression: 'userId = :userId',
+    ExpressionAttributeValues: {
+      ':userId': userId
+    },
+    ScanIndexForward: false,  // Descending order
+    Limit: 10
+  });
+  
+  const response = await docClient.send(command);
+  return response.Items;
+}
+
+// Scan - Inefficient (reads entire table)
+async function getAllUsers() {
+  const command = new ScanCommand({
+    TableName: 'Users',
+    FilterExpression: 'age > :age',
+    ExpressionAttributeValues: {
+      ':age': 18
+    }
+  });
+  
+  const response = await docClient.send(command);
+  return response.Items;
+}
+```
+
+## Secondary Indexes
+
+### Global Secondary Index (GSI)
+
+```javascript
+// Create GSI
+const gsiSchema = {
+  IndexName: 'EmailIndex',
+  KeySchema: [
+    { AttributeName: 'email', KeyType: 'HASH' }
+  ],
+  Projection: {
+    ProjectionType: 'ALL'  // or 'KEYS_ONLY', 'INCLUDE'
+  }
+};
+
+// Query GSI
+const command = new QueryCommand({
+  TableName: 'Users',
+  IndexName: 'EmailIndex',
+  KeyConditionExpression: 'email = :email',
+  ExpressionAttributeValues: {
+    ':email': 'john@example.com'
+  }
+});
+```
+
+### Local Secondary Index (LSI)
+
+```javascript
+// LSI - Same partition key, different sort key
+const lsiSchema = {
+  IndexName: 'TitleIndex',
+  KeySchema: [
+    { AttributeName: 'userId', KeyType: 'HASH' },
+    { AttributeName: 'title', KeyType: 'RANGE' }
+  ],
+  Projection: {
+    ProjectionType: 'ALL'
+  }
+};
+```
+
+## Batch Operations
+
+```javascript
+// Batch write
+const { BatchWriteCommand } = require('@aws-sdk/lib-dynamodb');
+
+async function batchCreateUsers(users) {
+  const command = new BatchWriteCommand({
+    RequestItems: {
+      Users: users.map(user => ({
+        PutRequest: {
+          Item: user
+        }
+      }))
+    }
+  });
+  
+  await docClient.send(command);
+}
+
+// Batch get
+const { BatchGetCommand } = require('@aws-sdk/lib-dynamodb');
+
+async function batchGetUsers(userIds) {
+  const command = new BatchGetCommand({
+    RequestItems: {
+      Users: {
+        Keys: userIds.map(id => ({ userId: id }))
+      }
+    }
+  });
+  
+  const response = await docClient.send(command);
+  return response.Responses.Users;
+}
+```
+
+## Transactions
+
+```javascript
+const { TransactWriteCommand } = require('@aws-sdk/lib-dynamodb');
+
+async function transferBalance(fromUserId, toUserId, amount) {
+  const command = new TransactWriteCommand({
+    TransactItems: [
+      {
+        Update: {
+          TableName: 'Users',
+          Key: { userId: fromUserId },
+          UpdateExpression: 'SET balance = balance - :amount',
+          ConditionExpression: 'balance >= :amount',
+          ExpressionAttributeValues: {
+            ':amount': amount
+          }
+        }
+      },
+      {
+        Update: {
+          TableName: 'Users',
+          Key: { userId: toUserId },
+          UpdateExpression: 'SET balance = balance + :amount',
+          ExpressionAttributeValues: {
+            ':amount': amount
+          }
+        }
+      }
+    ]
+  });
+  
+  await docClient.send(command);
+}
+```
+
+## .NET with DynamoDB
+
+```csharp
+using Amazon.DynamoDBv2;
+using Amazon.DynamoDBv2.DocumentModel;
+using Amazon.DynamoDBv2.DataModel;
+
+[DynamoDBTable("Users")]
+public class User
+{
+    [DynamoDBHashKey]
+    public string UserId { get; set; }
+    
+    [DynamoDBProperty]
+    public string Name { get; set; }
+    
+    [DynamoDBProperty]
+    public string Email { get; set; }
+    
+    [DynamoDBProperty]
+    public int Age { get; set; }
+}
+
+public class DynamoDBService
+{
+    private readonly DynamoDBContext _context;
+    
+    public DynamoDBService()
+    {
+        var client = new AmazonDynamoDBClient();
+        _context = new DynamoDBContext(client);
+    }
+    
+    public async Task CreateUser(User user)
+    {
+        await _context.SaveAsync(user);
+    }
+    
+    public async Task<User> GetUser(string userId)
+    {
+        return await _context.LoadAsync<User>(userId);
+    }
+    
+    public async Task<List<User>> QueryUsersByEmail(string email)
+    {
+        var config = new DynamoDBOperationConfig
+        {
+            IndexName = "EmailIndex"
+        };
+        
+        var search = _context.QueryAsync<User>(email, config);
+        return await search.GetRemainingAsync();
+    }
+}
+```
+
+## Capacity Modes
+
+```javascript
+const capacityModes = {
+  onDemand: {
+    billing: 'Pay per request',
+    use: 'Unpredictable workloads',
+    scaling: 'Automatic'
+  },
+  
+  provisioned: {
+    billing: 'Pay for provisioned capacity',
+    use: 'Predictable workloads',
+    scaling: 'Auto-scaling available',
+    rcu: 'Read Capacity Units',
+    wcu: 'Write Capacity Units'
+  }
+};
+```
+
+## Best Practices
+
+```javascript
+const bestPractices = [
+  'Use partition keys with high cardinality',
+  'Distribute writes across partitions',
+  'Use Query instead of Scan',
+  'Create GSIs for alternate access patterns',
+  'Use sparse indexes to save storage',
+  'Batch operations when possible',
+  'Use transactions for ACID requirements',
+  'Enable point-in-time recovery',
+  'Use DynamoDB Streams for change capture'
+];
+```
+
+## Interview Tips
+
+- **Explain DynamoDB**: Fully managed NoSQL database
+- **Show primary keys**: Partition key and sort key
+- **Demonstrate operations**: Put, Get, Query, Scan
+- **Discuss indexes**: GSI and LSI
+- **Mention capacity**: On-demand vs provisioned
+- **Show examples**: Node.js, .NET implementations
+
+## Summary
+
+DynamoDB is a fully managed, serverless NoSQL database by AWS. Supports key-value and document data models. Primary keys include partition key (required) and sort key (optional). Query operations use keys/indexes efficiently. Scan operations read entire table. GSIs provide alternate access patterns. Supports batch operations and ACID transactions. Choose on-demand or provisioned capacity modes. Essential for serverless and scalable applications on AWS.

@@ -1,0 +1,374 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: CAP Theorem
+---
+
+# CAP Theorem
+
+## What is CAP Theorem?
+
+CAP Theorem states that a distributed system can only guarantee two out of three properties simultaneously: **Consistency**, **Availability**, and **Partition Tolerance**. Understanding CAP is crucial for designing distributed systems.
+
+## The Three Properties
+
+### Consistency (C)
+
+**Definition:** All nodes see the same data at the same time. Every read receives the most recent write.
+
+**Example:**
+- User updates profile on Server A
+- Immediately reads from Server B
+- Sees the updated profile (consistent)
+
+**Strong Consistency:** Read always returns latest write
+**Eventual Consistency:** Reads may return stale data temporarily
+
+### Availability (A)
+
+**Definition:** Every request receives a response (success or failure), without guarantee that it contains the most recent write.
+
+**Example:**
+- Server A is down
+- Request goes to Server B
+- Server B responds (even if data might be slightly stale)
+
+**Characteristics:**
+- System remains operational
+- No timeouts or errors
+- May return stale data
+
+### Partition Tolerance (P)
+
+**Definition:** System continues to operate despite network partitions (communication breakdown between nodes).
+
+**Example:**
+- Network split separates Server A and Server B
+- Both servers continue accepting requests
+- System doesn't fail completely
+
+**Reality:** Network partitions WILL happen in distributed systems, so P is mandatory.
+
+## CAP Combinations
+
+Since network partitions are inevitable, you must choose between **C** and **A** when partition occurs.
+
+### CP Systems (Consistency + Partition Tolerance)
+
+**Trade-off:** Sacrifice availability for consistency
+
+**Behavior during partition:**
+- Reject requests that cannot be guaranteed consistent
+- Return errors or timeouts
+- Wait for partition to heal
+
+**Examples:**
+- MongoDB (with majority write concern)
+- HBase
+- Redis (with synchronous replication)
+- Banking systems
+
+**Use Cases:**
+- Financial transactions
+- Inventory management
+- Systems where stale data is unacceptable
+
+**Real-World Example:**
+```
+Bank Account Balance: $1000
+
+Partition occurs between data centers:
+- User tries to withdraw $500
+- System cannot confirm balance across all nodes
+- Transaction REJECTED (maintains consistency)
+- User sees error message (sacrifices availability)
+```
+
+### AP Systems (Availability + Partition Tolerance)
+
+**Trade-off:** Sacrifice consistency for availability
+
+**Behavior during partition:**
+- Accept all requests
+- Return potentially stale data
+- Resolve conflicts later
+
+**Examples:**
+- Cassandra
+- DynamoDB
+- Riak
+- DNS
+
+**Use Cases:**
+- Social media feeds
+- Shopping carts
+- Content delivery
+- Systems where availability is critical
+
+**Real-World Example:**
+```
+Social Media Post Likes: 100
+
+Partition occurs:
+- User A sees 100 likes (from Server A)
+- User B sees 105 likes (from Server B)
+- Both can still like the post (available)
+- Counts eventually converge (eventual consistency)
+```
+
+### CA Systems (Consistency + Availability)
+
+**Reality:** Not possible in distributed systems with network partitions
+
+**Why:** Network partitions are inevitable, so you MUST have partition tolerance
+
+**Note:** Single-server databases (traditional RDBMS on one machine) can be CA because there's no distribution, but they're not truly distributed systems.
+
+## CAP in Practice
+
+### MongoDB (CP)
+
+**Default Behavior:**
+- Write to primary, replicate to secondaries
+- With `writeConcern: majority`, waits for majority acknowledgment
+- During partition, minority nodes reject writes
+
+**Configuration:**
+```javascript
+// Strong consistency (CP)
+await collection.insertOne(document, {
+  writeConcern: { w: 'majority' },
+  readPreference: 'primary'
+});
+
+// If partition occurs and can't reach majority:
+// MongoError: not master and slaveOk=false
+```
+
+### Cassandra (AP)
+
+**Default Behavior:**
+- Accepts writes even during partitions
+- Uses eventual consistency
+- Resolves conflicts with timestamps (last write wins)
+
+**Configuration:**
+```javascript
+// Eventual consistency (AP)
+await client.execute(query, params, {
+  consistency: cassandra.types.consistencies.one
+});
+
+// During partition:
+// - Writes succeed on available nodes
+// - Reads may return stale data
+// - No errors, system remains available
+```
+
+### DynamoDB (AP with tunable consistency)
+
+**Flexibility:**
+- Default: Eventually consistent reads (AP)
+- Optional: Strongly consistent reads (CP-like)
+
+**Configuration:**
+```javascript
+// Eventually consistent (AP)
+const params = {
+  TableName: 'Users',
+  Key: { userId: '123' },
+  ConsistentRead: false // Default
+};
+
+// Strongly consistent (CP-like)
+const params = {
+  TableName: 'Users',
+  Key: { userId: '123' },
+  ConsistentRead: true
+};
+```
+
+## Beyond CAP: PACELC
+
+**Extension of CAP:** PACELC adds consideration for normal operation (no partition)
+
+**PACELC Theorem:**
+- **P**artition: Choose between **A**vailability and **C**onsistency
+- **E**lse (no partition): Choose between **L**atency and **C**onsistency
+
+**Examples:**
+
+**PA/EL Systems:** Prioritize availability and low latency
+- Cassandra, DynamoDB
+- Fast responses, eventual consistency
+
+**PC/EC Systems:** Prioritize consistency always
+- MongoDB, HBase
+- Consistent data, higher latency
+
+**PA/EC Systems:** Available during partition, consistent otherwise
+- Some configurations of distributed databases
+
+## Handling Network Partitions
+
+### Detecting Partitions
+
+**Methods:**
+- Heartbeat timeouts
+- Failed health checks
+- Gossip protocol failures
+- Consensus algorithm failures
+
+### Strategies During Partition
+
+**Quorum-Based:**
+- Require majority of nodes to agree
+- Minority partition rejects operations
+- Maintains consistency
+
+**Last Write Wins:**
+- Use timestamps to resolve conflicts
+- Simple but can lose data
+- Maintains availability
+
+**Vector Clocks:**
+- Track causality of updates
+- Detect concurrent modifications
+- Require conflict resolution
+
+**CRDTs (Conflict-Free Replicated Data Types):**
+- Data structures that automatically merge
+- No conflicts by design
+- Complex to implement
+
+## Choosing Between CP and AP
+
+### Choose CP When:
+- Data correctness is critical
+- Inconsistent data causes problems
+- Can tolerate downtime
+- Examples: Banking, inventory, booking systems
+
+### Choose AP When:
+- Availability is critical
+- Temporary inconsistency acceptable
+- Cannot tolerate downtime
+- Examples: Social media, analytics, content delivery
+
+### Questions to Ask:
+1. What happens if user sees stale data?
+2. Can we afford to reject requests?
+3. How long can inconsistency last?
+4. What's the cost of downtime?
+5. How do we resolve conflicts?
+
+## .NET Example: Handling CAP Trade-offs
+
+```csharp
+public class DistributedDataService
+{
+    private readonly IMongoDatabase _primaryDb;
+    private readonly IMongoDatabase _secondaryDb;
+    
+    // CP approach: Strong consistency, may fail during partition
+    public async Task<User> GetUserConsistent(string userId)
+    {
+        try
+        {
+            // Read from primary only
+            var collection = _primaryDb.GetCollection<User>("users")
+                .WithReadPreference(ReadPreference.Primary);
+            
+            return await collection.Find(u => u.Id == userId)
+                .FirstOrDefaultAsync();
+        }
+        catch (MongoException ex)
+        {
+            // During partition, this may fail
+            throw new ServiceUnavailableException(
+                "Cannot guarantee consistent data", ex);
+        }
+    }
+    
+    // AP approach: High availability, may return stale data
+    public async Task<User> GetUserAvailable(string userId)
+    {
+        try
+        {
+            // Try primary first
+            var collection = _primaryDb.GetCollection<User>("users")
+                .WithReadPreference(ReadPreference.PrimaryPreferred);
+            
+            return await collection.Find(u => u.Id == userId)
+                .FirstOrDefaultAsync();
+        }
+        catch (MongoException)
+        {
+            // Fallback to secondary (may be stale)
+            var collection = _secondaryDb.GetCollection<User>("users")
+                .WithReadPreference(ReadPreference.Secondary);
+            
+            return await collection.Find(u => u.Id == userId)
+                .FirstOrDefaultAsync();
+        }
+    }
+}
+```
+
+## Real-World Examples
+
+### Amazon Shopping Cart (AP)
+
+**Scenario:** User adds items to cart from different devices
+
+**Approach:**
+- Always accept additions (availability)
+- Merge carts later (eventual consistency)
+- Never lose items (conflict resolution: union)
+
+**Why AP:** Better to show extra items than lose items or show errors
+
+### Bank Account Balance (CP)
+
+**Scenario:** User checks balance and withdraws money
+
+**Approach:**
+- Reject transactions if cannot confirm balance (consistency)
+- Show error during network issues (sacrifice availability)
+- Never allow overdraft
+
+**Why CP:** Incorrect balance could cause overdraft, legal issues
+
+### Social Media Likes (AP)
+
+**Scenario:** Users like posts from around the world
+
+**Approach:**
+- Always accept likes (availability)
+- Count may be temporarily inconsistent
+- Eventually converge to correct count
+
+**Why AP:** Exact like count not critical, availability is
+
+## Best Practices
+
+- **Understand your requirements** - CP or AP based on business needs
+- **Design for partition tolerance** - Partitions will happen
+- **Implement proper monitoring** - Detect partitions quickly
+- **Test partition scenarios** - Chaos engineering
+- **Document trade-offs** - Make conscious decisions
+- **Use appropriate consistency levels** - Tune per operation
+- **Implement conflict resolution** - For AP systems
+- **Plan for recovery** - Partition healing procedures
+
+## Interview Tips
+
+- **Explain CAP clearly**: Can only have 2 of 3
+- **Show real examples**: CP (banking) vs AP (social media)
+- **Discuss partition tolerance**: Why it's mandatory
+- **Demonstrate trade-offs**: Consistency vs availability
+- **Mention PACELC**: Extension for normal operation
+- **Show practical choices**: When to choose CP or AP
+
+## Summary
+
+CAP Theorem states distributed systems can only guarantee two of Consistency, Availability, and Partition Tolerance. Since network partitions are inevitable, choose between C and A. CP systems (MongoDB, HBase) sacrifice availability for consistency - reject requests during partitions. AP systems (Cassandra, DynamoDB) sacrifice consistency for availability - accept requests with eventual consistency. Choose CP for critical data (banking, inventory). Choose AP for high availability needs (social media, content). PACELC extends CAP to consider latency during normal operation. Essential for understanding distributed system trade-offs.

@@ -1,0 +1,361 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Configuration Management
+---
+
+# Configuration Management
+
+## Externalized Configuration
+
+```javascript
+// Bad: Hardcoded configuration
+const dbUrl = 'mongodb://localhost:27017/mydb';
+const apiKey = 'abc123';
+
+// Good: Environment variables
+const dbUrl = process.env.DATABASE_URL;
+const apiKey = process.env.API_KEY;
+```
+
+## Environment Variables
+
+```javascript
+// .env file
+DATABASE_URL=mongodb://localhost:27017/mydb
+API_KEY=abc123
+LOG_LEVEL=info
+PORT=3000
+
+// Load with dotenv
+require('dotenv').config();
+
+const config = {
+  database: {
+    url: process.env.DATABASE_URL,
+    poolSize: parseInt(process.env.DB_POOL_SIZE) || 10
+  },
+  api: {
+    key: process.env.API_KEY,
+    timeout: parseInt(process.env.API_TIMEOUT) || 5000
+  },
+  server: {
+    port: parseInt(process.env.PORT) || 3000,
+    logLevel: process.env.LOG_LEVEL || 'info'
+  }
+};
+
+module.exports = config;
+```
+
+## Configuration Service
+
+```javascript
+// Consul configuration
+const Consul = require('consul');
+const consul = new Consul();
+
+class ConfigService {
+  async get(key) {
+    const result = await consul.kv.get(key);
+    return result?.Value;
+  }
+  
+  async set(key, value) {
+    await consul.kv.set(key, value);
+  }
+  
+  async watch(key, callback) {
+    const watcher = consul.watch({
+      method: consul.kv.get,
+      options: { key }
+    });
+    
+    watcher.on('change', (data) => {
+      callback(data?.Value);
+    });
+    
+    return watcher;
+  }
+}
+
+// Usage
+const configService = new ConfigService();
+
+// Get configuration
+const dbUrl = await configService.get('database/url');
+
+// Watch for changes
+configService.watch('database/url', (newUrl) => {
+  console.log('Database URL changed:', newUrl);
+  // Reconnect with new URL
+});
+```
+
+## Kubernetes ConfigMap
+
+```yaml
+# ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+data:
+  DATABASE_URL: "mongodb://mongo:27017/mydb"
+  LOG_LEVEL: "info"
+  API_TIMEOUT: "5000"
+
+---
+# Deployment using ConfigMap
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-service
+spec:
+  template:
+    spec:
+      containers:
+        - name: user-service
+          image: user-service:latest
+          envFrom:
+            - configMapRef:
+                name: app-config
+```
+
+## Secrets Management
+
+```yaml
+# Kubernetes Secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: app-secrets
+type: Opaque
+data:
+  DATABASE_PASSWORD: <base64-encoded>
+  API_KEY: <base64-encoded>
+  JWT_SECRET: <base64-encoded>
+
+---
+# Use in deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-service
+spec:
+  template:
+    spec:
+      containers:
+        - name: user-service
+          env:
+            - name: DATABASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: DATABASE_PASSWORD
+```
+
+## Vault Integration
+
+```javascript
+const vault = require('node-vault')({
+  endpoint: 'http://vault:8200',
+  token: process.env.VAULT_TOKEN
+});
+
+class SecretManager {
+  async getSecret(path) {
+    const result = await vault.read(path);
+    return result.data;
+  }
+  
+  async setSecret(path, data) {
+    await vault.write(path, { data });
+  }
+}
+
+// Usage
+const secretManager = new SecretManager();
+
+const dbPassword = await secretManager.getSecret('secret/database/password');
+const apiKey = await secretManager.getSecret('secret/api/key');
+```
+
+## Configuration Hierarchy
+
+```javascript
+const config = require('config');
+
+// config/default.json
+{
+  "database": {
+    "host": "localhost",
+    "port": 27017
+  },
+  "server": {
+    "port": 3000
+  }
+}
+
+// config/production.json
+{
+  "database": {
+    "host": "prod-db.example.com"
+  }
+}
+
+// Access configuration
+const dbHost = config.get('database.host');
+const serverPort = config.get('server.port');
+```
+
+## Dynamic Configuration
+
+```javascript
+class DynamicConfig {
+  constructor() {
+    this.config = new Map();
+    this.watchers = new Map();
+  }
+  
+  set(key, value) {
+    this.config.set(key, value);
+    
+    // Notify watchers
+    const callbacks = this.watchers.get(key) || [];
+    callbacks.forEach(cb => cb(value));
+  }
+  
+  get(key, defaultValue) {
+    return this.config.get(key) || defaultValue;
+  }
+  
+  watch(key, callback) {
+    if (!this.watchers.has(key)) {
+      this.watchers.set(key, []);
+    }
+    
+    this.watchers.get(key).push(callback);
+  }
+  
+  async reload() {
+    // Reload from configuration service
+    const newConfig = await fetchConfigFromService();
+    
+    for (const [key, value] of Object.entries(newConfig)) {
+      this.set(key, value);
+    }
+  }
+}
+
+const config = new DynamicConfig();
+
+// Watch for changes
+config.watch('featureFlags.newUI', (enabled) => {
+  console.log('New UI feature:', enabled ? 'enabled' : 'disabled');
+});
+
+// Reload periodically
+setInterval(() => config.reload(), 60000);
+```
+
+## Feature Flags
+
+```javascript
+class FeatureFlags {
+  constructor() {
+    this.flags = new Map();
+  }
+  
+  set(name, enabled, percentage = 100) {
+    this.flags.set(name, { enabled, percentage });
+  }
+  
+  isEnabled(name, userId = null) {
+    const flag = this.flags.get(name);
+    
+    if (!flag || !flag.enabled) {
+      return false;
+    }
+    
+    if (flag.percentage === 100) {
+      return true;
+    }
+    
+    // Consistent hashing for gradual rollout
+    if (userId) {
+      const hash = this.hash(userId);
+      return (hash % 100) < flag.percentage;
+    }
+    
+    return Math.random() * 100 < flag.percentage;
+  }
+  
+  hash(str) {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      hash = ((hash << 5) - hash) + str.charCodeAt(i);
+      hash = hash & hash;
+    }
+    return Math.abs(hash);
+  }
+}
+
+const features = new FeatureFlags();
+features.set('newCheckout', true, 25); // 25% rollout
+
+// Usage
+if (features.isEnabled('newCheckout', req.user.id)) {
+  return renderNewCheckout();
+} else {
+  return renderOldCheckout();
+}
+```
+
+## Validation
+
+```javascript
+const Joi = require('joi');
+
+const configSchema = Joi.object({
+  database: Joi.object({
+    url: Joi.string().uri().required(),
+    poolSize: Joi.number().min(1).max(100).default(10)
+  }).required(),
+  server: Joi.object({
+    port: Joi.number().port().required(),
+    logLevel: Joi.string().valid('debug', 'info', 'warn', 'error').default('info')
+  }).required()
+});
+
+// Validate configuration
+const { error, value } = configSchema.validate(config);
+
+if (error) {
+  throw new Error(`Invalid configuration: ${error.message}`);
+}
+
+module.exports = value;
+```
+
+## Best Practices
+
+1. **Externalize configuration**: No hardcoded values
+2. **Use environment-specific configs**: Dev, staging, prod
+3. **Secure secrets**: Use Vault or similar
+4. **Validate configuration**: Schema validation
+5. **Support dynamic updates**: Hot reload
+6. **Version configuration**: Track changes
+7. **Document settings**: Clear descriptions
+
+## Interview Tips
+
+- **Explain externalization**: Environment variables
+- **Show hierarchy**: Default, environment-specific
+- **Demonstrate secrets**: Vault, Kubernetes Secrets
+- **Discuss dynamic config**: Hot reload, watchers
+- **Mention feature flags**: Gradual rollouts
+- **Show validation**: Schema validation
+
+## Summary
+
+Configuration management externalizes settings from code using environment variables, ConfigMaps, and configuration services. Secure secrets with Vault or Kubernetes Secrets. Support dynamic updates with watchers. Use feature flags for gradual rollouts. Validate configuration with schemas. Essential for managing microservices across environments.

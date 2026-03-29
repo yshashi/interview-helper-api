@@ -1,0 +1,501 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Transactions in NoSQL
+---
+
+# Transactions in NoSQL
+
+## ACID in NoSQL
+
+Traditional SQL databases guarantee ACID (Atomicity, Consistency, Isolation, Durability). NoSQL databases have varying levels of transaction support.
+
+## MongoDB Transactions
+
+### Multi-Document Transactions
+
+```javascript
+const { MongoClient } = require('mongodb');
+
+const client = new MongoClient('mongodb://localhost:27017');
+await client.connect();
+
+const session = client.startSession();
+
+try {
+  await session.withTransaction(async () => {
+    const db = client.db('myapp');
+    
+    // Debit account
+    await db.collection('accounts').updateOne(
+      { _id: 'account1' },
+      { $inc: { balance: -100 } },
+      { session }
+    );
+    
+    // Credit account
+    await db.collection('accounts').updateOne(
+      { _id: 'account2' },
+      { $inc: { balance: 100 } },
+      { session }
+    );
+    
+    // Log transaction
+    await db.collection('transactions').insertOne({
+      from: 'account1',
+      to: 'account2',
+      amount: 100,
+      timestamp: new Date()
+    }, { session });
+  });
+  
+  console.log('Transaction committed');
+} catch (error) {
+  console.error('Transaction aborted:', error);
+} finally {
+  await session.endSession();
+}
+```
+
+### Transaction Options
+
+```javascript
+// Configure transaction
+await session.withTransaction(
+  async () => {
+    // Transaction operations
+  },
+  {
+    readPreference: 'primary',
+    readConcern: { level: 'snapshot' },
+    writeConcern: { w: 'majority' },
+    maxCommitTimeMS: 30000
+  }
+);
+```
+
+### .NET Transactions
+
+```csharp
+using MongoDB.Driver;
+
+public class TransactionService
+{
+    private readonly IMongoClient _client;
+    
+    public async Task TransferMoney(string fromId, string toId, decimal amount)
+    {
+        using (var session = await _client.StartSessionAsync())
+        {
+            session.StartTransaction();
+            
+            try
+            {
+                var db = _client.GetDatabase("myapp");
+                var accounts = db.GetCollection<Account>("accounts");
+                
+                // Debit
+                await accounts.UpdateOneAsync(
+                    session,
+                    a => a.Id == fromId,
+                    Builders<Account>.Update.Inc(a => a.Balance, -amount)
+                );
+                
+                // Credit
+                await accounts.UpdateOneAsync(
+                    session,
+                    a => a.Id == toId,
+                    Builders<Account>.Update.Inc(a => a.Balance, amount)
+                );
+                
+                await session.CommitTransactionAsync();
+            }
+            catch
+            {
+                await session.AbortTransactionAsync();
+                throw;
+            }
+        }
+    }
+}
+```
+
+## DynamoDB Transactions
+
+### TransactWrite
+
+```javascript
+const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
+const { DynamoDBDocumentClient, TransactWriteCommand } = require('@aws-sdk/lib-dynamodb');
+
+const client = new DynamoDBClient({ region: 'us-east-1' });
+const docClient = DynamoDBDocumentClient.from(client);
+
+async function transferBalance(fromUserId, toUserId, amount) {
+  const command = new TransactWriteCommand({
+    TransactItems: [
+      {
+        Update: {
+          TableName: 'Users',
+          Key: { userId: fromUserId },
+          UpdateExpression: 'SET balance = balance - :amount',
+          ConditionExpression: 'balance >= :amount',
+          ExpressionAttributeValues: {
+            ':amount': amount
+          }
+        }
+      },
+      {
+        Update: {
+          TableName: 'Users',
+          Key: { userId: toUserId },
+          UpdateExpression: 'SET balance = balance + :amount',
+          ExpressionAttributeValues: {
+            ':amount': amount
+          }
+        }
+      },
+      {
+        Put: {
+          TableName: 'Transactions',
+          Item: {
+            transactionId: generateId(),
+            from: fromUserId,
+            to: toUserId,
+            amount,
+            timestamp: new Date().toISOString()
+          }
+        }
+      }
+    ]
+  });
+  
+  try {
+    await docClient.send(command);
+    console.log('Transaction successful');
+  } catch (error) {
+    if (error.name === 'TransactionCanceledException') {
+      console.error('Transaction failed:', error.CancellationReasons);
+    }
+    throw error;
+  }
+}
+```
+
+### TransactGet
+
+```javascript
+const { TransactGetCommand } = require('@aws-sdk/lib-dynamodb');
+
+async function getMultipleItems() {
+  const command = new TransactGetCommand({
+    TransactItems: [
+      {
+        Get: {
+          TableName: 'Users',
+          Key: { userId: 'user1' }
+        }
+      },
+      {
+        Get: {
+          TableName: 'Orders',
+          Key: { orderId: 'order1' }
+        }
+      }
+    ]
+  });
+  
+  const response = await docClient.send(command);
+  return response.Responses.map(r => r.Item);
+}
+```
+
+## Cassandra Lightweight Transactions
+
+### Compare-and-Set
+
+```javascript
+const cassandra = require('cassandra-driver');
+
+const client = new cassandra.Client({
+  contactPoints: ['localhost'],
+  localDataCenter: 'datacenter1',
+  keyspace: 'myapp'
+});
+
+// Lightweight transaction (LWT)
+const result = await client.execute(
+  'UPDATE accounts SET balance = balance - ? WHERE id = ? IF balance >= ?',
+  [100, 'account1', 100],
+  { prepare: true }
+);
+
+if (result.rows[0]['[applied]']) {
+  console.log('Transaction applied');
+} else {
+  console.log('Condition not met');
+}
+
+// Insert if not exists
+await client.execute(
+  'INSERT INTO users (id, name, email) VALUES (?, ?, ?) IF NOT EXISTS',
+  [userId, name, email],
+  { prepare: true }
+);
+```
+
+### Batched Statements
+
+```javascript
+// Logged batch (atomic)
+const queries = [
+  {
+    query: 'UPDATE accounts SET balance = balance - ? WHERE id = ?',
+    params: [100, 'account1']
+  },
+  {
+    query: 'UPDATE accounts SET balance = balance + ? WHERE id = ?',
+    params: [100, 'account2']
+  }
+];
+
+await client.batch(queries, { prepare: true, logged: true });
+
+// Unlogged batch (not atomic, better performance)
+await client.batch(queries, { prepare: true, logged: false });
+```
+
+## Redis Transactions
+
+### MULTI/EXEC
+
+```javascript
+const redis = require('redis');
+const client = redis.createClient();
+await client.connect();
+
+// Transaction
+const multi = client.multi();
+
+multi.decrBy('account:1:balance', 100);
+multi.incrBy('account:2:balance', 100);
+multi.hSet('transaction:123', {
+  from: 'account:1',
+  to: 'account:2',
+  amount: '100'
+});
+
+const results = await multi.exec();
+console.log('Transaction results:', results);
+```
+
+### Optimistic Locking with WATCH
+
+```javascript
+async function transferWithWatch(fromKey, toKey, amount) {
+  while (true) {
+    await client.watch(fromKey);
+    
+    const balance = parseInt(await client.get(fromKey));
+    
+    if (balance < amount) {
+      await client.unwatch();
+      throw new Error('Insufficient balance');
+    }
+    
+    const multi = client.multi();
+    multi.decrBy(fromKey, amount);
+    multi.incrBy(toKey, amount);
+    
+    try {
+      await multi.exec();
+      break;  // Success
+    } catch (error) {
+      // WATCH failed, retry
+      continue;
+    }
+  }
+}
+```
+
+### Lua Scripts (Atomic)
+
+```javascript
+// Lua script for atomic operations
+const script = `
+  local balance = redis.call('GET', KEYS[1])
+  if tonumber(balance) >= tonumber(ARGV[1]) then
+    redis.call('DECRBY', KEYS[1], ARGV[1])
+    redis.call('INCRBY', KEYS[2], ARGV[1])
+    return 1
+  else
+    return 0
+  end
+`;
+
+const result = await client.eval(script, {
+  keys: ['account:1:balance', 'account:2:balance'],
+  arguments: ['100']
+});
+
+if (result === 1) {
+  console.log('Transfer successful');
+} else {
+  console.log('Insufficient balance');
+}
+```
+
+## Compensating Transactions (Saga Pattern)
+
+```javascript
+// For databases without full ACID support
+class SagaOrchestrator {
+  async executeOrder(orderData) {
+    const compensations = [];
+    
+    try {
+      // Step 1: Reserve inventory
+      await this.reserveInventory(orderData.items);
+      compensations.push(() => this.releaseInventory(orderData.items));
+      
+      // Step 2: Process payment
+      await this.processPayment(orderData.payment);
+      compensations.push(() => this.refundPayment(orderData.payment));
+      
+      // Step 3: Create order
+      const order = await this.createOrder(orderData);
+      
+      return order;
+    } catch (error) {
+      // Rollback in reverse order
+      for (const compensate of compensations.reverse()) {
+        await compensate();
+      }
+      throw error;
+    }
+  }
+  
+  async reserveInventory(items) {
+    // Reserve inventory in inventory service
+  }
+  
+  async releaseInventory(items) {
+    // Compensating action
+  }
+  
+  async processPayment(payment) {
+    // Process payment in payment service
+  }
+  
+  async refundPayment(payment) {
+    // Compensating action
+  }
+}
+```
+
+## Two-Phase Commit Pattern
+
+```javascript
+// Manual 2PC for distributed transactions
+class TwoPhaseCommit {
+  async transfer(fromAccount, toAccount, amount) {
+    const transactionId = generateId();
+    
+    // Phase 1: Prepare
+    const prepared = await Promise.all([
+      this.prepare(fromAccount, -amount, transactionId),
+      this.prepare(toAccount, amount, transactionId)
+    ]);
+    
+    if (!prepared.every(p => p)) {
+      // Abort
+      await this.abort(transactionId);
+      throw new Error('Transaction aborted');
+    }
+    
+    // Phase 2: Commit
+    await Promise.all([
+      this.commit(fromAccount, transactionId),
+      this.commit(toAccount, transactionId)
+    ]);
+  }
+  
+  async prepare(account, amount, txId) {
+    // Mark as prepared in database
+    return await db.collection('accounts').updateOne(
+      { _id: account, 'transactions.id': { $ne: txId } },
+      {
+        $push: {
+          transactions: {
+            id: txId,
+            amount,
+            state: 'prepared'
+          }
+        }
+      }
+    );
+  }
+  
+  async commit(account, txId) {
+    // Apply transaction
+    const doc = await db.collection('accounts').findOne({ _id: account });
+    const tx = doc.transactions.find(t => t.id === txId);
+    
+    await db.collection('accounts').updateOne(
+      { _id: account },
+      {
+        $inc: { balance: tx.amount },
+        $pull: { transactions: { id: txId } }
+      }
+    );
+  }
+}
+```
+
+## Transaction Isolation Levels
+
+```javascript
+const isolationLevels = {
+  mongodb: {
+    snapshot: 'Read from consistent snapshot',
+    local: 'Read latest committed data',
+    majority: 'Read data acknowledged by majority'
+  },
+  
+  cassandra: {
+    serial: 'Linearizable consistency (LWT)',
+    localSerial: 'Linearizable in local DC'
+  },
+  
+  dynamodb: {
+    serializable: 'All transactions serializable'
+  }
+};
+```
+
+## Best Practices
+
+```javascript
+const transactionBestPractices = [
+  'Keep transactions short',
+  'Minimize operations in transaction',
+  'Handle transaction failures with retries',
+  'Use appropriate isolation level',
+  'Avoid long-running transactions',
+  'Consider eventual consistency alternatives',
+  'Use compensating transactions for sagas',
+  'Monitor transaction performance'
+];
+```
+
+## Interview Tips
+
+- **Explain ACID**: Atomicity, Consistency, Isolation, Durability
+- **Show MongoDB**: Multi-document transactions
+- **Demonstrate DynamoDB**: TransactWrite, TransactGet
+- **Discuss Cassandra**: Lightweight transactions, batches
+- **Mention Redis**: MULTI/EXEC, Lua scripts
+- **Show patterns**: Saga, two-phase commit
+
+## Summary
+
+NoSQL databases have varying transaction support. MongoDB offers multi-document ACID transactions with sessions. DynamoDB provides TransactWrite/TransactGet for up to 25 items. Cassandra supports lightweight transactions (LWT) and batched statements. Redis uses MULTI/EXEC and Lua scripts for atomicity. For distributed transactions, use saga pattern with compensating transactions. Keep transactions short and handle failures. Essential for maintaining data consistency in NoSQL systems.

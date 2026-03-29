@@ -1,0 +1,438 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: API Performance Optimization
+---
+
+# API Performance Optimization
+
+## Performance Metrics
+
+```javascript
+// Key performance indicators
+const metrics = {
+  responseTime: 'Time to first byte (TTFB)',
+  throughput: 'Requests per second',
+  latency: 'End-to-end response time',
+  errorRate: 'Percentage of failed requests'
+};
+
+// Performance targets
+const targets = {
+  p50: '< 100ms',  // 50th percentile
+  p95: '< 500ms',  // 95th percentile
+  p99: '< 1000ms', // 99th percentile
+  availability: '99.9%'
+};
+```
+
+## 1. Database Optimization
+
+```javascript
+// ❌ Bad - N+1 query problem
+app.get('/api/users', async (req, res) => {
+  const users = await User.find();
+  
+  for (const user of users) {
+    user.orders = await Order.find({ userId: user.id });
+  }
+  
+  res.json(users);
+});
+
+// ✅ Good - Use joins/populate
+app.get('/api/users', async (req, res) => {
+  const users = await User.find().populate('orders');
+  res.json(users);
+});
+
+// ✅ Good - Aggregation
+app.get('/api/users', async (req, res) => {
+  const users = await User.aggregate([
+    {
+      $lookup: {
+        from: 'orders',
+        localField: '_id',
+        foreignField: 'userId',
+        as: 'orders'
+      }
+    }
+  ]);
+  
+  res.json(users);
+});
+```
+
+## 2. Indexing
+
+```javascript
+// Create indexes
+const userSchema = new mongoose.Schema({
+  email: { type: String, index: true, unique: true },
+  name: { type: String, index: true },
+  createdAt: { type: Date, index: true }
+});
+
+// Compound index
+userSchema.index({ role: 1, status: 1 });
+
+// Text index for search
+userSchema.index({ name: 'text', email: 'text' });
+
+// Usage
+const users = await User.find({ role: 'admin', status: 'active' });
+```
+
+```csharp
+// .NET EF Core indexes
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    modelBuilder.Entity<User>()
+        .HasIndex(u => u.Email)
+        .IsUnique();
+    
+    modelBuilder.Entity<User>()
+        .HasIndex(u => new { u.Role, u.Status });
+}
+```
+
+## 3. Caching
+
+```javascript
+const redis = require('redis');
+const client = redis.createClient();
+
+// Cache-aside pattern
+app.get('/api/users/:id', async (req, res) => {
+  const cacheKey = `user:${req.params.id}`;
+  
+  // Try cache
+  const cached = await client.get(cacheKey);
+  if (cached) {
+    return res.json(JSON.parse(cached));
+  }
+  
+  // Load from database
+  const user = await User.findById(req.params.id);
+  
+  // Store in cache (5 minutes)
+  await client.setex(cacheKey, 300, JSON.stringify(user));
+  
+  res.json(user);
+});
+
+// HTTP caching
+app.get('/api/users/:id', async (req, res) => {
+  const user = await User.findById(req.params.id);
+  
+  res.set('Cache-Control', 'public, max-age=300');
+  res.set('ETag', generateETag(user));
+  
+  res.json(user);
+});
+```
+
+## 4. Pagination
+
+```javascript
+// ❌ Bad - Load all data
+app.get('/api/users', async (req, res) => {
+  const users = await User.find(); // Could be millions
+  res.json(users);
+});
+
+// ✅ Good - Paginate
+app.get('/api/users', async (req, res) => {
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 10;
+  const skip = (page - 1) * limit;
+  
+  const users = await User.find()
+    .skip(skip)
+    .limit(limit);
+  
+  res.json({ data: users });
+});
+
+// ✅ Better - Cursor-based pagination
+app.get('/api/users', async (req, res) => {
+  const limit = parseInt(req.query.limit) || 10;
+  const cursor = req.query.cursor;
+  
+  const query = cursor ? { _id: { $gt: cursor } } : {};
+  const users = await User.find(query).limit(limit);
+  
+  res.json({
+    data: users,
+    nextCursor: users.length > 0 ? users[users.length - 1]._id : null
+  });
+});
+```
+
+## 5. Field Selection
+
+```javascript
+// ❌ Bad - Return all fields
+app.get('/api/users', async (req, res) => {
+  const users = await User.find();
+  res.json(users);
+});
+
+// ✅ Good - Select only needed fields
+app.get('/api/users', async (req, res) => {
+  const users = await User.find().select('name email role');
+  res.json(users);
+});
+
+// ✅ Good - Client-specified fields
+app.get('/api/users', async (req, res) => {
+  const fields = req.query.fields?.split(',').join(' ') || 'name email';
+  const users = await User.find().select(fields);
+  res.json(users);
+});
+```
+
+## 6. Compression
+
+```javascript
+const compression = require('compression');
+
+app.use(compression({
+  filter: (req, res) => {
+    if (req.headers['x-no-compression']) {
+      return false;
+    }
+    return compression.filter(req, res);
+  },
+  level: 6
+}));
+```
+
+## 7. Connection Pooling
+
+```javascript
+// MongoDB connection pool
+mongoose.connect(process.env.MONGODB_URI, {
+  maxPoolSize: 10,
+  minPoolSize: 5,
+  serverSelectionTimeoutMS: 5000,
+  socketTimeoutMS: 45000
+});
+
+// PostgreSQL connection pool
+const { Pool } = require('pg');
+const pool = new Pool({
+  max: 20,
+  min: 5,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 2000
+});
+```
+
+## 8. Async Processing
+
+```javascript
+const Bull = require('bull');
+const emailQueue = new Bull('emails');
+
+// Offload to background job
+app.post('/api/users', async (req, res) => {
+  const user = await User.create(req.body);
+  
+  // Send welcome email asynchronously
+  await emailQueue.add({ userId: user.id, type: 'welcome' });
+  
+  res.status(201).json(user);
+});
+
+// Process jobs
+emailQueue.process(async (job) => {
+  await sendEmail(job.data);
+});
+```
+
+## 9. Load Balancing
+
+```javascript
+// Nginx configuration
+const nginxConfig = `
+upstream api_servers {
+    least_conn;
+    server api1.example.com:3000;
+    server api2.example.com:3000;
+    server api3.example.com:3000;
+}
+
+server {
+    listen 80;
+    
+    location /api {
+        proxy_pass http://api_servers;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}
+`;
+```
+
+## 10. CDN for Static Assets
+
+```javascript
+// Serve static assets from CDN
+app.get('/api/users/:id/avatar', async (req, res) => {
+  const user = await User.findById(req.params.id);
+  
+  // Redirect to CDN
+  res.redirect(301, `https://cdn.example.com/avatars/${user.avatarId}`);
+});
+```
+
+## 11. Database Query Optimization
+
+```javascript
+// ❌ Bad - Multiple queries
+const user = await User.findById(userId);
+const orders = await Order.find({ userId });
+const payments = await Payment.find({ userId });
+
+// ✅ Good - Parallel queries
+const [user, orders, payments] = await Promise.all([
+  User.findById(userId),
+  Order.find({ userId }),
+  Payment.find({ userId })
+]);
+
+// ✅ Good - Single aggregation
+const result = await User.aggregate([
+  { $match: { _id: userId } },
+  {
+    $lookup: {
+      from: 'orders',
+      localField: '_id',
+      foreignField: 'userId',
+      as: 'orders'
+    }
+  },
+  {
+    $lookup: {
+      from: 'payments',
+      localField: '_id',
+      foreignField: 'userId',
+      as: 'payments'
+    }
+  }
+]);
+```
+
+## 12. Response Streaming
+
+```javascript
+// Stream large datasets
+app.get('/api/users/export', async (req, res) => {
+  res.setHeader('Content-Type', 'application/json');
+  res.write('[');
+  
+  const cursor = User.find().cursor();
+  let first = true;
+  
+  for await (const user of cursor) {
+    if (!first) res.write(',');
+    res.write(JSON.stringify(user));
+    first = false;
+  }
+  
+  res.write(']');
+  res.end();
+});
+```
+
+## 13. HTTP/2
+
+```javascript
+const http2 = require('http2');
+const fs = require('fs');
+
+const server = http2.createSecureServer({
+  key: fs.readFileSync('key.pem'),
+  cert: fs.readFileSync('cert.pem')
+});
+
+server.on('stream', (stream, headers) => {
+  stream.respond({
+    'content-type': 'application/json',
+    ':status': 200
+  });
+  stream.end(JSON.stringify({ message: 'Hello HTTP/2' }));
+});
+
+server.listen(3000);
+```
+
+## 14. Monitoring and Profiling
+
+```javascript
+// Profile slow queries
+mongoose.set('debug', (collectionName, method, query, doc) => {
+  console.log(`${collectionName}.${method}`, JSON.stringify(query));
+});
+
+// Track response times
+app.use((req, res, next) => {
+  const start = Date.now();
+  
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    if (duration > 1000) {
+      console.warn(`Slow request: ${req.method} ${req.path} - ${duration}ms`);
+    }
+  });
+  
+  next();
+});
+```
+
+## Performance Checklist
+
+```javascript
+const performanceChecklist = {
+  database: [
+    'Use indexes on frequently queried fields',
+    'Avoid N+1 queries',
+    'Use connection pooling',
+    'Implement query timeouts',
+    'Monitor slow queries'
+  ],
+  caching: [
+    'Cache frequently accessed data',
+    'Use HTTP caching headers',
+    'Implement Redis for session storage',
+    'Cache at multiple levels'
+  ],
+  api: [
+    'Implement pagination',
+    'Use field selection',
+    'Enable compression',
+    'Minimize payload size',
+    'Use async processing for heavy tasks'
+  ],
+  infrastructure: [
+    'Use load balancing',
+    'Enable CDN for static assets',
+    'Use HTTP/2',
+    'Implement rate limiting',
+    'Monitor performance metrics'
+  ]
+};
+```
+
+## Interview Tips
+
+- **Explain optimization**: Database, caching, pagination
+- **Show indexing**: Proper index usage
+- **Demonstrate caching**: Redis, HTTP caching
+- **Discuss async**: Background jobs
+- **Mention monitoring**: Track performance
+- **Show examples**: Node.js, .NET implementations
+
+## Summary
+
+Optimize REST API performance with database indexing, query optimization, caching (Redis, HTTP), pagination, field selection, compression, connection pooling, async processing, load balancing, CDN usage, parallel queries, response streaming, and HTTP/2. Monitor slow queries and response times. Implement caching at multiple levels. Use background jobs for heavy tasks. Essential for scalable REST APIs.

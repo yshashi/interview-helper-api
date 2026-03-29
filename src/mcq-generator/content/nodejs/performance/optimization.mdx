@@ -1,0 +1,280 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Node.js Performance Optimization
+---
+
+# Node.js Performance Optimization
+
+## Event Loop Optimization
+
+### Avoid Blocking Operations
+
+```javascript
+// BAD - Blocks event loop
+function fibonacci(n) {
+  if (n <= 1) return n;
+  return fibonacci(n - 1) + fibonacci(n - 2);
+}
+
+app.get('/fib/:n', (req, res) => {
+  const result = fibonacci(req.params.n); // Blocks!
+  res.send(result.toString());
+});
+
+// GOOD - Use worker threads
+const { Worker } = require('worker_threads');
+
+app.get('/fib/:n', async (req, res) => {
+  const worker = new Worker('./fibonacci-worker.js', {
+    workerData: { n: req.params.n }
+  });
+  
+  worker.on('message', (result) => {
+    res.send(result.toString());
+  });
+});
+```
+
+### Use Async Operations
+
+```javascript
+// BAD - Synchronous
+const data = fs.readFileSync('large-file.txt');
+
+// GOOD - Asynchronous
+const data = await fs.promises.readFile('large-file.txt');
+```
+
+## Database Optimization
+
+### Connection Pooling
+
+```javascript
+const { Pool } = require('pg');
+
+const pool = new Pool({
+  max: 20,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 2000
+});
+
+// Reuse connections
+const result = await pool.query('SELECT * FROM users');
+```
+
+### Query Optimization
+
+```javascript
+// BAD - N+1 queries
+const users = await User.find();
+for (const user of users) {
+  user.posts = await Post.find({ userId: user.id });
+}
+
+// GOOD - Single query with join
+const users = await User.find().populate('posts');
+```
+
+### Indexing
+
+```javascript
+// Create indexes for frequently queried fields
+userSchema.index({ email: 1 });
+userSchema.index({ createdAt: -1 });
+userSchema.index({ status: 1, role: 1 });
+```
+
+## Caching Strategies
+
+### In-Memory Cache
+
+```javascript
+const NodeCache = require('node-cache');
+const cache = new NodeCache({ stdTTL: 600 });
+
+app.get('/api/users/:id', async (req, res) => {
+  const cached = cache.get(`user:${req.params.id}`);
+  if (cached) return res.json(cached);
+  
+  const user = await User.findById(req.params.id);
+  cache.set(`user:${req.params.id}`, user);
+  res.json(user);
+});
+```
+
+### Redis Cache
+
+```javascript
+const redis = require('redis');
+const client = redis.createClient();
+
+app.get('/api/products', async (req, res) => {
+  const cached = await client.get('products');
+  if (cached) return res.json(JSON.parse(cached));
+  
+  const products = await Product.find();
+  await client.setEx('products', 3600, JSON.stringify(products));
+  res.json(products);
+});
+```
+
+## Compression
+
+```javascript
+const compression = require('compression');
+
+app.use(compression({
+  level: 6,
+  threshold: 1024,
+  filter: (req, res) => {
+    if (req.headers['x-no-compression']) return false;
+    return compression.filter(req, res);
+  }
+}));
+```
+
+## Clustering
+
+```javascript
+const cluster = require('cluster');
+const os = require('os');
+
+if (cluster.isMaster) {
+  const numCPUs = os.cpus().length;
+  
+  for (let i = 0; i < numCPUs; i++) {
+    cluster.fork();
+  }
+  
+  cluster.on('exit', (worker) => {
+    console.log(`Worker ${worker.process.pid} died`);
+    cluster.fork();
+  });
+} else {
+  require('./app');
+}
+```
+
+## Streaming
+
+```javascript
+// BAD - Load entire file
+app.get('/download', (req, res) => {
+  const data = fs.readFileSync('large-file.pdf');
+  res.send(data);
+});
+
+// GOOD - Stream file
+app.get('/download', (req, res) => {
+  const stream = fs.createReadStream('large-file.pdf');
+  stream.pipe(res);
+});
+```
+
+## Profiling
+
+### Using Node.js Profiler
+
+```bash
+# Generate CPU profile
+node --prof app.js
+
+# Process profile
+node --prof-process isolate-*.log > processed.txt
+```
+
+### Using Clinic.js
+
+```bash
+npm install -g clinic
+
+# CPU profiling
+clinic doctor -- node app.js
+
+# Flame graphs
+clinic flame -- node app.js
+
+# Bubble profiler
+clinic bubbleprof -- node app.js
+```
+
+## Memory Optimization
+
+### Avoid Memory Leaks
+
+```javascript
+// BAD - Memory leak
+const cache = {};
+app.get('/data/:id', (req, res) => {
+  cache[req.params.id] = largeData; // Never cleaned
+});
+
+// GOOD - Use LRU cache
+const LRU = require('lru-cache');
+const cache = new LRU({ max: 500, maxAge: 3600000 });
+```
+
+### Monitor Memory
+
+```javascript
+setInterval(() => {
+  const used = process.memoryUsage();
+  console.log({
+    rss: `${Math.round(used.rss / 1024 / 1024)}MB`,
+    heapUsed: `${Math.round(used.heapUsed / 1024 / 1024)}MB`
+  });
+}, 60000);
+```
+
+## Load Balancing
+
+### Using PM2
+
+```bash
+pm2 start app.js -i max
+pm2 reload app
+pm2 monit
+```
+
+### Using Nginx
+
+```nginx
+upstream nodejs_backend {
+  server localhost:3000;
+  server localhost:3001;
+  server localhost:3002;
+  server localhost:3003;
+}
+
+server {
+  listen 80;
+  
+  location / {
+    proxy_pass http://nodejs_backend;
+  }
+}
+```
+
+## Best Practices
+
+1. **Use async/await** instead of callbacks
+2. **Implement caching** for expensive operations
+3. **Use connection pooling** for databases
+4. **Enable compression** for responses
+5. **Use clustering** for multi-core systems
+6. **Stream large files** instead of loading into memory
+7. **Profile regularly** to identify bottlenecks
+8. **Monitor memory usage** to prevent leaks
+
+## Interview Tips
+
+- **Explain event loop**: Avoid blocking operations
+- **Show caching**: In-memory and Redis
+- **Demonstrate clustering**: Multi-core utilization
+- **Discuss profiling**: Identify bottlenecks
+- **Mention compression**: Reduce response size
+- **Show streaming**: Handle large files efficiently
+
+## Summary
+
+Optimize Node.js by avoiding blocking operations, using async/await, implementing caching, enabling compression, using clustering for multi-core systems, streaming large files, and profiling regularly. Monitor memory usage and use connection pooling for databases.

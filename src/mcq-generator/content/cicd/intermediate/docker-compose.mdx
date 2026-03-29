@@ -1,0 +1,310 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Docker Compose
+---
+
+# Docker Compose
+
+## What is Docker Compose?
+
+**Docker Compose** is a tool for defining and running multi-container Docker applications using a YAML configuration file.
+
+## Basic Example
+
+```yaml
+version: '3.8'
+
+services:
+  web:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./html:/usr/share/nginx/html
+  
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+```
+
+## Full Stack Application
+
+```yaml
+version: '3.8'
+
+services:
+  # Angular Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "4200:80"
+    depends_on:
+      - api
+    networks:
+      - app-network
+  
+  # .NET API
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    ports:
+      - "5000:80"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ConnectionStrings__DefaultConnection=Server=sqlserver;Database=MyApp;User=sa;Password=YourPassword123
+    depends_on:
+      - sqlserver
+      - redis
+    networks:
+      - app-network
+  
+  # Node.js Service
+  service:
+    build:
+      context: ./service
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/myapp
+      - MONGODB_URL=mongodb://mongodb:27017/myapp
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - postgres
+      - mongodb
+      - redis
+    networks:
+      - app-network
+  
+  # SQL Server
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      - ACCEPT_EULA=Y
+      - SA_PASSWORD=YourPassword123
+    ports:
+      - "1433:1433"
+    volumes:
+      - sqlserver-data:/var/opt/mssql
+    networks:
+      - app-network
+  
+  # PostgreSQL
+  postgres:
+    image: postgres:15
+    environment:
+      - POSTGRES_DB=myapp
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - app-network
+  
+  # MongoDB
+  mongodb:
+    image: mongo:6
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      - app-network
+  
+  # Redis
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  sqlserver-data:
+  postgres-data:
+  mongo-data:
+```
+
+## Development Environment
+
+```yaml
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      target: development
+    volumes:
+      - .:/app
+      - /app/node_modules
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=development
+    command: npm run dev
+  
+  db:
+    image: postgres:15
+    environment:
+      - POSTGRES_PASSWORD=postgres
+    volumes:
+      - dev-db:/var/lib/postgresql/data
+
+volumes:
+  dev-db:
+```
+
+## Health Checks
+
+```yaml
+services:
+  api:
+    image: myapi:latest
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+  
+  postgres:
+    image: postgres:15
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+```
+
+## Environment Files
+
+```yaml
+# docker-compose.yml
+services:
+  app:
+    env_file:
+      - .env
+      - .env.local
+```
+
+```bash
+# .env
+NODE_ENV=production
+PORT=3000
+DATABASE_URL=postgresql://postgres:postgres@postgres:5432/myapp
+```
+
+## Scaling
+
+```yaml
+services:
+  api:
+    image: myapi:latest
+    deploy:
+      replicas: 3
+```
+
+```bash
+# Scale service
+docker-compose up -d --scale api=5
+```
+
+## Override Files
+
+```yaml
+# docker-compose.override.yml
+version: '3.8'
+
+services:
+  app:
+    environment:
+      - DEBUG=true
+    volumes:
+      - .:/app
+```
+
+## Commands
+
+```bash
+# Start services
+docker-compose up
+
+# Start in background
+docker-compose up -d
+
+# Build images
+docker-compose build
+
+# View logs
+docker-compose logs
+docker-compose logs -f service-name
+
+# Stop services
+docker-compose stop
+
+# Remove containers
+docker-compose down
+
+# Remove containers and volumes
+docker-compose down -v
+
+# Execute command
+docker-compose exec app sh
+
+# Run one-off command
+docker-compose run app npm test
+```
+
+## CI/CD Integration
+
+```yaml
+# GitHub Actions
+name: Docker Compose CI
+
+on: [push]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Start services
+        run: docker-compose up -d
+      
+      - name: Wait for services
+        run: sleep 30
+      
+      - name: Run tests
+        run: docker-compose exec -T app npm test
+      
+      - name: Stop services
+        run: docker-compose down
+```
+
+## Interview Tips
+
+- **Explain Docker Compose**: Multi-container orchestration
+- **Show configuration**: Full-stack YAML example
+- **Demonstrate databases**: Multiple database services
+- **Discuss networking**: Service communication
+- **Mention volumes**: Data persistence
+- **Show commands**: Common operations
+
+## Summary
+
+Docker Compose orchestrates multi-container applications using YAML configuration. Define services for frontend, backend, and databases. Use networks for service communication. Implement volumes for data persistence. Configure health checks. Support development and production environments. Essential for local development and testing.

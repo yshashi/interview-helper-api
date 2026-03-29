@@ -1,0 +1,527 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Scalability Fundamentals
+---
+
+# Scalability Fundamentals
+
+## What is Scalability?
+
+Scalability is the ability of a system to handle increased load by adding resources. A scalable system maintains performance levels as demand grows, whether that's more users, data, or transactions.
+
+## Types of Scalability
+
+### 1. Vertical Scaling (Scale Up)
+
+```javascript
+const verticalScaling = {
+  definition: 'Add more power to existing machine',
+  
+  approach: {
+    cpu: 'Upgrade from 4 cores to 16 cores',
+    memory: 'Increase RAM from 16GB to 128GB',
+    storage: 'Add faster SSD or more disk space',
+    network: 'Upgrade network card'
+  },
+  
+  pros: [
+    'Simple to implement',
+    'No code changes required',
+    'No distributed system complexity',
+    'Strong data consistency'
+  ],
+  
+  cons: [
+    'Hardware limits (max CPU, RAM)',
+    'Single point of failure',
+    'Downtime during upgrades',
+    'Expensive at high end',
+    'Limited by physical constraints'
+  ],
+  
+  useCases: [
+    'Small to medium applications',
+    'Databases requiring ACID',
+    'Legacy applications',
+    'Quick fixes for performance'
+  ]
+};
+```
+
+### 2. Horizontal Scaling (Scale Out)
+
+```javascript
+const horizontalScaling = {
+  definition: 'Add more machines to the system',
+  
+  approach: {
+    servers: 'Add more application servers',
+    databases: 'Add database replicas or shards',
+    cache: 'Add more cache nodes',
+    loadBalancer: 'Distribute traffic across servers'
+  },
+  
+  pros: [
+    'No hardware limits',
+    'High availability (no single point of failure)',
+    'Cost effective (commodity hardware)',
+    'Gradual scaling',
+    'Better fault tolerance'
+  ],
+  
+  cons: [
+    'Complex architecture',
+    'Code changes may be required',
+    'Data consistency challenges',
+    'Network overhead',
+    'More operational complexity'
+  ],
+  
+  useCases: [
+    'Large-scale web applications',
+    'Microservices',
+    'Cloud-native applications',
+    'High traffic systems'
+  ]
+};
+```
+
+## Scalability Dimensions
+
+### 1. Request Load
+
+```javascript
+// Handle more concurrent requests
+class RequestScaling {
+  // Single server (limited)
+  singleServer() {
+    const maxConcurrentRequests = 1000;
+    const requestsPerSecond = 100;
+    return { maxConcurrentRequests, requestsPerSecond };
+  }
+  
+  // Multiple servers (scalable)
+  multipleServers(serverCount) {
+    const requestsPerServer = 100;
+    const totalRequestsPerSecond = serverCount * requestsPerServer;
+    return { 
+      servers: serverCount,
+      totalRequestsPerSecond 
+    };
+  }
+}
+
+// Example: Scale from 100 to 10,000 requests/sec
+const scaling = new RequestScaling();
+console.log('1 server:', scaling.singleServer());
+console.log('100 servers:', scaling.multipleServers(100));
+```
+
+### 2. Data Volume
+
+```javascript
+// Handle growing data
+class DataScaling {
+  // Vertical: Bigger disk
+  verticalApproach(currentSize, targetSize) {
+    return {
+      approach: 'Upgrade disk',
+      from: `${currentSize}TB`,
+      to: `${targetSize}TB`,
+      downtime: 'Required',
+      cost: 'High'
+    };
+  }
+  
+  // Horizontal: Sharding
+  horizontalApproach(totalData, shardCount) {
+    const dataPerShard = totalData / shardCount;
+    return {
+      approach: 'Shard data',
+      totalData: `${totalData}TB`,
+      shards: shardCount,
+      dataPerShard: `${dataPerShard}TB`,
+      downtime: 'Minimal',
+      cost: 'Moderate'
+    };
+  }
+}
+
+// Example: Scale from 1TB to 100TB
+const dataScaling = new DataScaling();
+console.log('Vertical:', dataScaling.verticalApproach(1, 100));
+console.log('Horizontal:', dataScaling.horizontalApproach(100, 10));
+```
+
+### 3. Computational Load
+
+```javascript
+// Distribute computation
+class ComputeScaling {
+  // Process large dataset
+  processData(dataSize, workerCount) {
+    const dataPerWorker = dataSize / workerCount;
+    const timePerWorker = dataPerWorker * 0.1; // 0.1s per unit
+    
+    return {
+      totalData: dataSize,
+      workers: workerCount,
+      dataPerWorker,
+      parallelTime: timePerWorker,
+      sequentialTime: dataSize * 0.1,
+      speedup: (dataSize * 0.1) / timePerWorker
+    };
+  }
+}
+
+// Example: Process 1M records
+const compute = new ComputeScaling();
+console.log('1 worker:', compute.processData(1_000_000, 1));
+console.log('100 workers:', compute.processData(1_000_000, 100));
+```
+
+## Scalability Patterns
+
+### 1. Stateless Architecture
+
+```javascript
+// Stateless servers enable horizontal scaling
+class StatelessServer {
+  // ❌ Bad: Stateful (session in memory)
+  statefulApproach() {
+    const sessions = new Map();
+    
+    return {
+      login: (userId, sessionId) => {
+        sessions.set(sessionId, { userId, loginTime: Date.now() });
+      },
+      getUser: (sessionId) => {
+        return sessions.get(sessionId);
+      },
+      problem: 'Session lost if server restarts or load balancer switches servers'
+    };
+  }
+  
+  // ✅ Good: Stateless (session in Redis)
+  async statelessApproach(redis) {
+    return {
+      login: async (userId, sessionId) => {
+        await redis.setEx(
+          `session:${sessionId}`,
+          3600,
+          JSON.stringify({ userId, loginTime: Date.now() })
+        );
+      },
+      getUser: async (sessionId) => {
+        const session = await redis.get(`session:${sessionId}`);
+        return session ? JSON.parse(session) : null;
+      },
+      benefit: 'Any server can handle any request'
+    };
+  }
+}
+```
+
+### 2. Database Scaling
+
+```javascript
+// Read replicas for read-heavy workloads
+class DatabaseScaling {
+  constructor() {
+    this.primary = 'db-primary';
+    this.replicas = ['db-replica-1', 'db-replica-2', 'db-replica-3'];
+    this.currentReplica = 0;
+  }
+  
+  // Write to primary
+  async write(query) {
+    return await this.executeQuery(this.primary, query);
+  }
+  
+  // Read from replica (round-robin)
+  async read(query) {
+    const replica = this.replicas[this.currentReplica];
+    this.currentReplica = (this.currentReplica + 1) % this.replicas.length;
+    return await this.executeQuery(replica, query);
+  }
+  
+  async executeQuery(server, query) {
+    console.log(`Executing on ${server}: ${query}`);
+    // Execute query
+  }
+}
+
+// Usage
+const db = new DatabaseScaling();
+await db.write('INSERT INTO users ...');
+await db.read('SELECT * FROM users WHERE id = 1');
+```
+
+### 3. Caching
+
+```javascript
+// Cache to reduce database load
+class CachingStrategy {
+  constructor(cache, database) {
+    this.cache = cache;
+    this.database = database;
+  }
+  
+  // Cache-aside pattern
+  async getData(key) {
+    // Try cache first
+    let data = await this.cache.get(key);
+    
+    if (data) {
+      console.log('Cache hit');
+      return JSON.parse(data);
+    }
+    
+    console.log('Cache miss');
+    // Load from database
+    data = await this.database.query(`SELECT * FROM data WHERE id = '${key}'`);
+    
+    // Store in cache
+    await this.cache.setEx(key, 300, JSON.stringify(data));
+    
+    return data;
+  }
+  
+  // Write-through pattern
+  async setData(key, value) {
+    // Write to database
+    await this.database.query(`INSERT INTO data VALUES ('${key}', ...)`);
+    
+    // Write to cache
+    await this.cache.setEx(key, 300, JSON.stringify(value));
+  }
+}
+```
+
+### 4. Asynchronous Processing
+
+```javascript
+// Offload heavy tasks to background workers
+class AsyncProcessing {
+  constructor(queue) {
+    this.queue = queue;
+  }
+  
+  // API endpoint (fast response)
+  async uploadVideo(req, res) {
+    const { videoFile, userId } = req.body;
+    
+    // Save to temporary storage
+    const videoId = await this.saveToStorage(videoFile);
+    
+    // Queue processing job
+    await this.queue.publish('video-processing', {
+      videoId,
+      userId,
+      tasks: ['transcode', 'thumbnail', 'metadata']
+    });
+    
+    // Return immediately
+    return res.json({
+      videoId,
+      status: 'processing',
+      message: 'Video is being processed'
+    });
+  }
+  
+  // Background worker (processes queue)
+  async processVideo(job) {
+    const { videoId, tasks } = job;
+    
+    for (const task of tasks) {
+      await this.executeTask(task, videoId);
+    }
+    
+    await this.updateStatus(videoId, 'completed');
+  }
+}
+```
+
+## Scalability Metrics
+
+```javascript
+class ScalabilityMetrics {
+  // Measure scalability
+  calculateMetrics(load, responseTime, throughput) {
+    return {
+      // Latency
+      avgResponseTime: responseTime,
+      p95ResponseTime: responseTime * 1.5,
+      p99ResponseTime: responseTime * 2,
+      
+      // Throughput
+      requestsPerSecond: throughput,
+      requestsPerMinute: throughput * 60,
+      
+      // Efficiency
+      costPerRequest: load / throughput,
+      
+      // Scalability factor
+      scalabilityFactor: throughput / load
+    };
+  }
+  
+  // Load testing results
+  loadTest() {
+    return {
+      baseline: this.calculateMetrics(1, 100, 100),
+      scaled2x: this.calculateMetrics(2, 105, 190),
+      scaled10x: this.calculateMetrics(10, 150, 800),
+      
+      analysis: {
+        linearScaling: 'Throughput should increase linearly with resources',
+        subLinear: 'Indicates bottlenecks or overhead',
+        superLinear: 'Rare, indicates caching benefits'
+      }
+    };
+  }
+}
+```
+
+## Bottleneck Identification
+
+```javascript
+class BottleneckAnalysis {
+  identifyBottlenecks(metrics) {
+    const bottlenecks = [];
+    
+    // CPU bottleneck
+    if (metrics.cpuUsage > 80) {
+      bottlenecks.push({
+        type: 'CPU',
+        severity: 'high',
+        solution: 'Add more servers or optimize algorithms'
+      });
+    }
+    
+    // Memory bottleneck
+    if (metrics.memoryUsage > 85) {
+      bottlenecks.push({
+        type: 'Memory',
+        severity: 'high',
+        solution: 'Add more RAM or optimize memory usage'
+      });
+    }
+    
+    // Database bottleneck
+    if (metrics.dbQueryTime > 1000) {
+      bottlenecks.push({
+        type: 'Database',
+        severity: 'critical',
+        solution: 'Add indexes, read replicas, or caching'
+      });
+    }
+    
+    // Network bottleneck
+    if (metrics.networkLatency > 500) {
+      bottlenecks.push({
+        type: 'Network',
+        severity: 'medium',
+        solution: 'Use CDN, optimize payload size, or add edge servers'
+      });
+    }
+    
+    return bottlenecks;
+  }
+}
+```
+
+## .NET Scalability Example
+
+```csharp
+using Microsoft.Extensions.Caching.Distributed;
+using Microsoft.AspNetCore.Mvc;
+
+public class ScalableController : ControllerBase
+{
+    private readonly IDistributedCache _cache;
+    private readonly IDbConnection _dbPrimary;
+    private readonly IDbConnection _dbReplica;
+    
+    // Stateless design
+    [HttpGet("users/{id}")]
+    public async Task<IActionResult> GetUser(string id)
+    {
+        // Try cache first (reduce DB load)
+        var cacheKey = $"user:{id}";
+        var cached = await _cache.GetStringAsync(cacheKey);
+        
+        if (!string.IsNullOrEmpty(cached))
+        {
+            return Ok(JsonSerializer.Deserialize<User>(cached));
+        }
+        
+        // Read from replica (scale reads)
+        var user = await _dbReplica.QueryFirstOrDefaultAsync<User>(
+            "SELECT * FROM Users WHERE Id = @Id",
+            new { Id = id }
+        );
+        
+        if (user == null)
+        {
+            return NotFound();
+        }
+        
+        // Cache for 5 minutes
+        await _cache.SetStringAsync(
+            cacheKey,
+            JsonSerializer.Serialize(user),
+            new DistributedCacheEntryOptions
+            {
+                AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5)
+            }
+        );
+        
+        return Ok(user);
+    }
+    
+    // Write to primary
+    [HttpPost("users")]
+    public async Task<IActionResult> CreateUser([FromBody] User user)
+    {
+        await _dbPrimary.ExecuteAsync(
+            "INSERT INTO Users (Id, Name, Email) VALUES (@Id, @Name, @Email)",
+            user
+        );
+        
+        return CreatedAtAction(nameof(GetUser), new { id = user.Id }, user);
+    }
+}
+```
+
+## Scalability Checklist
+
+```javascript
+const scalabilityChecklist = [
+  'Design stateless services',
+  'Use load balancers',
+  'Implement caching',
+  'Add database read replicas',
+  'Use message queues for async processing',
+  'Optimize database queries',
+  'Use CDN for static content',
+  'Implement connection pooling',
+  'Monitor performance metrics',
+  'Plan for horizontal scaling',
+  'Avoid single points of failure',
+  'Test at scale before production'
+];
+```
+
+## Interview Tips
+
+- **Explain both approaches**: Vertical vs horizontal scaling
+- **Show trade-offs**: Discuss pros and cons
+- **Demonstrate patterns**: Stateless, caching, async
+- **Calculate capacity**: Back-of-envelope estimates
+- **Identify bottlenecks**: CPU, memory, database, network
+- **Mention monitoring**: How to measure scalability
+
+## Summary
+
+Scalability is the ability to handle increased load. Vertical scaling adds more power to existing machines (simple but limited). Horizontal scaling adds more machines (complex but unlimited). Design stateless services for easy horizontal scaling. Use caching to reduce database load. Implement read replicas for read-heavy workloads. Use message queues for asynchronous processing. Monitor metrics to identify bottlenecks. Essential for building systems that grow with demand.

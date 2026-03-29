@@ -1,0 +1,682 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Design YouTube
+---
+
+# Design YouTube
+
+## Requirements
+
+### Functional Requirements
+
+- Upload videos
+- Watch videos
+- Search videos
+- Like/dislike videos
+- Comments
+- Subscribe to channels
+- Video recommendations
+
+### Non-Functional Requirements
+
+**Scale:**
+- 2 billion users
+- 500 hours of video uploaded per minute
+- 1 billion hours watched per day
+
+**Performance:**
+- Video starts playing in < 2 seconds
+- Smooth playback without buffering
+- Upload completes reliably
+
+**Availability:**
+- 99.9% uptime
+- Global content delivery
+
+## Capacity Estimation
+
+**Storage:**
+- 500 hours/minute × 60 minutes × 24 hours × 365 days = 262 million hours/year
+- Average video: 50 MB/minute
+- 262M hours × 60 minutes × 50 MB = 786 PB/year
+- With multiple resolutions: ~3 EB/year
+
+**Bandwidth:**
+- Upload: 500 hours/minute × 60 × 50 MB = 1.5 TB/minute = 25 GB/second
+- Download: 1B hours/day × 60 × 50 MB ÷ 86400 seconds = 35 TB/second
+
+**CDN:**
+- Need global CDN for video delivery
+- Cache popular videos close to users
+
+## High-Level Design
+
+```
+┌─────────────┐
+│ Client      │
+└──────┬──────┘
+       │
+┌──────▼──────────────────────┐
+│ Load Balancer               │
+└──────┬──────────────────────┘
+       │
+       ├────────┬────────┬────────┐
+       │        │        │        │
+┌──────▼───┐ ┌─▼──────┐ ┌▼──────┐ ┌▼──────┐
+│ Upload   │ │ Stream │ │Search │ │Social │
+│ Service  │ │Service │ │Service│ │Service│
+└──────┬───┘ └─┬──────┘ └┬──────┘ └┬──────┘
+       │       │         │         │
+┌──────▼───────▼─────────▼─────────▼───┐
+│ Message Queue (Kafka)                │
+└──────┬───────────────────────────────┘
+       │
+       ├────────┬────────┬────────┐
+       │        │        │        │
+┌──────▼───┐ ┌─▼──────┐ ┌▼──────┐ ┌▼──────┐
+│Transcode │ │Metadata│ │CDN    │ │Notif  │
+│Worker    │ │DB      │ │       │ │Service│
+└──────────┘ └────────┘ └───────┘ └───────┘
+```
+
+## Database Schema
+
+```sql
+-- Users
+CREATE TABLE users (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  username VARCHAR(50) UNIQUE NOT NULL,
+  email VARCHAR(255) UNIQUE NOT NULL,
+  channel_name VARCHAR(100),
+  subscribers_count INT DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Videos
+CREATE TABLE videos (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  user_id BIGINT NOT NULL,
+  title VARCHAR(255) NOT NULL,
+  description TEXT,
+  duration INT, -- seconds
+  views_count BIGINT DEFAULT 0,
+  likes_count INT DEFAULT 0,
+  dislikes_count INT DEFAULT 0,
+  status VARCHAR(20) DEFAULT 'processing',
+  uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id),
+  INDEX idx_user_id (user_id),
+  INDEX idx_uploaded_at (uploaded_at),
+  INDEX idx_views (views_count)
+);
+
+-- Video files (different resolutions)
+CREATE TABLE video_files (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  video_id BIGINT NOT NULL,
+  resolution VARCHAR(10), -- 360p, 720p, 1080p, 4K
+  file_path VARCHAR(500),
+  file_size BIGINT,
+  FOREIGN KEY (video_id) REFERENCES videos(id),
+  INDEX idx_video_id (video_id)
+);
+
+-- Comments
+CREATE TABLE comments (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  video_id BIGINT NOT NULL,
+  user_id BIGINT NOT NULL,
+  content TEXT NOT NULL,
+  likes_count INT DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (video_id) REFERENCES videos(id),
+  FOREIGN KEY (user_id) REFERENCES users(id),
+  INDEX idx_video_id (video_id)
+);
+
+-- Subscriptions
+CREATE TABLE subscriptions (
+  subscriber_id BIGINT NOT NULL,
+  channel_id BIGINT NOT NULL,
+  subscribed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (subscriber_id, channel_id),
+  FOREIGN KEY (subscriber_id) REFERENCES users(id),
+  FOREIGN KEY (channel_id) REFERENCES users(id)
+);
+```
+
+## Video Upload Flow
+
+```javascript
+class UploadService {
+  async uploadVideo(userId, file, metadata) {
+    // 1. Generate video ID
+    const videoId = generateUUID();
+    
+    // 2. Create video record
+    await db.query(
+      'INSERT INTO videos (id, user_id, title, description, status) VALUES (?, ?, ?, ?, ?)',
+      [videoId, userId, metadata.title, metadata.description, 'uploading']
+    );
+    
+    // 3. Upload original file to S3
+    const originalKey = `videos/original/${videoId}/${file.name}`;
+    await s3.upload({
+      Bucket: 'youtube-videos',
+      Key: originalKey,
+      Body: file.buffer,
+      ContentType: file.mimetype
+    }).promise();
+    
+    // 4. Update video status
+    await db.query(
+      'UPDATE videos SET status = ? WHERE id = ?',
+      ['processing', videoId]
+    );
+    
+    // 5. Publish to transcoding queue
+    await kafka.publish('video.uploaded', {
+      videoId,
+      originalKey,
+      userId,
+      metadata
+    });
+    
+    return { videoId, status: 'processing' };
+  }
+}
+```
+
+## Video Transcoding
+
+```javascript
+const ffmpeg = require('fluent-ffmpeg');
+
+class TranscodingWorker {
+  async processVideo(message) {
+    const { videoId, originalKey } = message;
+    
+    try {
+      // Download original from S3
+      const originalFile = await this.downloadFromS3(originalKey);
+      
+      // Transcode to multiple resolutions
+      const resolutions = [
+        { name: '360p', width: 640, height: 360, bitrate: '800k' },
+        { name: '720p', width: 1280, height: 720, bitrate: '2500k' },
+        { name: '1080p', width: 1920, height: 1080, bitrate: '5000k' }
+      ];
+      
+      const transcodedFiles = [];
+      
+      for (const resolution of resolutions) {
+        const outputFile = await this.transcode(
+          originalFile,
+          resolution
+        );
+        
+        // Upload to S3
+        const key = `videos/${resolution.name}/${videoId}/video.mp4`;
+        await this.uploadToS3(outputFile, key);
+        
+        // Save file info
+        await db.query(
+          'INSERT INTO video_files (video_id, resolution, file_path, file_size) VALUES (?, ?, ?, ?)',
+          [videoId, resolution.name, key, outputFile.size]
+        );
+        
+        transcodedFiles.push({ resolution: resolution.name, key });
+      }
+      
+      // Generate thumbnail
+      const thumbnail = await this.generateThumbnail(originalFile);
+      const thumbnailKey = `thumbnails/${videoId}/thumb.jpg`;
+      await this.uploadToS3(thumbnail, thumbnailKey);
+      
+      // Extract metadata
+      const duration = await this.getVideoDuration(originalFile);
+      
+      // Update video status
+      await db.query(
+        'UPDATE videos SET status = ?, duration = ? WHERE id = ?',
+        ['ready', duration, videoId]
+      );
+      
+      // Publish completion event
+      await kafka.publish('video.ready', {
+        videoId,
+        resolutions: transcodedFiles,
+        thumbnail: thumbnailKey
+      });
+      
+    } catch (error) {
+      await db.query(
+        'UPDATE videos SET status = ? WHERE id = ?',
+        ['failed', videoId]
+      );
+      
+      throw error;
+    }
+  }
+  
+  async transcode(inputFile, resolution) {
+    return new Promise((resolve, reject) => {
+      const outputFile = `/tmp/${Date.now()}-${resolution.name}.mp4`;
+      
+      ffmpeg(inputFile)
+        .size(`${resolution.width}x${resolution.height}`)
+        .videoBitrate(resolution.bitrate)
+        .audioCodec('aac')
+        .videoCodec('libx264')
+        .on('end', () => resolve(outputFile))
+        .on('error', reject)
+        .save(outputFile);
+    });
+  }
+  
+  async generateThumbnail(videoFile) {
+    return new Promise((resolve, reject) => {
+      const outputFile = `/tmp/${Date.now()}-thumb.jpg`;
+      
+      ffmpeg(videoFile)
+        .screenshots({
+          timestamps: ['10%'],
+          filename: outputFile,
+          size: '320x180'
+        })
+        .on('end', () => resolve(outputFile))
+        .on('error', reject);
+    });
+  }
+}
+```
+
+## Video Streaming
+
+```javascript
+class StreamingService {
+  async getVideoStream(videoId, resolution = '720p') {
+    // Get video file info
+    const file = await db.query(
+      'SELECT file_path FROM video_files WHERE video_id = ? AND resolution = ?',
+      [videoId, resolution]
+    );
+    
+    if (file.length === 0) {
+      throw new Error('Video file not found');
+    }
+    
+    // Get CDN URL
+    const cdnUrl = this.getCDNUrl(file[0].file_path);
+    
+    // Increment view count (async)
+    this.incrementViewCount(videoId).catch(console.error);
+    
+    return {
+      url: cdnUrl,
+      resolution,
+      type: 'video/mp4'
+    };
+  }
+  
+  getCDNUrl(filePath) {
+    // CloudFront signed URL
+    const cloudfront = new AWS.CloudFront.Signer(
+      process.env.CLOUDFRONT_KEY_PAIR_ID,
+      process.env.CLOUDFRONT_PRIVATE_KEY
+    );
+    
+    const url = `https://cdn.youtube.com/${filePath}`;
+    const expires = Date.now() + 3600000; // 1 hour
+    
+    return cloudfront.getSignedUrl({
+      url,
+      expires: Math.floor(expires / 1000)
+    });
+  }
+  
+  async incrementViewCount(videoId) {
+    await db.query(
+      'UPDATE videos SET views_count = views_count + 1 WHERE id = ?',
+      [videoId]
+    );
+  }
+}
+```
+
+## Adaptive Bitrate Streaming (HLS)
+
+```javascript
+class HLSService {
+  async generateHLSPlaylist(videoId) {
+    // Get all resolutions
+    const files = await db.query(
+      'SELECT resolution, file_path FROM video_files WHERE video_id = ?',
+      [videoId]
+    );
+    
+    // Generate master playlist
+    const masterPlaylist = this.createMasterPlaylist(files);
+    
+    // Upload to S3
+    const playlistKey = `videos/hls/${videoId}/master.m3u8`;
+    await s3.upload({
+      Bucket: 'youtube-videos',
+      Key: playlistKey,
+      Body: masterPlaylist,
+      ContentType: 'application/x-mpegURL'
+    }).promise();
+    
+    return this.getCDNUrl(playlistKey);
+  }
+  
+  createMasterPlaylist(files) {
+    let playlist = '#EXTM3U\n#EXT-X-VERSION:3\n';
+    
+    const bandwidths = {
+      '360p': 800000,
+      '720p': 2500000,
+      '1080p': 5000000
+    };
+    
+    for (const file of files) {
+      const bandwidth = bandwidths[file.resolution];
+      playlist += `#EXT-X-STREAM-INF:BANDWIDTH=${bandwidth},RESOLUTION=${file.resolution}\n`;
+      playlist += `${file.resolution}/playlist.m3u8\n`;
+    }
+    
+    return playlist;
+  }
+}
+```
+
+## Search Service
+
+```javascript
+const { Client } = require('@elastic/elasticsearch');
+
+class VideoSearchService {
+  constructor() {
+    this.es = new Client({ node: 'http://localhost:9200' });
+  }
+  
+  async indexVideo(video) {
+    await this.es.index({
+      index: 'videos',
+      id: video.id,
+      body: {
+        title: video.title,
+        description: video.description,
+        channel_name: video.channel_name,
+        views_count: video.views_count,
+        uploaded_at: video.uploaded_at,
+        tags: video.tags
+      }
+    });
+  }
+  
+  async search(query, limit = 20) {
+    const response = await this.es.search({
+      index: 'videos',
+      body: {
+        query: {
+          multi_match: {
+            query,
+            fields: ['title^3', 'description', 'channel_name^2', 'tags'],
+            fuzziness: 'AUTO'
+          }
+        },
+        sort: [
+          { _score: 'desc' },
+          { views_count: 'desc' }
+        ],
+        size: limit
+      }
+    });
+    
+    return response.hits.hits.map(hit => ({
+      videoId: hit._id,
+      ...hit._source,
+      score: hit._score
+    }));
+  }
+}
+```
+
+## Recommendation System
+
+```javascript
+class RecommendationService {
+  async getRecommendations(userId, limit = 20) {
+    // Get user's watch history
+    const watchHistory = await this.getWatchHistory(userId);
+    
+    // Get user's subscriptions
+    const subscriptions = await this.getSubscriptions(userId);
+    
+    // Collaborative filtering: users who watched similar videos
+    const similarUsers = await this.findSimilarUsers(watchHistory);
+    
+    // Get videos watched by similar users
+    const candidateVideos = await this.getCandidateVideos(similarUsers);
+    
+    // Content-based filtering: similar to watched videos
+    const similarVideos = await this.findSimilarVideos(watchHistory);
+    
+    // Combine and rank
+    const recommendations = this.rankRecommendations(
+      candidateVideos,
+      similarVideos,
+      subscriptions
+    );
+    
+    return recommendations.slice(0, limit);
+  }
+  
+  async getWatchHistory(userId) {
+    return await db.query(
+      'SELECT video_id, watched_at FROM watch_history WHERE user_id = ? ORDER BY watched_at DESC LIMIT 100',
+      [userId]
+    );
+  }
+  
+  async findSimilarVideos(watchHistory) {
+    // Use video embeddings for similarity
+    const videoIds = watchHistory.map(h => h.video_id);
+    
+    // Query vector database
+    const similar = await vectorDB.findSimilar(videoIds, 50);
+    
+    return similar;
+  }
+  
+  rankRecommendations(collaborative, contentBased, subscriptions) {
+    const scores = new Map();
+    
+    // Score from collaborative filtering
+    collaborative.forEach(video => {
+      scores.set(video.id, (scores.get(video.id) || 0) + video.score * 0.4);
+    });
+    
+    // Score from content-based
+    contentBased.forEach(video => {
+      scores.set(video.id, (scores.get(video.id) || 0) + video.score * 0.3);
+    });
+    
+    // Boost subscribed channels
+    subscriptions.forEach(channelId => {
+      // Videos from subscribed channels get boost
+    });
+    
+    // Sort by score
+    return Array.from(scores.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([id, score]) => ({ videoId: id, score }));
+  }
+}
+```
+
+## Social Features
+
+```javascript
+class SocialService {
+  async likeVideo(userId, videoId) {
+    // Check if already liked
+    const existing = await db.query(
+      'SELECT id FROM likes WHERE user_id = ? AND video_id = ?',
+      [userId, videoId]
+    );
+    
+    if (existing.length > 0) {
+      return { already_liked: true };
+    }
+    
+    // Add like
+    await db.query(
+      'INSERT INTO likes (user_id, video_id) VALUES (?, ?)',
+      [userId, videoId]
+    );
+    
+    // Increment like count
+    await db.query(
+      'UPDATE videos SET likes_count = likes_count + 1 WHERE id = ?',
+      [videoId]
+    );
+    
+    return { success: true };
+  }
+  
+  async subscribe(subscriberId, channelId) {
+    await db.query(
+      'INSERT INTO subscriptions (subscriber_id, channel_id) VALUES (?, ?)',
+      [subscriberId, channelId]
+    );
+    
+    await db.query(
+      'UPDATE users SET subscribers_count = subscribers_count + 1 WHERE id = ?',
+      [channelId]
+    );
+    
+    // Notify channel owner
+    await kafka.publish('subscription.created', {
+      subscriberId,
+      channelId
+    });
+  }
+  
+  async addComment(userId, videoId, content) {
+    const result = await db.query(
+      'INSERT INTO comments (user_id, video_id, content) VALUES (?, ?, ?)',
+      [userId, videoId, content]
+    );
+    
+    return { commentId: result.insertId };
+  }
+}
+```
+
+## .NET Implementation
+
+```csharp
+public class VideoService
+{
+    private readonly IDbConnection _db;
+    private readonly IS3Client _s3;
+    private readonly IKafkaProducer _kafka;
+    
+    public async Task<UploadResult> UploadVideoAsync(
+        long userId,
+        IFormFile file,
+        VideoMetadata metadata)
+    {
+        var videoId = Guid.NewGuid();
+        
+        // Create video record
+        await _db.ExecuteAsync(
+            "INSERT INTO videos (id, user_id, title, description, status) VALUES (@Id, @UserId, @Title, @Description, @Status)",
+            new { Id = videoId, UserId = userId, metadata.Title, metadata.Description, Status = "uploading" }
+        );
+        
+        // Upload to S3
+        var key = $"videos/original/{videoId}/{file.FileName}";
+        using var stream = file.OpenReadStream();
+        
+        await _s3.PutObjectAsync(new PutObjectRequest
+        {
+            BucketName = "youtube-videos",
+            Key = key,
+            InputStream = stream,
+            ContentType = file.ContentType
+        });
+        
+        // Update status
+        await _db.ExecuteAsync(
+            "UPDATE videos SET status = @Status WHERE id = @Id",
+            new { Status = "processing", Id = videoId }
+        );
+        
+        // Publish to queue
+        await _kafka.ProduceAsync("video.uploaded", new
+        {
+            VideoId = videoId,
+            OriginalKey = key,
+            UserId = userId,
+            Metadata = metadata
+        });
+        
+        return new UploadResult
+        {
+            VideoId = videoId,
+            Status = "processing"
+        };
+    }
+}
+```
+
+## Scaling Strategies
+
+**Video Storage:**
+- Store in S3 or similar object storage
+- Use CDN for global distribution
+- Cache popular videos at edge locations
+
+**Database:**
+- Shard by user_id for writes
+- Read replicas for video metadata
+- Cache metadata in Redis
+
+**Transcoding:**
+- Distributed worker pool
+- Queue-based processing
+- Parallel transcoding of resolutions
+
+**Streaming:**
+- CDN with multiple PoPs
+- Adaptive bitrate streaming (HLS/DASH)
+- Edge caching
+
+## Best Practices
+
+- **Use CDN** - Global content delivery
+- **Transcode to multiple resolutions** - Adaptive streaming
+- **Implement HLS/DASH** - Smooth playback
+- **Cache metadata** - Reduce database load
+- **Async processing** - Queue-based transcoding
+- **Monitor quality** - Video quality metrics
+- **Optimize thumbnails** - Fast loading
+- **Implement recommendations** - Increase engagement
+- **Track analytics** - Views, watch time, engagement
+
+## Interview Tips
+
+- **Start with requirements** - Scale, upload, streaming
+- **Design upload flow** - S3, transcoding, multiple resolutions
+- **Show streaming** - CDN, HLS, adaptive bitrate
+- **Implement search** - Elasticsearch for video discovery
+- **Discuss recommendations** - Collaborative + content-based
+- **Address scale** - Sharding, CDN, caching
+- **Mention challenges** - Storage costs, bandwidth, transcoding time
+
+## Summary
+
+YouTube-like system handles video upload, transcoding, and streaming at massive scale. Upload videos to S3, transcode to multiple resolutions (360p, 720p, 1080p) using distributed workers. Use HLS for adaptive bitrate streaming. Deliver via global CDN (CloudFront). Store metadata in MySQL with sharding. Implement search with Elasticsearch. Build recommendations using collaborative and content-based filtering. Handle 500 hours uploaded per minute and 1 billion hours watched per day. Store 3 EB per year. Essential pattern for video streaming platforms.

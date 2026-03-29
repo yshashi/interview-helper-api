@@ -1,0 +1,390 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Long Polling
+---
+
+# Long Polling
+
+## What is Long Polling?
+
+**Long polling** is a technique where the client makes a request to the server, and the server holds the connection open until new data is available or a timeout occurs.
+
+## Polling vs Long Polling vs WebSockets
+
+| Aspect | Polling | Long Polling | WebSockets |
+|--------|---------|--------------|------------|
+| **Connection** | Short-lived | Long-lived | Persistent |
+| **Efficiency** | Low | Medium | High |
+| **Real-time** | No | Near real-time | Real-time |
+| **Server Load** | High | Medium | Low |
+| **Complexity** | Low | Medium | High |
+
+## Regular Polling
+
+```javascript
+// Client polls every 5 seconds
+setInterval(async () => {
+  const response = await fetch('/api/notifications');
+  const data = await response.json();
+  
+  if (data.notifications.length > 0) {
+    displayNotifications(data.notifications);
+  }
+}, 5000);
+
+// Server
+app.get('/api/notifications', async (req, res) => {
+  const notifications = await Notification.find({
+    userId: req.user.id,
+    read: false
+  });
+  
+  res.json({ notifications });
+});
+```
+
+## Long Polling Implementation
+
+```javascript
+// Node.js/Express - Long polling server
+const activeConnections = new Map();
+
+app.get('/api/notifications/poll', authenticate, async (req, res) => {
+  const userId = req.user.id;
+  const timeout = 30000; // 30 seconds
+  
+  // Check for existing notifications
+  const notifications = await Notification.find({
+    userId,
+    read: false,
+    createdAt: { $gt: req.query.since || new Date(0) }
+  });
+  
+  if (notifications.length > 0) {
+    return res.json({ notifications });
+  }
+  
+  // No notifications, hold connection
+  const timeoutId = setTimeout(() => {
+    activeConnections.delete(userId);
+    res.json({ notifications: [] });
+  }, timeout);
+  
+  // Store connection
+  activeConnections.set(userId, { res, timeoutId });
+  
+  // Clean up on client disconnect
+  req.on('close', () => {
+    clearTimeout(timeoutId);
+    activeConnections.delete(userId);
+  });
+});
+
+// Notify when new data available
+async function notifyUser(userId, notification) {
+  const connection = activeConnections.get(userId);
+  
+  if (connection) {
+    clearTimeout(connection.timeoutId);
+    connection.res.json({ notifications: [notification] });
+    activeConnections.delete(userId);
+  }
+}
+
+// Usage
+app.post('/api/notifications', async (req, res) => {
+  const notification = await Notification.create(req.body);
+  
+  // Notify user via long polling
+  await notifyUser(notification.userId, notification);
+  
+  res.status(201).json(notification);
+});
+```
+
+## Angular Long Polling Client
+
+```typescript
+@Injectable()
+export class NotificationService {
+  private polling = false;
+  private notifications$ = new Subject<Notification[]>();
+  
+  startPolling() {
+    if (this.polling) return;
+    this.polling = true;
+    this.poll();
+  }
+  
+  stopPolling() {
+    this.polling = false;
+  }
+  
+  getNotifications(): Observable<Notification[]> {
+    return this.notifications$.asObservable();
+  }
+  
+  private poll(since?: Date) {
+    if (!this.polling) return;
+    
+    const params = since ? { since: since.toISOString() } : {};
+    
+    this.http.get<{ notifications: Notification[] }>(
+      `${this.apiUrl}/notifications/poll`,
+      { params }
+    ).subscribe({
+      next: (response) => {
+        if (response.notifications.length > 0) {
+          this.notifications$.next(response.notifications);
+          const lastNotification = response.notifications[response.notifications.length - 1];
+          this.poll(new Date(lastNotification.createdAt));
+        } else {
+          // No new notifications, poll again
+          this.poll(since);
+        }
+      },
+      error: (error) => {
+        console.error('Polling error:', error);
+        // Retry after delay
+        setTimeout(() => this.poll(since), 5000);
+      }
+    });
+  }
+}
+
+// Component usage
+export class AppComponent implements OnInit, OnDestroy {
+  constructor(private notificationService: NotificationService) {}
+  
+  ngOnInit() {
+    this.notificationService.startPolling();
+    
+    this.notificationService.getNotifications().subscribe(notifications => {
+      this.showNotifications(notifications);
+    });
+  }
+  
+  ngOnDestroy() {
+    this.notificationService.stopPolling();
+  }
+}
+```
+
+## .NET Implementation
+
+```csharp
+public class LongPollingController : ControllerBase
+{
+    private static readonly ConcurrentDictionary<string, TaskCompletionSource<Notification>> 
+        ActiveConnections = new();
+    
+    [HttpGet("notifications/poll")]
+    public async Task<ActionResult<NotificationResponse>> Poll(
+        [FromQuery] DateTime? since)
+    {
+        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        
+        // Check for existing notifications
+        var notifications = await _context.Notifications
+            .Where(n => n.UserId == userId && !n.Read)
+            .Where(n => !since.HasValue || n.CreatedAt > since.Value)
+            .ToListAsync();
+        
+        if (notifications.Any())
+        {
+            return Ok(new { notifications });
+        }
+        
+        // Hold connection
+        var tcs = new TaskCompletionSource<Notification>();
+        ActiveConnections[userId] = tcs;
+        
+        // Timeout after 30 seconds
+        var timeoutTask = Task.Delay(TimeSpan.FromSeconds(30));
+        var completedTask = await Task.WhenAny(tcs.Task, timeoutTask);
+        
+        ActiveConnections.TryRemove(userId, out _);
+        
+        if (completedTask == tcs.Task)
+        {
+            var notification = await tcs.Task;
+            return Ok(new { notifications = new[] { notification } });
+        }
+        
+        return Ok(new { notifications = Array.Empty<Notification>() });
+    }
+    
+    public static void NotifyUser(string userId, Notification notification)
+    {
+        if (ActiveConnections.TryRemove(userId, out var tcs))
+        {
+            tcs.SetResult(notification);
+        }
+    }
+}
+
+// Usage
+[HttpPost("notifications")]
+public async Task<ActionResult<Notification>> CreateNotification(CreateNotificationDto dto)
+{
+    var notification = new Notification
+    {
+        UserId = dto.UserId,
+        Message = dto.Message,
+        CreatedAt = DateTime.UtcNow
+    };
+    
+    _context.Notifications.Add(notification);
+    await _context.SaveChangesAsync();
+    
+    LongPollingController.NotifyUser(dto.UserId, notification);
+    
+    return CreatedAtAction(nameof(GetNotification), new { id = notification.Id }, notification);
+}
+```
+
+## Chat Application Example
+
+```javascript
+// Server
+const chatRooms = new Map();
+
+app.get('/api/chat/:roomId/poll', async (req, res) => {
+  const { roomId } = req.params;
+  const { since } = req.query;
+  
+  // Get new messages
+  const messages = await Message.find({
+    roomId,
+    createdAt: { $gt: since || new Date(0) }
+  });
+  
+  if (messages.length > 0) {
+    return res.json({ messages });
+  }
+  
+  // Hold connection
+  if (!chatRooms.has(roomId)) {
+    chatRooms.set(roomId, []);
+  }
+  
+  const connections = chatRooms.get(roomId);
+  connections.push(res);
+  
+  // Timeout
+  const timeout = setTimeout(() => {
+    const index = connections.indexOf(res);
+    if (index > -1) {
+      connections.splice(index, 1);
+      res.json({ messages: [] });
+    }
+  }, 30000);
+  
+  req.on('close', () => {
+    clearTimeout(timeout);
+    const index = connections.indexOf(res);
+    if (index > -1) {
+      connections.splice(index, 1);
+    }
+  });
+});
+
+// Send message
+app.post('/api/chat/:roomId/messages', async (req, res) => {
+  const message = await Message.create({
+    roomId: req.params.roomId,
+    text: req.body.text,
+    userId: req.user.id
+  });
+  
+  // Notify all connected clients
+  const connections = chatRooms.get(req.params.roomId) || [];
+  connections.forEach(conn => {
+    conn.json({ messages: [message] });
+  });
+  
+  chatRooms.set(req.params.roomId, []);
+  
+  res.status(201).json(message);
+});
+```
+
+## Advantages
+
+```
+✅ Advantages:
+- Near real-time updates
+- Works with HTTP/1.1
+- No special server requirements
+- Better than regular polling
+- Firewall friendly
+```
+
+## Disadvantages
+
+```
+❌ Disadvantages:
+- Holds server resources
+- Not truly real-time
+- Scalability challenges
+- Complex error handling
+- Timeout management
+```
+
+## When to Use Long Polling
+
+```
+Use long polling when:
+- Need near real-time updates
+- WebSockets not available
+- Simple notification system
+- Low message frequency
+- HTTP/1.1 infrastructure
+
+Don't use when:
+- High message frequency
+- Bidirectional communication needed
+- WebSockets available
+- Scalability critical
+```
+
+## Migration to WebSockets
+
+```javascript
+// Start with long polling
+app.get('/api/notifications/poll', longPollingHandler);
+
+// Add WebSocket support
+const io = require('socket.io')(server);
+
+io.on('connection', (socket) => {
+  socket.on('subscribe', (userId) => {
+    socket.join(`user:${userId}`);
+  });
+});
+
+// Notify via both
+function notifyUser(userId, notification) {
+  // Long polling
+  const connection = activeConnections.get(userId);
+  if (connection) {
+    connection.res.json({ notifications: [notification] });
+  }
+  
+  // WebSocket
+  io.to(`user:${userId}`).emit('notification', notification);
+}
+```
+
+## Interview Tips
+
+- **Explain long polling**: Hold connection until data available
+- **Show vs polling**: More efficient than regular polling
+- **Demonstrate implementation**: Node.js, .NET, Angular
+- **Discuss trade-offs**: Resources vs real-time
+- **Mention alternatives**: WebSockets, Server-Sent Events
+- **Show use cases**: Notifications, chat
+
+## Summary
+
+Long polling holds HTTP connection open until new data is available or timeout occurs. More efficient than regular polling but less than WebSockets. Server holds resources for each connection. Good for near real-time updates when WebSockets unavailable. Implement timeout and reconnection logic. Consider WebSockets for high-frequency updates. Useful for notifications and simple chat applications.

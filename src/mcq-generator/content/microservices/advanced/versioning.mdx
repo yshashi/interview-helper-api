@@ -1,0 +1,331 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Service Versioning
+---
+
+# Service Versioning
+
+## Why Versioning?
+
+Services evolve over time. Versioning allows backward compatibility while introducing new features.
+
+## Versioning Strategies
+
+### 1. URL Versioning
+
+```javascript
+// Version in URL path
+app.get('/api/v1/users', async (req, res) => {
+  const users = await User.find();
+  res.json(users);
+});
+
+app.get('/api/v2/users', async (req, res) => {
+  const users = await User.find();
+  // v2 includes additional fields
+  res.json(users.map(u => ({
+    ...u.toObject(),
+    fullName: `${u.firstName} ${u.lastName}`
+  })));
+});
+```
+
+### 2. Header Versioning
+
+```javascript
+app.get('/api/users', async (req, res) => {
+  const version = req.headers['api-version'] || 'v1';
+  
+  const users = await User.find();
+  
+  if (version === 'v2') {
+    res.json(users.map(u => ({
+      ...u.toObject(),
+      fullName: `${u.firstName} ${u.lastName}`
+    })));
+  } else {
+    res.json(users);
+  }
+});
+```
+
+### 3. Query Parameter Versioning
+
+```javascript
+app.get('/api/users', async (req, res) => {
+  const version = req.query.version || 'v1';
+  
+  const users = await User.find();
+  
+  if (version === 'v2') {
+    res.json({ data: users, version: 'v2' });
+  } else {
+    res.json(users);
+  }
+});
+```
+
+### 4. Content Negotiation
+
+```javascript
+app.get('/api/users', async (req, res) => {
+  const accept = req.headers['accept'];
+  
+  const users = await User.find();
+  
+  if (accept === 'application/vnd.api.v2+json') {
+    res.json({ data: users, version: 'v2' });
+  } else {
+    res.json(users);
+  }
+});
+```
+
+## Schema Evolution
+
+### Adding Fields
+
+```javascript
+// v1 schema
+const UserV1 = {
+  id: String,
+  email: String,
+  name: String
+};
+
+// v2 schema (backward compatible)
+const UserV2 = {
+  id: String,
+  email: String,
+  name: String,
+  phoneNumber: String,  // New optional field
+  address: Object       // New optional field
+};
+
+// Handle both versions
+app.get('/api/users/:id', async (req, res) => {
+  const version = req.headers['api-version'] || 'v1';
+  const user = await User.findById(req.params.id);
+  
+  if (version === 'v1') {
+    // Return only v1 fields
+    res.json({
+      id: user.id,
+      email: user.email,
+      name: user.name
+    });
+  } else {
+    // Return all fields
+    res.json(user);
+  }
+});
+```
+
+### Removing Fields
+
+```javascript
+// v1: Has deprecated field
+const UserV1 = {
+  id: String,
+  email: String,
+  username: String  // Deprecated
+};
+
+// v2: Field removed
+const UserV2 = {
+  id: String,
+  email: String
+};
+
+// Support both versions
+app.get('/api/users/:id', async (req, res) => {
+  const version = req.headers['api-version'] || 'v1';
+  const user = await User.findById(req.params.id);
+  
+  if (version === 'v1') {
+    // Include deprecated field
+    res.json({
+      ...user.toObject(),
+      username: user.email.split('@')[0]  // Generate from email
+    });
+  } else {
+    res.json(user);
+  }
+});
+```
+
+### Renaming Fields
+
+```javascript
+// v1: Old field name
+const OrderV1 = {
+  id: String,
+  total: Number
+};
+
+// v2: Renamed field
+const OrderV2 = {
+  id: String,
+  totalAmount: Number  // Renamed from 'total'
+};
+
+// Support both versions
+app.get('/api/orders/:id', async (req, res) => {
+  const version = req.headers['api-version'] || 'v1';
+  const order = await Order.findById(req.params.id);
+  
+  if (version === 'v1') {
+    res.json({
+      id: order.id,
+      total: order.totalAmount  // Map to old name
+    });
+  } else {
+    res.json({
+      id: order.id,
+      totalAmount: order.totalAmount
+    });
+  }
+});
+```
+
+## Version Adapter Pattern
+
+```javascript
+class UserAdapter {
+  toV1(user) {
+    return {
+      id: user.id,
+      email: user.email,
+      name: user.name
+    };
+  }
+  
+  toV2(user) {
+    return {
+      id: user.id,
+      email: user.email,
+      firstName: user.name.split(' ')[0],
+      lastName: user.name.split(' ').slice(1).join(' '),
+      phoneNumber: user.phoneNumber,
+      address: user.address
+    };
+  }
+  
+  fromV1(data) {
+    return {
+      email: data.email,
+      name: data.name
+    };
+  }
+  
+  fromV2(data) {
+    return {
+      email: data.email,
+      name: `${data.firstName} ${data.lastName}`,
+      phoneNumber: data.phoneNumber,
+      address: data.address
+    };
+  }
+}
+
+const adapter = new UserAdapter();
+
+app.get('/api/users/:id', async (req, res) => {
+  const version = req.headers['api-version'] || 'v1';
+  const user = await User.findById(req.params.id);
+  
+  const response = version === 'v2' 
+    ? adapter.toV2(user) 
+    : adapter.toV1(user);
+  
+  res.json(response);
+});
+```
+
+## Deprecation Strategy
+
+```javascript
+// Deprecation warnings
+app.get('/api/v1/users', (req, res, next) => {
+  res.setHeader('Warning', '299 - "API v1 is deprecated. Please use v2"');
+  res.setHeader('Sunset', 'Sat, 31 Dec 2024 23:59:59 GMT');
+  next();
+});
+
+// Deprecation middleware
+function deprecate(version, sunsetDate) {
+  return (req, res, next) => {
+    res.setHeader('Warning', `299 - "API ${version} is deprecated"`);
+    res.setHeader('Sunset', sunsetDate);
+    
+    logger.warn({
+      message: 'Deprecated API called',
+      version,
+      path: req.path,
+      client: req.headers['user-agent']
+    });
+    
+    next();
+  };
+}
+
+app.use('/api/v1', deprecate('v1', 'Sat, 31 Dec 2024 23:59:59 GMT'));
+```
+
+## Version Routing
+
+```javascript
+class VersionRouter {
+  constructor() {
+    this.routes = new Map();
+  }
+  
+  register(version, path, handler) {
+    const key = `${version}:${path}`;
+    this.routes.set(key, handler);
+  }
+  
+  handle(req, res) {
+    const version = req.headers['api-version'] || 'v1';
+    const key = `${version}:${req.path}`;
+    
+    const handler = this.routes.get(key);
+    
+    if (handler) {
+      handler(req, res);
+    } else {
+      res.status(404).json({ error: 'Not found' });
+    }
+  }
+}
+
+const router = new VersionRouter();
+
+router.register('v1', '/users', getUsersV1);
+router.register('v2', '/users', getUsersV2);
+
+app.use('/api', (req, res) => router.handle(req, res));
+```
+
+## Best Practices
+
+1. **Use semantic versioning**: Major.Minor.Patch
+2. **Maintain backward compatibility**: Don't break existing clients
+3. **Deprecate gradually**: Give clients time to migrate
+4. **Document changes**: Clear migration guides
+5. **Monitor usage**: Track version adoption
+6. **Limit supported versions**: Support 2-3 versions max
+7. **Communicate sunset dates**: Clear timeline
+
+## Interview Tips
+
+- **Explain strategies**: URL, header, query parameter
+- **Show evolution**: Adding, removing, renaming fields
+- **Demonstrate adapters**: Version transformation
+- **Discuss deprecation**: Gradual sunset strategy
+- **Mention monitoring**: Track version usage
+- **Show best practices**: Backward compatibility
+
+## Summary
+
+Service versioning enables API evolution while maintaining backward compatibility. Use URL, header, or query parameter versioning. Support schema evolution through adapters. Implement gradual deprecation with warnings. Monitor version usage. Limit supported versions. Communicate changes clearly. Essential for evolving microservices without breaking clients.

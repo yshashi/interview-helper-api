@@ -1,0 +1,345 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Load Balancing in Node.js
+---
+
+# Load Balancing in Node.js
+
+## What is Load Balancing?
+
+**Load balancing** distributes incoming network traffic across multiple servers to ensure no single server bears too much load, improving reliability and performance.
+
+## Cluster Module
+
+### Basic Clustering
+
+```javascript
+const cluster = require('cluster');
+const http = require('http');
+const numCPUs = require('os').cpus().length;
+
+if (cluster.isMaster) {
+  console.log(`Master ${process.pid} is running`);
+  
+  // Fork workers
+  for (let i = 0; i < numCPUs; i++) {
+    cluster.fork();
+  }
+  
+  cluster.on('exit', (worker, code, signal) => {
+    console.log(`Worker ${worker.process.pid} died`);
+    cluster.fork(); // Replace dead worker
+  });
+} else {
+  http.createServer((req, res) => {
+    res.writeHead(200);
+    res.end(`Handled by worker ${process.pid}\n`);
+  }).listen(8000);
+  
+  console.log(`Worker ${process.pid} started`);
+}
+```
+
+## PM2 Load Balancing
+
+### Installation & Usage
+
+```bash
+# Install PM2
+npm install -g pm2
+
+# Start with cluster mode
+pm2 start app.js -i max
+
+# Start with specific instances
+pm2 start app.js -i 4
+
+# Monitor
+pm2 monit
+
+# Reload without downtime
+pm2 reload app
+
+# Scale up/down
+pm2 scale app +2
+pm2 scale app 4
+```
+
+### PM2 Configuration
+
+```javascript
+// ecosystem.config.js
+module.exports = {
+  apps: [{
+    name: 'api',
+    script: './app.js',
+    instances: 'max',
+    exec_mode: 'cluster',
+    env: {
+      NODE_ENV: 'production'
+    },
+    max_memory_restart: '1G',
+    error_file: './logs/err.log',
+    out_file: './logs/out.log',
+    merge_logs: true
+  }]
+};
+
+// Start with config
+// pm2 start ecosystem.config.js
+```
+
+## Nginx Load Balancing
+
+### Basic Configuration
+
+```nginx
+upstream nodejs_backend {
+  server localhost:3000;
+  server localhost:3001;
+  server localhost:3002;
+  server localhost:3003;
+}
+
+server {
+  listen 80;
+  server_name example.com;
+  
+  location / {
+    proxy_pass http://nodejs_backend;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection 'upgrade';
+    proxy_set_header Host $host;
+    proxy_cache_bypass $http_upgrade;
+  }
+}
+```
+
+### Load Balancing Methods
+
+```nginx
+# Round Robin (default)
+upstream backend {
+  server server1:3000;
+  server server2:3000;
+}
+
+# Least Connections
+upstream backend {
+  least_conn;
+  server server1:3000;
+  server server2:3000;
+}
+
+# IP Hash (sticky sessions)
+upstream backend {
+  ip_hash;
+  server server1:3000;
+  server server2:3000;
+}
+
+# Weighted
+upstream backend {
+  server server1:3000 weight=3;
+  server server2:3000 weight=1;
+}
+```
+
+### Health Checks
+
+```nginx
+upstream backend {
+  server server1:3000 max_fails=3 fail_timeout=30s;
+  server server2:3000 max_fails=3 fail_timeout=30s;
+  server server3:3000 backup;
+}
+```
+
+## HAProxy Load Balancing
+
+### Configuration
+
+```haproxy
+global
+  maxconn 4096
+  
+defaults
+  mode http
+  timeout connect 5000ms
+  timeout client 50000ms
+  timeout server 50000ms
+
+frontend http-in
+  bind *:80
+  default_backend nodejs_servers
+
+backend nodejs_servers
+  balance roundrobin
+  option httpchk GET /health
+  server node1 localhost:3000 check
+  server node2 localhost:3001 check
+  server node3 localhost:3002 check
+  server node4 localhost:3003 check
+```
+
+## Application-Level Load Balancing
+
+### Using http-proxy
+
+```javascript
+const http = require('http');
+const httpProxy = require('http-proxy');
+
+const servers = [
+  'http://localhost:3000',
+  'http://localhost:3001',
+  'http://localhost:3002'
+];
+
+let current = 0;
+
+const proxy = httpProxy.createProxyServer({});
+
+http.createServer((req, res) => {
+  proxy.web(req, res, {
+    target: servers[current]
+  });
+  
+  current = (current + 1) % servers.length;
+}).listen(8000);
+```
+
+## Sticky Sessions
+
+### Using express-session with Redis
+
+```javascript
+const session = require('express-session');
+const RedisStore = require('connect-redis')(session);
+const redis = require('redis');
+
+const redisClient = redis.createClient();
+
+app.use(session({
+  store: new RedisStore({ client: redisClient }),
+  secret: process.env.SESSION_SECRET,
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: true,
+    maxAge: 3600000
+  }
+}));
+```
+
+## Health Checks
+
+### Application Health Endpoint
+
+```javascript
+app.get('/health', async (req, res) => {
+  try {
+    // Check database
+    await db.ping();
+    
+    // Check Redis
+    await redis.ping();
+    
+    // Check memory
+    const used = process.memoryUsage();
+    const heapUsedPercent = (used.heapUsed / used.heapTotal) * 100;
+    
+    if (heapUsedPercent > 90) {
+      throw new Error('High memory usage');
+    }
+    
+    res.json({
+      status: 'healthy',
+      uptime: process.uptime(),
+      memory: {
+        heapUsed: `${Math.round(used.heapUsed / 1024 / 1024)}MB`,
+        heapTotal: `${Math.round(used.heapTotal / 1024 / 1024)}MB`
+      }
+    });
+  } catch (err) {
+    res.status(503).json({
+      status: 'unhealthy',
+      error: err.message
+    });
+  }
+});
+```
+
+## Graceful Shutdown
+
+```javascript
+let server;
+
+async function startServer() {
+  server = app.listen(3000, () => {
+    console.log('Server started');
+  });
+}
+
+async function gracefulShutdown() {
+  console.log('Shutting down gracefully...');
+  
+  server.close(() => {
+    console.log('HTTP server closed');
+  });
+  
+  // Close database connections
+  await mongoose.connection.close();
+  await redis.quit();
+  
+  process.exit(0);
+}
+
+process.on('SIGTERM', gracefulShutdown);
+process.on('SIGINT', gracefulShutdown);
+
+startServer();
+```
+
+## Monitoring
+
+### Using PM2
+
+```bash
+# Real-time monitoring
+pm2 monit
+
+# List processes
+pm2 list
+
+# Show logs
+pm2 logs
+
+# Show metrics
+pm2 describe app
+```
+
+## Best Practices
+
+1. **Use cluster mode** for multi-core CPUs
+2. **Implement health checks** for all instances
+3. **Use sticky sessions** when needed
+4. **Monitor instance health**
+5. **Implement graceful shutdown**
+6. **Use reverse proxy** (Nginx/HAProxy)
+7. **Auto-restart failed instances**
+8. **Scale based on metrics**
+
+## Interview Tips
+
+- **Explain load balancing**: Distribute traffic across servers
+- **Show cluster module**: Built-in Node.js clustering
+- **Demonstrate PM2**: Process manager with clustering
+- **Discuss Nginx**: Reverse proxy load balancing
+- **Mention sticky sessions**: Session persistence
+- **Show health checks**: Monitor instance health
+
+## Summary
+
+Load balancing distributes traffic across multiple Node.js instances. Use cluster module for basic clustering, PM2 for production process management, Nginx/HAProxy for reverse proxy load balancing. Implement health checks, graceful shutdown, and sticky sessions when needed.

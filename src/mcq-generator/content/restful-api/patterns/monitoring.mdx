@@ -1,0 +1,416 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: API Monitoring
+---
+
+# API Monitoring
+
+## Why Monitor APIs?
+
+- **Performance**: Track response times
+- **Availability**: Detect downtime
+- **Errors**: Identify issues quickly
+- **Usage**: Understand traffic patterns
+- **Capacity**: Plan for scaling
+
+## Key Metrics
+
+```javascript
+// Golden signals
+const metrics = {
+  latency: 'Response time',
+  traffic: 'Requests per second',
+  errors: 'Error rate',
+  saturation: 'Resource utilization'
+};
+```
+
+## Prometheus Metrics
+
+```javascript
+const prometheus = require('prom-client');
+
+// Create registry
+const register = new prometheus.Registry();
+
+// Default metrics
+prometheus.collectDefaultMetrics({ register });
+
+// HTTP request duration
+const httpRequestDuration = new prometheus.Histogram({
+  name: 'http_request_duration_seconds',
+  help: 'Duration of HTTP requests in seconds',
+  labelNames: ['method', 'route', 'status'],
+  buckets: [0.1, 0.5, 1, 2, 5],
+  registers: [register]
+});
+
+// HTTP request counter
+const httpRequestsTotal = new prometheus.Counter({
+  name: 'http_requests_total',
+  help: 'Total HTTP requests',
+  labelNames: ['method', 'route', 'status'],
+  registers: [register]
+});
+
+// Active connections
+const activeConnections = new prometheus.Gauge({
+  name: 'active_connections',
+  help: 'Number of active connections',
+  registers: [register]
+});
+
+// Middleware
+app.use((req, res, next) => {
+  const start = Date.now();
+  activeConnections.inc();
+  
+  res.on('finish', () => {
+    const duration = (Date.now() - start) / 1000;
+    const route = req.route?.path || req.path;
+    
+    httpRequestDuration.observe(
+      { method: req.method, route, status: res.statusCode },
+      duration
+    );
+    
+    httpRequestsTotal.inc({
+      method: req.method,
+      route,
+      status: res.statusCode
+    });
+    
+    activeConnections.dec();
+  });
+  
+  next();
+});
+
+// Metrics endpoint
+app.get('/metrics', async (req, res) => {
+  res.set('Content-Type', register.contentType);
+  res.end(await register.metrics());
+});
+```
+
+## Application Performance Monitoring (APM)
+
+```javascript
+// New Relic
+require('newrelic');
+
+// Datadog
+const tracer = require('dd-trace').init();
+
+// Elastic APM
+const apm = require('elastic-apm-node').start({
+  serviceName: 'user-api',
+  serverUrl: process.env.APM_SERVER_URL
+});
+
+// Custom transaction
+app.get('/api/users/:id', async (req, res) => {
+  const transaction = apm.startTransaction('GET /api/users/:id', 'request');
+  
+  try {
+    const user = await User.findById(req.params.id);
+    res.json(user);
+    transaction.result = 'success';
+  } catch (error) {
+    transaction.result = 'error';
+    apm.captureError(error);
+    res.status(500).json({ error: error.message });
+  } finally {
+    transaction.end();
+  }
+});
+```
+
+## Health Checks
+
+```javascript
+// Basic health check
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'healthy' });
+});
+
+// Detailed health check
+app.get('/health/detailed', async (req, res) => {
+  const health = {
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    checks: {}
+  };
+  
+  // Database check
+  try {
+    await db.ping();
+    health.checks.database = { status: 'up' };
+  } catch (error) {
+    health.checks.database = { status: 'down', error: error.message };
+    health.status = 'unhealthy';
+  }
+  
+  // Redis check
+  try {
+    await redis.ping();
+    health.checks.redis = { status: 'up' };
+  } catch (error) {
+    health.checks.redis = { status: 'down', error: error.message };
+    health.status = 'degraded';
+  }
+  
+  const statusCode = health.status === 'healthy' ? 200 : 503;
+  res.status(statusCode).json(health);
+});
+```
+
+## Logging
+
+```javascript
+const winston = require('winston');
+
+const logger = winston.createLogger({
+  level: 'info',
+  format: winston.format.combine(
+    winston.format.timestamp(),
+    winston.format.errors({ stack: true }),
+    winston.format.json()
+  ),
+  transports: [
+    new winston.transports.File({ filename: 'error.log', level: 'error' }),
+    new winston.transports.File({ filename: 'combined.log' })
+  ]
+});
+
+// Request logging
+app.use((req, res, next) => {
+  const start = Date.now();
+  
+  res.on('finish', () => {
+    logger.info({
+      method: req.method,
+      path: req.path,
+      statusCode: res.statusCode,
+      duration: Date.now() - start,
+      ip: req.ip,
+      userAgent: req.headers['user-agent']
+    });
+  });
+  
+  next();
+});
+
+// Error logging
+app.use((err, req, res, next) => {
+  logger.error({
+    message: err.message,
+    stack: err.stack,
+    path: req.path,
+    method: req.method
+  });
+  
+  res.status(500).json({ error: 'Internal server error' });
+});
+```
+
+## Distributed Tracing
+
+```javascript
+const opentelemetry = require('@opentelemetry/api');
+const { NodeTracerProvider } = require('@opentelemetry/sdk-trace-node');
+const { JaegerExporter } = require('@opentelemetry/exporter-jaeger');
+
+// Setup tracing
+const provider = new NodeTracerProvider();
+const exporter = new JaegerExporter({
+  serviceName: 'user-api',
+  endpoint: 'http://localhost:14268/api/traces'
+});
+
+provider.addSpanProcessor(new opentelemetry.SimpleSpanProcessor(exporter));
+provider.register();
+
+const tracer = opentelemetry.trace.getTracer('user-api');
+
+// Trace request
+app.get('/api/users/:id', async (req, res) => {
+  const span = tracer.startSpan('GET /api/users/:id');
+  
+  try {
+    // Database span
+    const dbSpan = tracer.startSpan('database.query', { parent: span });
+    const user = await User.findById(req.params.id);
+    dbSpan.end();
+    
+    // Cache span
+    const cacheSpan = tracer.startSpan('cache.set', { parent: span });
+    await cache.set(`user:${req.params.id}`, user);
+    cacheSpan.end();
+    
+    res.json(user);
+  } finally {
+    span.end();
+  }
+});
+```
+
+## Alerting
+
+```javascript
+// Prometheus alerting rules
+const alertRules = `
+groups:
+  - name: api_alerts
+    rules:
+      - alert: HighErrorRate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is {{ $value }} requests/sec"
+      
+      - alert: HighLatency
+        expr: histogram_quantile(0.95, http_request_duration_seconds) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High latency detected"
+          description: "95th percentile latency is {{ $value }}s"
+`;
+
+// Send alerts to Slack
+const sendSlackAlert = async (alert) => {
+  await fetch(process.env.SLACK_WEBHOOK, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      text: `🚨 ${alert.summary}`,
+      attachments: [{
+        color: alert.severity === 'critical' ? 'danger' : 'warning',
+        fields: [
+          { title: 'Description', value: alert.description },
+          { title: 'Severity', value: alert.severity }
+        ]
+      }]
+    })
+  });
+};
+```
+
+## Uptime Monitoring
+
+```javascript
+// Pingdom-style monitoring
+const axios = require('axios');
+
+async function checkEndpoint(url) {
+  const start = Date.now();
+  
+  try {
+    const response = await axios.get(url, { timeout: 5000 });
+    const duration = Date.now() - start;
+    
+    return {
+      status: 'up',
+      statusCode: response.status,
+      responseTime: duration
+    };
+  } catch (error) {
+    return {
+      status: 'down',
+      error: error.message,
+      responseTime: Date.now() - start
+    };
+  }
+}
+
+// Check every minute
+setInterval(async () => {
+  const result = await checkEndpoint('https://api.example.com/health');
+  
+  if (result.status === 'down') {
+    await sendSlackAlert({
+      summary: 'API is down',
+      description: result.error,
+      severity: 'critical'
+    });
+  }
+}, 60000);
+```
+
+## Dashboard Example
+
+```javascript
+// Grafana dashboard JSON
+const dashboard = {
+  title: 'API Metrics',
+  panels: [
+    {
+      title: 'Request Rate',
+      targets: [{
+        expr: 'rate(http_requests_total[5m])'
+      }]
+    },
+    {
+      title: 'Error Rate',
+      targets: [{
+        expr: 'rate(http_requests_total{status=~"5.."}[5m])'
+      }]
+    },
+    {
+      title: 'Response Time (p95)',
+      targets: [{
+        expr: 'histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))'
+      }]
+    },
+    {
+      title: 'Active Connections',
+      targets: [{
+        expr: 'active_connections'
+      }]
+    }
+  ]
+};
+```
+
+## .NET Monitoring
+
+```csharp
+// Application Insights
+services.AddApplicationInsightsTelemetry();
+
+// Custom metrics
+public class MetricsService
+{
+    private readonly TelemetryClient _telemetry;
+    
+    public void TrackRequest(string name, TimeSpan duration, bool success)
+    {
+        _telemetry.TrackRequest(name, DateTimeOffset.Now, duration, 
+            success ? "200" : "500", success);
+    }
+    
+    public void TrackMetric(string name, double value)
+    {
+        _telemetry.TrackMetric(name, value);
+    }
+}
+```
+
+## Interview Tips
+
+- **Explain metrics**: Latency, traffic, errors, saturation
+- **Show Prometheus**: Metrics collection
+- **Demonstrate logging**: Structured logging
+- **Discuss tracing**: Distributed tracing
+- **Mention alerting**: Proactive notifications
+- **Show health checks**: Endpoint monitoring
+
+## Summary
+
+Monitor REST APIs with Prometheus for metrics collection, structured logging with Winston, distributed tracing with OpenTelemetry, health check endpoints, APM tools like New Relic or Datadog, alerting with Prometheus Alertmanager, uptime monitoring, and Grafana dashboards. Track golden signals: latency, traffic, errors, saturation. Essential for production API reliability.

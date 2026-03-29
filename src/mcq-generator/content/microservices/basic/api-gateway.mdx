@@ -1,0 +1,389 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: API Gateway in Microservices
+---
+
+# API Gateway in Microservices
+
+## What is an API Gateway?
+
+An **API Gateway** is a server that acts as a single entry point for all client requests to microservices. It routes requests, aggregates responses, and provides cross-cutting concerns like authentication, logging, and rate limiting.
+
+## Architecture
+
+```
+┌─────────┐
+│ Client  │
+└────┬────┘
+     │
+┌────▼──────────┐
+│  API Gateway  │ ← Single Entry Point
+└────┬──────────┘
+     │
+  ───┼─────────────────
+  │  │   │          │
+┌─▼──▼───▼──┐  ┌───▼────┐
+│User      │  │Order   │
+│Service   │  │Service │
+└──────────┘  └────────┘
+```
+
+## Basic Implementation
+
+```javascript
+const express = require('express');
+const { createProxyMiddleware } = require('http-proxy-middleware');
+
+const app = express();
+
+// Route to User Service
+app.use('/api/users', createProxyMiddleware({
+  target: 'http://user-service:3001',
+  changeOrigin: true,
+  pathRewrite: {
+    '^/api/users': '/users'
+  }
+}));
+
+// Route to Order Service
+app.use('/api/orders', createProxyMiddleware({
+  target: 'http://order-service:3002',
+  changeOrigin: true,
+  pathRewrite: {
+    '^/api/orders': '/orders'
+  }
+}));
+
+// Route to Product Service
+app.use('/api/products', createProxyMiddleware({
+  target: 'http://product-service:3003',
+  changeOrigin: true
+}));
+
+app.listen(8000);
+```
+
+## Key Responsibilities
+
+### 1. Request Routing
+
+```javascript
+app.use('/api/users/*', (req, res) => {
+  proxy.web(req, res, { target: 'http://user-service:3001' });
+});
+
+app.use('/api/orders/*', (req, res) => {
+  proxy.web(req, res, { target: 'http://order-service:3002' });
+});
+```
+
+### 2. Authentication & Authorization
+
+```javascript
+const jwt = require('jsonwebtoken');
+
+// Authentication middleware
+app.use((req, res, next) => {
+  const token = req.headers.authorization?.split(' ')[1];
+  
+  if (!token) {
+    return res.status(401).json({ error: 'No token provided' });
+  }
+  
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = decoded;
+    next();
+  } catch (error) {
+    res.status(401).json({ error: 'Invalid token' });
+  }
+});
+```
+
+### 3. Rate Limiting
+
+```javascript
+const rateLimit = require('express-rate-limit');
+
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Limit each IP to 100 requests per windowMs
+  message: 'Too many requests from this IP'
+});
+
+app.use('/api/', limiter);
+```
+
+### 4. Request/Response Transformation
+
+```javascript
+// Transform request
+app.use((req, res, next) => {
+  // Add correlation ID
+  req.headers['x-correlation-id'] = generateId();
+  
+  // Add timestamp
+  req.headers['x-timestamp'] = Date.now();
+  
+  next();
+});
+
+// Transform response
+app.use((req, res, next) => {
+  const originalSend = res.send;
+  
+  res.send = function(data) {
+    // Wrap response
+    const wrapped = {
+      data: JSON.parse(data),
+      timestamp: new Date(),
+      correlationId: req.headers['x-correlation-id']
+    };
+    
+    originalSend.call(this, JSON.stringify(wrapped));
+  };
+  
+  next();
+});
+```
+
+### 5. Response Aggregation
+
+```javascript
+app.get('/api/order-details/:id', async (req, res) => {
+  try {
+    // Call multiple services
+    const [order, user, product] = await Promise.all([
+      axios.get(`http://order-service/orders/${req.params.id}`),
+      axios.get(`http://user-service/users/${order.userId}`),
+      axios.get(`http://product-service/products/${order.productId}`)
+    ]);
+    
+    // Aggregate response
+    res.json({
+      order: order.data,
+      user: user.data,
+      product: product.data
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+```
+
+### 6. Caching
+
+```javascript
+const NodeCache = require('node-cache');
+const cache = new NodeCache({ stdTTL: 600 });
+
+app.get('/api/products', async (req, res) => {
+  const cacheKey = 'products';
+  
+  // Check cache
+  const cached = cache.get(cacheKey);
+  if (cached) {
+    return res.json(cached);
+  }
+  
+  // Fetch from service
+  const response = await axios.get('http://product-service/products');
+  
+  // Store in cache
+  cache.set(cacheKey, response.data);
+  
+  res.json(response.data);
+});
+```
+
+### 7. Load Balancing
+
+```javascript
+const instances = [
+  'http://user-service-1:3001',
+  'http://user-service-2:3001',
+  'http://user-service-3:3001'
+];
+
+let currentIndex = 0;
+
+app.use('/api/users', (req, res) => {
+  const target = instances[currentIndex];
+  currentIndex = (currentIndex + 1) % instances.length;
+  
+  proxy.web(req, res, { target });
+});
+```
+
+### 8. Logging & Monitoring
+
+```javascript
+const winston = require('winston');
+
+const logger = winston.createLogger({
+  transports: [new winston.transports.Console()]
+});
+
+app.use((req, res, next) => {
+  const start = Date.now();
+  
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    
+    logger.info({
+      method: req.method,
+      url: req.url,
+      status: res.statusCode,
+      duration: `${duration}ms`,
+      correlationId: req.headers['x-correlation-id']
+    });
+  });
+  
+  next();
+});
+```
+
+## Popular API Gateway Solutions
+
+### Kong
+
+```yaml
+services:
+  - name: user-service
+    url: http://user-service:3001
+    routes:
+      - name: user-route
+        paths:
+          - /api/users
+
+plugins:
+  - name: rate-limiting
+    config:
+      minute: 100
+  - name: jwt
+```
+
+### AWS API Gateway
+
+```yaml
+Resources:
+  ApiGateway:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: MyAPI
+      
+  UserResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !GetAtt ApiGateway.RootResourceId
+      PathPart: users
+```
+
+### NGINX
+
+```nginx
+upstream user_service {
+  server user-service:3001;
+}
+
+upstream order_service {
+  server order-service:3002;
+}
+
+server {
+  listen 80;
+  
+  location /api/users {
+    proxy_pass http://user_service;
+  }
+  
+  location /api/orders {
+    proxy_pass http://order_service;
+  }
+}
+```
+
+## Complete Example
+
+```javascript
+const express = require('express');
+const jwt = require('jsonwebtoken');
+const rateLimit = require('express-rate-limit');
+const { createProxyMiddleware } = require('http-proxy-middleware');
+
+const app = express();
+
+// Rate limiting
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100
+});
+
+app.use('/api/', limiter);
+
+// Authentication
+const authenticate = (req, res, next) => {
+  const token = req.headers.authorization?.split(' ')[1];
+  
+  if (!token) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  
+  try {
+    req.user = jwt.verify(token, process.env.JWT_SECRET);
+    next();
+  } catch (error) {
+    res.status(401).json({ error: 'Invalid token' });
+  }
+};
+
+// Logging
+app.use((req, res, next) => {
+  console.log(`${req.method} ${req.url}`);
+  next();
+});
+
+// Routes
+app.use('/api/users', authenticate, createProxyMiddleware({
+  target: 'http://user-service:3001',
+  changeOrigin: true
+}));
+
+app.use('/api/orders', authenticate, createProxyMiddleware({
+  target: 'http://order-service:3002',
+  changeOrigin: true
+}));
+
+app.listen(8000, () => {
+  console.log('API Gateway running on port 8000');
+});
+```
+
+## Benefits
+
+1. **Single Entry Point**: Simplifies client code
+2. **Security**: Centralized authentication
+3. **Monitoring**: Unified logging and metrics
+4. **Flexibility**: Easy to add new services
+5. **Performance**: Caching and load balancing
+
+## Challenges
+
+1. **Single Point of Failure**: Gateway down = all services down
+2. **Performance Bottleneck**: All traffic goes through gateway
+3. **Complexity**: Additional layer to manage
+4. **Latency**: Extra network hop
+
+## Interview Tips
+
+- **Explain purpose**: Single entry point for microservices
+- **Show responsibilities**: Routing, auth, rate limiting
+- **Demonstrate implementation**: Express proxy example
+- **Discuss tools**: Kong, NGINX, AWS API Gateway
+- **Mention benefits**: Security, monitoring, simplicity
+- **Acknowledge challenges**: Single point of failure
+
+## Summary
+
+API Gateway acts as a single entry point for microservices, handling routing, authentication, rate limiting, and response aggregation. Implements cross-cutting concerns like logging and caching. Popular solutions include Kong, NGINX, and AWS API Gateway. Essential for managing microservices complexity.

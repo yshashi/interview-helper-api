@@ -1,0 +1,315 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Monolithic vs Microservices Architecture
+---
+
+# Monolithic vs Microservices Architecture
+
+## Monolithic Architecture
+
+A **monolithic** application is built as a single, unified unit where all components are interconnected and interdependent.
+
+```
+┌─────────────────────────────────┐
+│     Monolithic Application      │
+│                                 │
+│  ┌──────────────────────────┐  │
+│  │    Presentation Layer    │  │
+│  └──────────────────────────┘  │
+│  ┌──────────────────────────┐  │
+│  │     Business Logic       │  │
+│  └──────────────────────────┘  │
+│  ┌──────────────────────────┐  │
+│  │     Data Access Layer    │  │
+│  └──────────────────────────┘  │
+│                                 │
+└─────────────┬───────────────────┘
+              │
+        ┌─────▼─────┐
+        │  Database │
+        └───────────┘
+```
+
+### Monolithic Example
+
+```javascript
+// Single application with all features
+const express = require('express');
+const app = express();
+
+// User management
+app.post('/users', createUser);
+app.get('/users/:id', getUser);
+
+// Order management
+app.post('/orders', createOrder);
+app.get('/orders/:id', getOrder);
+
+// Product management
+app.post('/products', createProduct);
+app.get('/products/:id', getProduct);
+
+// Payment processing
+app.post('/payments', processPayment);
+
+// All in one database
+const db = mongoose.connect('mongodb://localhost/ecommerce');
+
+app.listen(3000);
+```
+
+## Microservices Architecture
+
+**Microservices** split the application into small, independent services.
+
+```
+┌──────────┐
+│  Client  │
+└────┬─────┘
+     │
+┌────▼──────────┐
+│  API Gateway  │
+└────┬──────────┘
+     │
+  ───┼─────────────────────
+  │  │   │    │          │
+┌─▼──▼───▼──┐ ┌▼────┐ ┌─▼──────┐
+│User      │ │Order│ │Product │
+│Service   │ │Svc  │ │Service │
+└──┬───────┘ └─┬───┘ └───┬────┘
+   │           │          │
+┌──▼──┐    ┌──▼──┐   ┌───▼───┐
+│User │    │Order│   │Product│
+│ DB  │    │ DB  │   │  DB   │
+└─────┘    └─────┘   └───────┘
+```
+
+### Microservices Example
+
+```javascript
+// User Service (Port 3001)
+const express = require('express');
+const app = express();
+const userDB = mongoose.connect('mongodb://localhost/users');
+
+app.post('/users', createUser);
+app.get('/users/:id', getUser);
+
+app.listen(3001);
+
+// Order Service (Port 3002)
+const express = require('express');
+const app = express();
+const orderDB = mongoose.connect('mongodb://localhost/orders');
+
+app.post('/orders', createOrder);
+app.get('/orders/:id', getOrder);
+
+app.listen(3002);
+
+// Product Service (Port 3003)
+const express = require('express');
+const app = express();
+const productDB = mongoose.connect('mongodb://localhost/products');
+
+app.post('/products', createProduct);
+app.get('/products/:id', getProduct);
+
+app.listen(3003);
+```
+
+## Key Differences
+
+| Aspect | Monolithic | Microservices |
+|--------|-----------|---------------|
+| **Structure** | Single unit | Multiple services |
+| **Database** | Shared database | Database per service |
+| **Deployment** | Deploy entire app | Deploy services independently |
+| **Scaling** | Scale entire app | Scale individual services |
+| **Technology** | Single tech stack | Multiple tech stacks |
+| **Development** | Single team | Multiple teams |
+| **Complexity** | Lower | Higher |
+| **Testing** | Easier | More complex |
+
+## Scalability Comparison
+
+### Monolithic Scaling
+
+```yaml
+# Scale entire application
+docker-compose up --scale app=5
+
+# All instances identical
+app-1: User + Order + Product + Payment
+app-2: User + Order + Product + Payment
+app-3: User + Order + Product + Payment
+app-4: User + Order + Product + Payment
+app-5: User + Order + Product + Payment
+```
+
+### Microservices Scaling
+
+```yaml
+# Scale only what you need
+services:
+  user-service:
+    replicas: 2      # Low traffic
+  
+  order-service:
+    replicas: 10     # High traffic
+  
+  product-service:
+    replicas: 3      # Medium traffic
+  
+  payment-service:
+    replicas: 5      # Critical service
+```
+
+## Deployment Comparison
+
+### Monolithic Deployment
+
+```bash
+# Deploy entire application
+git push origin main
+# Build entire app
+npm run build
+# Deploy all features together
+docker build -t app:v2 .
+docker push app:v2
+kubectl set image deployment/app app=app:v2
+
+# Risk: One bug affects entire app
+```
+
+### Microservices Deployment
+
+```bash
+# Deploy only changed service
+cd services/user-service
+git push origin main
+# Build only user service
+docker build -t user-service:v2 .
+docker push user-service:v2
+kubectl set image deployment/user-service user-service=user-service:v2
+
+# Other services unaffected
+```
+
+## Development Speed
+
+### Monolithic
+
+```javascript
+// Large codebase
+src/
+  ├── users/          (5,000 lines)
+  ├── orders/         (8,000 lines)
+  ├── products/       (6,000 lines)
+  ├── payments/       (4,000 lines)
+  └── shared/         (10,000 lines)
+  
+Total: 33,000 lines in one repo
+// Slower builds, harder to navigate
+```
+
+### Microservices
+
+```javascript
+// Small, focused codebases
+user-service/       (1,500 lines)
+order-service/      (2,000 lines)
+product-service/    (1,800 lines)
+payment-service/    (1,200 lines)
+
+// Faster builds, easier to understand
+```
+
+## When to Use Monolithic
+
+### Good For:
+- Small applications
+- Simple business logic
+- Small team (< 10 developers)
+- Tight deadlines
+- Limited resources
+- Proof of concept
+
+### Example Scenario
+
+```javascript
+// Blog application
+const app = express();
+
+app.get('/posts', getPosts);
+app.post('/posts', createPost);
+app.get('/comments', getComments);
+app.post('/comments', createComment);
+
+// Simple, doesn't need microservices
+```
+
+## When to Use Microservices
+
+### Good For:
+- Large, complex applications
+- Multiple teams
+- Need for scalability
+- Different technology requirements
+- Frequent deployments
+- Long-term projects
+
+### Example Scenario
+
+```javascript
+// E-commerce platform
+// 100+ developers
+// Millions of users
+// Need to scale independently
+// Deploy multiple times per day
+
+Services:
+- User Service (Node.js)
+- Product Service (Java)
+- Order Service (Python)
+- Payment Service (Go)
+- Recommendation Service (Python ML)
+- Analytics Service (Scala)
+```
+
+## Migration Path
+
+### Strangler Fig Pattern
+
+```javascript
+// Gradually migrate from monolith to microservices
+
+// Step 1: Extract User Service
+Monolith → User Service (new)
+         → Rest of Monolith
+
+// Step 2: Extract Order Service
+Monolith → User Service
+         → Order Service (new)
+         → Rest of Monolith
+
+// Step 3: Continue until complete
+User Service
+Order Service
+Product Service
+Payment Service
+(Monolith retired)
+```
+
+## Interview Tips
+
+- **Explain both architectures**: Structure and characteristics
+- **Show differences**: Deployment, scaling, complexity
+- **Discuss trade-offs**: When to use each
+- **Demonstrate migration**: Strangler fig pattern
+- **Mention real examples**: Appropriate use cases
+- **Be balanced**: Both have valid use cases
+
+## Summary
+
+Monolithic architecture builds applications as single units with shared databases, simpler to develop but harder to scale. Microservices split applications into independent services with separate databases, more complex but offering better scalability and flexibility. Choose based on team size, application complexity, and scalability requirements.

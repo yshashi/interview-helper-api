@@ -1,0 +1,243 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Middleware in Express
+---
+
+# Middleware in Express
+
+## What is Middleware?
+
+**Middleware** functions are functions that have access to the request object (req), response object (res), and the next middleware function in the application's request-response cycle.
+
+## Basic Middleware
+
+```javascript
+app.use((req, res, next) => {
+  console.log('Request received');
+  next(); // Pass control to next middleware
+});
+```
+
+## Types of Middleware
+
+### 1. Application-Level Middleware
+
+```javascript
+const express = require('express');
+const app = express();
+
+// Applies to all routes
+app.use((req, res, next) => {
+  console.log('Time:', Date.now());
+  next();
+});
+
+// Applies to specific path
+app.use('/api', (req, res, next) => {
+  console.log('API request');
+  next();
+});
+```
+
+### 2. Router-Level Middleware
+
+```javascript
+const router = express.Router();
+
+router.use((req, res, next) => {
+  console.log('Router middleware');
+  next();
+});
+
+router.get('/users', (req, res) => {
+  res.json({ users: [] });
+});
+
+app.use('/api', router);
+```
+
+### 3. Built-in Middleware
+
+```javascript
+// Parse JSON bodies
+app.use(express.json());
+
+// Parse URL-encoded bodies
+app.use(express.urlencoded({ extended: true }));
+
+// Serve static files
+app.use(express.static('public'));
+```
+
+### 4. Third-Party Middleware
+
+```javascript
+// CORS
+const cors = require('cors');
+app.use(cors());
+
+// Morgan (logging)
+const morgan = require('morgan');
+app.use(morgan('dev'));
+
+// Helmet (security)
+const helmet = require('helmet');
+app.use(helmet());
+
+// Compression
+const compression = require('compression');
+app.use(compression());
+```
+
+### 5. Error-Handling Middleware
+
+```javascript
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).json({ error: err.message });
+});
+```
+
+## Middleware Execution Order
+
+```javascript
+// Order matters!
+app.use(middleware1); // Executes first
+app.use(middleware2); // Executes second
+app.use(middleware3); // Executes third
+
+app.get('/', handler); // Route handler
+
+app.use(errorHandler); // Error handler (last)
+```
+
+## Custom Middleware Examples
+
+### Logging Middleware
+
+```javascript
+const logger = (req, res, next) => {
+  console.log(`${req.method} ${req.url} - ${new Date().toISOString()}`);
+  next();
+};
+
+app.use(logger);
+```
+
+### Authentication Middleware
+
+```javascript
+const authenticate = (req, res, next) => {
+  const token = req.headers.authorization;
+  
+  if (!token) {
+    return res.status(401).json({ error: 'No token provided' });
+  }
+  
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = decoded;
+    next();
+  } catch (err) {
+    res.status(401).json({ error: 'Invalid token' });
+  }
+};
+
+app.get('/protected', authenticate, (req, res) => {
+  res.json({ user: req.user });
+});
+```
+
+### Validation Middleware
+
+```javascript
+const validateUser = (req, res, next) => {
+  const { name, email } = req.body;
+  
+  if (!name || !email) {
+    return res.status(400).json({ error: 'Name and email required' });
+  }
+  
+  if (!email.includes('@')) {
+    return res.status(400).json({ error: 'Invalid email' });
+  }
+  
+  next();
+};
+
+app.post('/users', validateUser, (req, res) => {
+  res.status(201).json({ message: 'User created' });
+});
+```
+
+### Rate Limiting Middleware
+
+```javascript
+const rateLimit = require('express-rate-limit');
+
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100 // Limit each IP to 100 requests per windowMs
+});
+
+app.use('/api/', limiter);
+```
+
+## Middleware Patterns
+
+### Conditional Middleware
+
+```javascript
+const conditionalMiddleware = (req, res, next) => {
+  if (req.query.admin === 'true') {
+    return adminMiddleware(req, res, next);
+  }
+  next();
+};
+```
+
+### Async Middleware
+
+```javascript
+const asyncMiddleware = fn => (req, res, next) => {
+  Promise.resolve(fn(req, res, next)).catch(next);
+};
+
+app.get('/data', asyncMiddleware(async (req, res) => {
+  const data = await fetchData();
+  res.json(data);
+}));
+```
+
+### Multiple Middleware
+
+```javascript
+app.get('/protected',
+  authenticate,
+  authorize('admin'),
+  validate,
+  (req, res) => {
+    res.json({ data: 'Protected data' });
+  }
+);
+```
+
+## Best Practices
+
+1. **Order matters**: Place middleware in correct order
+2. **Always call next()**: Unless sending response
+3. **Handle errors**: Use error middleware
+4. **Keep middleware focused**: Single responsibility
+5. **Use third-party middleware**: Don't reinvent the wheel
+
+## Interview Tips
+
+- **Explain middleware**: Functions in request-response cycle
+- **Show types**: Application, router, built-in, third-party, error
+- **Demonstrate custom middleware**: Authentication, logging, validation
+- **Discuss execution order**: Sequential processing
+- **Mention next()**: Passing control to next middleware
+
+## Summary
+
+Middleware functions process requests before reaching route handlers. Types include application-level, router-level, built-in, third-party, and error-handling. Always call next() to pass control. Use for authentication, logging, validation, and error handling.

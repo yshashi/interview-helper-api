@@ -1,0 +1,562 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Scaling Strategies
+---
+
+# Scaling Strategies
+
+## Vertical vs Horizontal Scaling
+
+```javascript
+const scalingStrategies = {
+  vertical: {
+    description: 'Add more resources to single server',
+    pros: ['Simple', 'No code changes', 'Strong consistency'],
+    cons: ['Hardware limits', 'Single point of failure', 'Expensive'],
+    use: 'Small to medium applications'
+  },
+  
+  horizontal: {
+    description: 'Add more servers',
+    pros: ['No hardware limits', 'High availability', 'Cost effective'],
+    cons: ['Complex', 'Eventual consistency', 'Data distribution'],
+    use: 'Large-scale applications'
+  }
+};
+```
+
+## MongoDB Horizontal Scaling
+
+### Sharding Setup
+
+```javascript
+// Enable sharding on database
+sh.enableSharding("myapp");
+
+// Shard collection with hashed key
+sh.shardCollection("myapp.users", { userId: "hashed" });
+
+// Shard with compound key
+sh.shardCollection("myapp.orders", { customerId: 1, orderDate: 1 });
+
+// Check shard distribution
+db.users.getShardDistribution();
+
+// Add shard
+sh.addShard("shard03/mongo3:27017");
+
+// Remove shard
+sh.removeShard("shard03");
+```
+
+### Auto-Balancing
+
+```javascript
+// Enable balancer
+sh.startBalancer();
+
+// Configure balancing window
+sh.setBalancerState(true);
+sh.setBalancerWindow({
+  start: "23:00",
+  stop: "06:00"
+});
+
+// Check balancer status
+sh.isBalancerRunning();
+sh.getBalancerState();
+
+// Manual chunk migration
+sh.moveChunk("myapp.users", { userId: "user-1000" }, "shard02");
+```
+
+## Read Scaling
+
+### Read Replicas
+
+```javascript
+const { MongoClient } = require('mongodb');
+
+// Connect to replica set
+const client = new MongoClient(
+  'mongodb://primary:27017,secondary1:27017,secondary2:27017/myapp?replicaSet=rs0'
+);
+
+// Read from secondary for analytics
+const analytics = await db.collection('events')
+  .find({ date: { $gte: startDate } })
+  .toArray({
+    readPreference: 'secondaryPreferred'
+  });
+
+// Read from primary for critical data
+const balance = await db.collection('accounts')
+  .findOne({ _id: accountId }, {
+    readPreference: 'primary'
+  });
+
+// Read from nearest for low latency
+const user = await db.collection('users')
+  .findOne({ _id: userId }, {
+    readPreference: 'nearest'
+  });
+```
+
+### Connection Pooling
+
+```javascript
+// Optimize connection pool
+const client = new MongoClient(uri, {
+  maxPoolSize: 100,
+  minPoolSize: 10,
+  maxIdleTimeMS: 30000,
+  waitQueueTimeoutMS: 5000,
+  serverSelectionTimeoutMS: 5000
+});
+
+// Monitor pool usage
+client.on('connectionPoolCreated', (event) => {
+  console.log('Pool created:', event.options);
+});
+
+client.on('connectionCheckedOut', (event) => {
+  console.log('Connection checked out');
+});
+
+client.on('connectionCheckedIn', (event) => {
+  console.log('Connection checked in');
+});
+```
+
+## Write Scaling
+
+### Write Concern Optimization
+
+```javascript
+// Fast writes (less durable)
+await db.collection('logs').insertOne(
+  logEntry,
+  { writeConcern: { w: 1, j: false } }
+);
+
+// Durable writes (slower)
+await db.collection('transactions').insertOne(
+  transaction,
+  { writeConcern: { w: 'majority', j: true } }
+);
+
+// Batch writes
+const bulkOps = documents.map(doc => ({
+  insertOne: { document: doc }
+}));
+
+await db.collection('logs').bulkWrite(bulkOps, {
+  ordered: false,
+  writeConcern: { w: 1 }
+});
+```
+
+### Sharding for Writes
+
+```javascript
+// Distribute writes across shards
+sh.shardCollection("myapp.events", { deviceId: "hashed", timestamp: 1 });
+
+// Avoid hotspots with hashed shard key
+const deviceId = generateHashedId();
+await db.collection('events').insertOne({
+  deviceId,
+  timestamp: new Date(),
+  data: eventData
+});
+```
+
+## Cassandra Scaling
+
+### Add Nodes
+
+```bash
+# Add new node to cluster
+# 1. Install Cassandra on new node
+# 2. Configure cassandra.yaml
+#    - cluster_name
+#    - seeds
+#    - listen_address
+# 3. Start Cassandra
+cassandra -f
+
+# Check cluster status
+nodetool status
+
+# Rebalance data
+nodetool cleanup
+```
+
+### Tuning for Scale
+
+```javascript
+// Optimize consistency for scale
+const cassandra = require('cassandra-driver');
+
+const client = new cassandra.Client({
+  contactPoints: ['node1', 'node2', 'node3'],
+  localDataCenter: 'dc1',
+  pooling: {
+    coreConnectionsPerHost: {
+      [cassandra.types.distance.local]: 4,
+      [cassandra.types.distance.remote]: 2
+    },
+    maxConnectionsPerHost: {
+      [cassandra.types.distance.local]: 8,
+      [cassandra.types.distance.remote]: 4
+    }
+  }
+});
+
+// Write with LOCAL_QUORUM for better performance
+await client.execute(
+  'INSERT INTO users (id, name) VALUES (?, ?)',
+  [userId, name],
+  { consistency: cassandra.types.consistencies.localQuorum }
+);
+```
+
+## Redis Scaling
+
+### Redis Cluster
+
+```bash
+# Create cluster
+redis-cli --cluster create \
+  127.0.0.1:7000 127.0.0.1:7001 127.0.0.1:7002 \
+  127.0.0.1:7003 127.0.0.1:7004 127.0.0.1:7005 \
+  --cluster-replicas 1
+
+# Add node
+redis-cli --cluster add-node 127.0.0.1:7006 127.0.0.1:7000
+
+# Reshard
+redis-cli --cluster reshard 127.0.0.1:7000
+```
+
+### Read/Write Splitting
+
+```javascript
+const Redis = require('ioredis');
+
+// Master for writes
+const master = new Redis({
+  host: 'master.redis.example.com',
+  port: 6379
+});
+
+// Replica for reads
+const replica = new Redis({
+  host: 'replica.redis.example.com',
+  port: 6379,
+  readOnly: true
+});
+
+// Write to master
+await master.set('key', 'value');
+
+// Read from replica
+const value = await replica.get('key');
+```
+
+## DynamoDB Scaling
+
+### Auto Scaling
+
+```javascript
+const { ApplicationAutoScalingClient, RegisterScalableTargetCommand, PutScalingPolicyCommand } = require('@aws-sdk/client-application-auto-scaling');
+
+const autoScaling = new ApplicationAutoScalingClient({ region: 'us-east-1' });
+
+// Register scalable target
+await autoScaling.send(new RegisterScalableTargetCommand({
+  ServiceNamespace: 'dynamodb',
+  ResourceId: 'table/Users',
+  ScalableDimension: 'dynamodb:table:ReadCapacityUnits',
+  MinCapacity: 5,
+  MaxCapacity: 100
+}));
+
+// Create scaling policy
+await autoScaling.send(new PutScalingPolicyCommand({
+  ServiceNamespace: 'dynamodb',
+  ResourceId: 'table/Users',
+  ScalableDimension: 'dynamodb:table:ReadCapacityUnits',
+  PolicyName: 'UsersReadScaling',
+  PolicyType: 'TargetTrackingScaling',
+  TargetTrackingScalingPolicyConfiguration: {
+    TargetValue: 70.0,
+    PredefinedMetricSpecification: {
+      PredefinedMetricType: 'DynamoDBReadCapacityUtilization'
+    }
+  }
+}));
+```
+
+### On-Demand Mode
+
+```javascript
+const { UpdateTableCommand } = require('@aws-sdk/client-dynamodb');
+
+// Switch to on-demand
+await client.send(new UpdateTableCommand({
+  TableName: 'Users',
+  BillingMode: 'PAY_PER_REQUEST'
+}));
+```
+
+## Caching Layer
+
+### Redis Cache
+
+```javascript
+class CachedDataService {
+  constructor(db, redis) {
+    this.db = db;
+    this.redis = redis;
+  }
+  
+  async getData(key) {
+    // Try cache first
+    const cached = await this.redis.get(key);
+    if (cached) {
+      return JSON.parse(cached);
+    }
+    
+    // Load from database
+    const data = await this.db.collection('data').findOne({ _id: key });
+    
+    // Cache for 5 minutes
+    await this.redis.setEx(key, 300, JSON.stringify(data));
+    
+    return data;
+  }
+  
+  async invalidateCache(key) {
+    await this.redis.del(key);
+  }
+}
+```
+
+### Cache Strategies
+
+```javascript
+const cacheStrategies = {
+  cacheAside: {
+    description: 'Application manages cache',
+    read: 'Check cache → Miss → Load from DB → Update cache',
+    write: 'Write to DB → Invalidate cache'
+  },
+  
+  writeThrough: {
+    description: 'Write to cache and DB together',
+    read: 'Read from cache',
+    write: 'Write to cache → Write to DB'
+  },
+  
+  writeBehind: {
+    description: 'Write to cache, async to DB',
+    read: 'Read from cache',
+    write: 'Write to cache → Async write to DB'
+  }
+};
+```
+
+## Load Balancing
+
+### Application-Level
+
+```javascript
+class LoadBalancer {
+  constructor(nodes) {
+    this.nodes = nodes;
+    this.currentIndex = 0;
+  }
+  
+  // Round-robin
+  getNextNode() {
+    const node = this.nodes[this.currentIndex];
+    this.currentIndex = (this.currentIndex + 1) % this.nodes.length;
+    return node;
+  }
+  
+  // Least connections
+  getLeastLoadedNode() {
+    return this.nodes.reduce((least, node) => {
+      return node.connections < least.connections ? node : least;
+    });
+  }
+  
+  // Weighted round-robin
+  getWeightedNode() {
+    const totalWeight = this.nodes.reduce((sum, n) => sum + n.weight, 0);
+    let random = Math.random() * totalWeight;
+    
+    for (const node of this.nodes) {
+      random -= node.weight;
+      if (random <= 0) return node;
+    }
+    
+    return this.nodes[0];
+  }
+}
+```
+
+## Database Proxy
+
+### ProxySQL for MySQL/MongoDB
+
+```javascript
+// Connection through proxy
+const client = new MongoClient('mongodb://proxysql:27017/myapp');
+
+// Proxy handles:
+// - Connection pooling
+// - Query routing
+// - Load balancing
+// - Failover
+// - Query caching
+```
+
+## Microservices Pattern
+
+```javascript
+// Separate databases per service
+class UserService {
+  constructor() {
+    this.db = new MongoClient('mongodb://users-db:27017/users');
+  }
+  
+  async getUser(userId) {
+    return await this.db.db('users').collection('users').findOne({ _id: userId });
+  }
+}
+
+class OrderService {
+  constructor() {
+    this.db = new MongoClient('mongodb://orders-db:27017/orders');
+  }
+  
+  async getOrders(userId) {
+    return await this.db.db('orders').collection('orders').find({ userId }).toArray();
+  }
+}
+
+// API Gateway aggregates
+class APIGateway {
+  async getUserWithOrders(userId) {
+    const [user, orders] = await Promise.all([
+      userService.getUser(userId),
+      orderService.getOrders(userId)
+    ]);
+    
+    return { ...user, orders };
+  }
+}
+```
+
+## .NET Scaling
+
+```csharp
+using MongoDB.Driver;
+
+public class ScalingService
+{
+    private readonly IMongoClient _client;
+    
+    public ScalingService()
+    {
+        var settings = MongoClientSettings.FromConnectionString(connectionString);
+        
+        // Connection pool settings
+        settings.MaxConnectionPoolSize = 100;
+        settings.MinConnectionPoolSize = 10;
+        settings.WaitQueueTimeout = TimeSpan.FromSeconds(5);
+        
+        // Read preference for scaling reads
+        settings.ReadPreference = ReadPreference.SecondaryPreferred;
+        
+        _client = new MongoClient(settings);
+    }
+    
+    public async Task<List<User>> GetUsersScaled()
+    {
+        var database = _client.GetDatabase("myapp");
+        var collection = database.GetCollection<User>("users")
+            .WithReadPreference(ReadPreference.Nearest);
+        
+        return await collection.Find(_ => true)
+            .Limit(100)
+            .ToListAsync();
+    }
+}
+```
+
+## Scaling Checklist
+
+```javascript
+const scalingChecklist = [
+  'Identify bottlenecks (CPU, memory, I/O)',
+  'Implement connection pooling',
+  'Add read replicas for read-heavy workloads',
+  'Enable sharding for write-heavy workloads',
+  'Use caching layer (Redis)',
+  'Optimize queries and indexes',
+  'Implement load balancing',
+  'Monitor performance metrics',
+  'Use auto-scaling when available',
+  'Consider microservices architecture',
+  'Plan for data distribution',
+  'Test at scale before production'
+];
+```
+
+## Performance Testing
+
+```javascript
+// Load testing with artillery
+const artillery = require('artillery');
+
+const loadTest = {
+  config: {
+    target: 'http://localhost:3000',
+    phases: [
+      { duration: 60, arrivalRate: 10 },   // Warm up
+      { duration: 120, arrivalRate: 50 },  // Ramp up
+      { duration: 300, arrivalRate: 100 }  // Sustained load
+    ]
+  },
+  scenarios: [
+    {
+      name: 'Get user',
+      flow: [
+        { get: { url: '/users/{{userId}}' } }
+      ]
+    }
+  ]
+};
+
+// Monitor during load test
+// - Response times
+// - Error rates
+// - Database metrics
+// - Resource usage
+```
+
+## Interview Tips
+
+- **Explain vertical vs horizontal**: Trade-offs
+- **Show sharding**: MongoDB, Cassandra
+- **Demonstrate read scaling**: Replicas, read preferences
+- **Discuss caching**: Redis, strategies
+- **Mention load balancing**: Distribution techniques
+- **Show auto-scaling**: DynamoDB, cloud solutions
+
+## Summary
+
+Scale NoSQL databases vertically (more resources) or horizontally (more servers). MongoDB uses sharding for horizontal scaling with auto-balancing. Add read replicas for read-heavy workloads. Optimize connection pooling and write concerns. Cassandra scales by adding nodes with automatic rebalancing. Redis Cluster distributes data across nodes. DynamoDB offers auto-scaling and on-demand modes. Implement caching layer with Redis. Use load balancing for distribution. Monitor performance and test at scale. Essential for handling growth in production applications.

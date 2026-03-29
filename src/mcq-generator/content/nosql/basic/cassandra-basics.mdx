@@ -1,0 +1,382 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Cassandra Basics
+---
+
+# Cassandra Basics
+
+## What is Cassandra?
+
+**Apache Cassandra** is a distributed, wide-column NoSQL database designed for handling large amounts of data across multiple nodes with no single point of failure.
+
+## Key Features
+
+```javascript
+const cassandraFeatures = {
+  distributed: 'Peer-to-peer architecture',
+  scalability: 'Linear scalability',
+  availability: 'No single point of failure',
+  performance: 'High write throughput',
+  consistency: 'Tunable consistency',
+  dataModel: 'Wide-column store'
+};
+```
+
+## Data Model
+
+```
+Keyspace (Database)
+  └── Table (Column Family)
+      └── Partition (Row)
+          └── Columns
+```
+
+## Installation and Setup
+
+```bash
+# Install Cassandra
+brew install cassandra
+
+# Start Cassandra
+cassandra -f
+
+# CQL Shell
+cqlsh
+
+# Install Node.js driver
+npm install cassandra-driver
+```
+
+## CQL (Cassandra Query Language)
+
+### Create Keyspace
+
+```sql
+-- Create keyspace (like database)
+CREATE KEYSPACE myapp
+WITH replication = {
+  'class': 'SimpleStrategy',
+  'replication_factor': 3
+};
+
+USE myapp;
+```
+
+### Create Table
+
+```sql
+-- Create table
+CREATE TABLE users (
+  user_id UUID PRIMARY KEY,
+  name TEXT,
+  email TEXT,
+  age INT,
+  created_at TIMESTAMP
+);
+
+-- Create table with composite key
+CREATE TABLE user_posts (
+  user_id UUID,
+  post_id TIMEUUID,
+  title TEXT,
+  content TEXT,
+  PRIMARY KEY (user_id, post_id)
+) WITH CLUSTERING ORDER BY (post_id DESC);
+```
+
+## Node.js with Cassandra
+
+```javascript
+const cassandra = require('cassandra-driver');
+
+const client = new cassandra.Client({
+  contactPoints: ['localhost'],
+  localDataCenter: 'datacenter1',
+  keyspace: 'myapp'
+});
+
+await client.connect();
+
+// Insert data
+async function createUser(name, email, age) {
+  const query = 'INSERT INTO users (user_id, name, email, age, created_at) VALUES (?, ?, ?, ?, ?)';
+  const params = [
+    cassandra.types.Uuid.random(),
+    name,
+    email,
+    age,
+    new Date()
+  ];
+  
+  await client.execute(query, params, { prepare: true });
+}
+
+// Query data
+async function getUser(userId) {
+  const query = 'SELECT * FROM users WHERE user_id = ?';
+  const result = await client.execute(query, [userId], { prepare: true });
+  return result.rows[0];
+}
+
+// Update data
+async function updateUser(userId, age) {
+  const query = 'UPDATE users SET age = ? WHERE user_id = ?';
+  await client.execute(query, [age, userId], { prepare: true });
+}
+
+// Delete data
+async function deleteUser(userId) {
+  const query = 'DELETE FROM users WHERE user_id = ?';
+  await client.execute(query, [userId], { prepare: true });
+}
+
+// Batch operations
+async function batchInsert(users) {
+  const queries = users.map(user => ({
+    query: 'INSERT INTO users (user_id, name, email) VALUES (?, ?, ?)',
+    params: [cassandra.types.Uuid.random(), user.name, user.email]
+  }));
+  
+  await client.batch(queries, { prepare: true });
+}
+```
+
+## Primary Keys
+
+### Simple Primary Key
+
+```sql
+CREATE TABLE users (
+  user_id UUID PRIMARY KEY,
+  name TEXT,
+  email TEXT
+);
+-- Partition key: user_id
+```
+
+### Composite Primary Key
+
+```sql
+CREATE TABLE user_posts (
+  user_id UUID,
+  post_id TIMEUUID,
+  title TEXT,
+  PRIMARY KEY (user_id, post_id)
+);
+-- Partition key: user_id
+-- Clustering key: post_id
+```
+
+### Compound Partition Key
+
+```sql
+CREATE TABLE sensor_data (
+  device_id UUID,
+  sensor_type TEXT,
+  timestamp TIMESTAMP,
+  value DOUBLE,
+  PRIMARY KEY ((device_id, sensor_type), timestamp)
+) WITH CLUSTERING ORDER BY (timestamp DESC);
+-- Partition key: (device_id, sensor_type)
+-- Clustering key: timestamp
+```
+
+## Time-Series Data
+
+```javascript
+// Create time-series table
+await client.execute(`
+  CREATE TABLE IF NOT EXISTS events (
+    device_id UUID,
+    timestamp TIMESTAMP,
+    event_type TEXT,
+    data TEXT,
+    PRIMARY KEY (device_id, timestamp)
+  ) WITH CLUSTERING ORDER BY (timestamp DESC)
+`);
+
+// Insert event
+async function logEvent(deviceId, eventType, data) {
+  const query = 'INSERT INTO events (device_id, timestamp, event_type, data) VALUES (?, ?, ?, ?)';
+  await client.execute(
+    query,
+    [deviceId, new Date(), eventType, JSON.stringify(data)],
+    { prepare: true }
+  );
+}
+
+// Query recent events
+async function getRecentEvents(deviceId, limit = 100) {
+  const query = 'SELECT * FROM events WHERE device_id = ? LIMIT ?';
+  const result = await client.execute(query, [deviceId, limit], { prepare: true });
+  return result.rows;
+}
+
+// Query events in time range
+async function getEventsByTimeRange(deviceId, startTime, endTime) {
+  const query = `
+    SELECT * FROM events 
+    WHERE device_id = ? 
+    AND timestamp >= ? 
+    AND timestamp <= ?
+  `;
+  const result = await client.execute(
+    query,
+    [deviceId, startTime, endTime],
+    { prepare: true }
+  );
+  return result.rows;
+}
+```
+
+## Collections
+
+```sql
+-- List
+CREATE TABLE users (
+  user_id UUID PRIMARY KEY,
+  name TEXT,
+  emails LIST<TEXT>
+);
+
+INSERT INTO users (user_id, name, emails) 
+VALUES (uuid(), 'John', ['john@example.com', 'john@work.com']);
+
+-- Set
+CREATE TABLE users (
+  user_id UUID PRIMARY KEY,
+  name TEXT,
+  tags SET<TEXT>
+);
+
+UPDATE users SET tags = tags + {'premium'} WHERE user_id = ?;
+
+-- Map
+CREATE TABLE users (
+  user_id UUID PRIMARY KEY,
+  name TEXT,
+  preferences MAP<TEXT, TEXT>
+);
+
+UPDATE users SET preferences['theme'] = 'dark' WHERE user_id = ?;
+```
+
+## Consistency Levels
+
+```javascript
+// Tunable consistency
+const consistencyLevels = {
+  ONE: 'Fastest, least consistent',
+  QUORUM: 'Balanced (majority)',
+  ALL: 'Slowest, most consistent',
+  LOCAL_QUORUM: 'Quorum in local datacenter'
+};
+
+// Set consistency level
+const query = 'SELECT * FROM users WHERE user_id = ?';
+const result = await client.execute(
+  query,
+  [userId],
+  { 
+    prepare: true,
+    consistency: cassandra.types.consistencies.quorum
+  }
+);
+```
+
+## .NET with Cassandra
+
+```csharp
+using Cassandra;
+
+public class CassandraService
+{
+    private readonly ISession _session;
+    
+    public CassandraService()
+    {
+        var cluster = Cluster.Builder()
+            .AddContactPoint("localhost")
+            .Build();
+        
+        _session = cluster.Connect("myapp");
+    }
+    
+    public async Task CreateUser(Guid userId, string name, string email)
+    {
+        var statement = new SimpleStatement(
+            "INSERT INTO users (user_id, name, email, created_at) VALUES (?, ?, ?, ?)",
+            userId, name, email, DateTime.UtcNow
+        );
+        
+        await _session.ExecuteAsync(statement);
+    }
+    
+    public async Task<User> GetUser(Guid userId)
+    {
+        var statement = new SimpleStatement(
+            "SELECT * FROM users WHERE user_id = ?",
+            userId
+        );
+        
+        var result = await _session.ExecuteAsync(statement);
+        var row = result.FirstOrDefault();
+        
+        if (row == null) return null;
+        
+        return new User
+        {
+            UserId = row.GetValue<Guid>("user_id"),
+            Name = row.GetValue<string>("name"),
+            Email = row.GetValue<string>("email")
+        };
+    }
+}
+```
+
+## Best Practices
+
+```javascript
+const bestPractices = [
+  'Design tables for queries, not data',
+  'Denormalize data for read performance',
+  'Use partition keys to distribute data',
+  'Limit partition size (< 100MB)',
+  'Use clustering keys for sorting',
+  'Avoid secondary indexes on high-cardinality columns',
+  'Use prepared statements',
+  'Batch writes to same partition'
+];
+
+// Good: Query by partition key
+SELECT * FROM user_posts WHERE user_id = ?;
+
+// Bad: Query without partition key (full table scan)
+SELECT * FROM user_posts WHERE title = 'Hello';
+
+// Good: Denormalized for reads
+CREATE TABLE user_timeline (
+  user_id UUID,
+  post_id TIMEUUID,
+  author_name TEXT,
+  content TEXT,
+  PRIMARY KEY (user_id, post_id)
+);
+
+// Bad: Normalized (requires joins)
+CREATE TABLE posts (post_id UUID PRIMARY KEY, content TEXT);
+CREATE TABLE authors (user_id UUID PRIMARY KEY, name TEXT);
+```
+
+## Interview Tips
+
+- **Explain Cassandra**: Distributed wide-column database
+- **Show data model**: Keyspace, table, partition, columns
+- **Demonstrate CQL**: Create, insert, query operations
+- **Discuss primary keys**: Partition and clustering keys
+- **Mention consistency**: Tunable consistency levels
+- **Show use cases**: Time-series, IoT, high-write workloads
+
+## Summary
+
+Cassandra is a distributed wide-column NoSQL database with no single point of failure. Uses CQL for queries similar to SQL. Data model includes keyspaces, tables, partitions, and columns. Primary keys consist of partition keys (for distribution) and clustering keys (for sorting). Offers tunable consistency levels. Excels at high-write workloads and time-series data. Design tables for specific queries. Essential for large-scale distributed applications.

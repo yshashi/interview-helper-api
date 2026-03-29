@@ -1,0 +1,240 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Promises and Async/Await in Node.js
+---
+
+# Promises and Async/Await in Node.js
+
+## Promises
+
+A **Promise** represents the eventual completion or failure of an asynchronous operation.
+
+### Creating Promises
+
+```javascript
+const promise = new Promise((resolve, reject) => {
+  setTimeout(() => {
+    const success = true;
+    if (success) {
+      resolve('Success!');
+    } else {
+      reject('Error!');
+    }
+  }, 1000);
+});
+
+promise
+  .then(result => console.log(result))
+  .catch(err => console.error(err));
+```
+
+### Promise States
+
+- **Pending**: Initial state
+- **Fulfilled**: Operation completed successfully
+- **Rejected**: Operation failed
+
+### Chaining Promises
+
+```javascript
+fetchUser(userId)
+  .then(user => fetchPosts(user.id))
+  .then(posts => fetchComments(posts[0].id))
+  .then(comments => console.log(comments))
+  .catch(err => console.error(err));
+```
+
+### Promise Methods
+
+```javascript
+// Promise.all - Wait for all
+Promise.all([promise1, promise2, promise3])
+  .then(results => console.log(results))
+  .catch(err => console.error(err));
+
+// Promise.race - First to complete
+Promise.race([promise1, promise2])
+  .then(result => console.log(result));
+
+// Promise.allSettled - All results
+Promise.allSettled([promise1, promise2])
+  .then(results => console.log(results));
+
+// Promise.any - First fulfilled
+Promise.any([promise1, promise2])
+  .then(result => console.log(result));
+```
+
+## Async/Await
+
+**Async/await** provides a cleaner syntax for working with Promises.
+
+### Basic Usage
+
+```javascript
+async function fetchData() {
+  try {
+    const response = await fetch(url);
+    const data = await response.json();
+    return data;
+  } catch (err) {
+    console.error('Error:', err);
+    throw err;
+  }
+}
+```
+
+### Sequential vs Parallel
+
+```javascript
+// Sequential (slower)
+async function sequential() {
+  const user = await fetchUser();
+  const posts = await fetchPosts();
+  const comments = await fetchComments();
+  return { user, posts, comments };
+}
+
+// Parallel (faster)
+async function parallel() {
+  const [user, posts, comments] = await Promise.all([
+    fetchUser(),
+    fetchPosts(),
+    fetchComments()
+  ]);
+  return { user, posts, comments };
+}
+```
+
+### Error Handling
+
+```javascript
+async function getData() {
+  try {
+    const data = await fetchData();
+    return data;
+  } catch (err) {
+    console.error('Error:', err);
+    throw err;
+  }
+}
+
+// Or with .catch()
+async function getData() {
+  const data = await fetchData().catch(err => {
+    console.error('Error:', err);
+    return null;
+  });
+  return data;
+}
+```
+
+## Converting Callbacks to Promises
+
+### Using util.promisify
+
+```javascript
+const { promisify } = require('util');
+const fs = require('fs');
+
+const readFile = promisify(fs.readFile);
+
+async function readData() {
+  const data = await readFile('file.txt', 'utf8');
+  console.log(data);
+}
+```
+
+### Manual Conversion
+
+```javascript
+function readFilePromise(filename) {
+  return new Promise((resolve, reject) => {
+    fs.readFile(filename, 'utf8', (err, data) => {
+      if (err) reject(err);
+      else resolve(data);
+    });
+  });
+}
+```
+
+## Real-World Examples
+
+### API Calls
+
+```javascript
+async function getUserData(userId) {
+  try {
+    const user = await fetch(`/api/users/${userId}`).then(r => r.json());
+    const posts = await fetch(`/api/posts?userId=${userId}`).then(r => r.json());
+    
+    return {
+      ...user,
+      posts
+    };
+  } catch (err) {
+    throw new Error(`Failed to fetch user data: ${err.message}`);
+  }
+}
+```
+
+### Database Operations
+
+```javascript
+async function createUser(userData) {
+  try {
+    const user = await User.create(userData);
+    await sendWelcomeEmail(user.email);
+    await logUserCreation(user.id);
+    return user;
+  } catch (err) {
+    console.error('User creation failed:', err);
+    throw err;
+  }
+}
+```
+
+### Multiple Operations
+
+```javascript
+async function processOrders() {
+  try {
+    const orders = await Order.find({ status: 'pending' });
+    
+    const results = await Promise.all(
+      orders.map(async order => {
+        await processPayment(order);
+        await updateInventory(order);
+        await sendConfirmation(order);
+        return order;
+      })
+    );
+    
+    return results;
+  } catch (err) {
+    console.error('Order processing failed:', err);
+    throw err;
+  }
+}
+```
+
+## Best Practices
+
+1. **Always use try-catch** with async/await
+2. **Use Promise.all** for parallel operations
+3. **Avoid mixing** .then() and async/await
+4. **Handle errors** at appropriate levels
+5. **Return promises** from async functions
+
+## Interview Tips
+
+- **Explain Promises**: Asynchronous operation representation
+- **Show async/await**: Cleaner Promise syntax
+- **Demonstrate error handling**: try-catch blocks
+- **Discuss Promise methods**: all, race, allSettled, any
+- **Show conversion**: Callbacks to Promises
+- **Mention performance**: Sequential vs parallel
+
+## Summary
+
+Promises represent asynchronous operations with three states: pending, fulfilled, rejected. Async/await provides cleaner syntax for Promises. Use try-catch for error handling, Promise.all for parallel operations, and util.promisify to convert callbacks to Promises.

@@ -1,0 +1,434 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: DbContext and DbSet in EF Core
+---
+
+# DbContext and DbSet in EF Core
+
+## DbContext
+
+**DbContext** is the primary class responsible for interacting with the database. It represents a session with the database and provides APIs for querying, saving, and managing entities.
+
+### Key Responsibilities
+
+1. **Database Connection Management**
+2. **Change Tracking**
+3. **Query Translation**
+4. **Transaction Management**
+5. **Model Configuration**
+
+### Basic DbContext
+
+```csharp
+public class ApplicationDbContext : DbContext
+{
+    public DbSet<Product> Products { get; set; }
+    public DbSet<Category> Categories { get; set; }
+    public DbSet<Order> Orders { get; set; }
+    
+    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+    {
+        optionsBuilder.UseSqlServer("Server=.;Database=MyApp;Trusted_Connection=true;");
+    }
+}
+```
+
+### DbContext with Dependency Injection
+
+```csharp
+public class ApplicationDbContext : DbContext
+{
+    public ApplicationDbContext(DbContextOptions<ApplicationDbContext> options)
+        : base(options)
+    {
+    }
+    
+    public DbSet<Product> Products { get; set; }
+    public DbSet<Category> Categories { get; set; }
+}
+
+// Startup configuration
+services.AddDbContext<ApplicationDbContext>(options =>
+    options.UseSqlServer(Configuration.GetConnectionString("DefaultConnection")));
+```
+
+### DbContext Lifecycle
+
+```csharp
+// Create instance
+using (var context = new ApplicationDbContext())
+{
+    // Use context
+    var products = context.Products.ToList();
+    
+    // Context is disposed automatically
+}
+
+// With dependency injection (scoped lifetime)
+public class ProductService
+{
+    private readonly ApplicationDbContext _context;
+    
+    public ProductService(ApplicationDbContext context)
+    {
+        _context = context; // Injected, managed by DI container
+    }
+}
+```
+
+### OnModelCreating
+
+```csharp
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    // Configure entities
+    modelBuilder.Entity<Product>(entity =>
+    {
+        entity.HasKey(e => e.Id);
+        entity.Property(e => e.Name).IsRequired().HasMaxLength(200);
+        entity.Property(e => e.Price).HasColumnType("decimal(18,2)");
+    });
+    
+    // Configure relationships
+    modelBuilder.Entity<Order>()
+        .HasMany(o => o.OrderItems)
+        .WithOne(oi => oi.Order)
+        .HasForeignKey(oi => oi.OrderId);
+    
+    // Global query filters
+    modelBuilder.Entity<Product>()
+        .HasQueryFilter(p => !p.IsDeleted);
+    
+    // Seed data
+    modelBuilder.Entity<Category>().HasData(
+        new Category { Id = 1, Name = "Electronics" },
+        new Category { Id = 2, Name = "Books" }
+    );
+}
+```
+
+### SaveChanges
+
+```csharp
+public async Task<int> SaveChangesAsync()
+{
+    // Add audit information
+    var entries = ChangeTracker.Entries()
+        .Where(e => e.State == EntityState.Added || e.State == EntityState.Modified);
+    
+    foreach (var entry in entries)
+    {
+        if (entry.Entity is IAuditable auditable)
+        {
+            if (entry.State == EntityState.Added)
+            {
+                auditable.CreatedAt = DateTime.UtcNow;
+            }
+            auditable.UpdatedAt = DateTime.UtcNow;
+        }
+    }
+    
+    return await base.SaveChangesAsync();
+}
+```
+
+## DbSet
+
+**DbSet** represents a collection of entities of a specific type. It provides methods for querying and manipulating entity data.
+
+### Basic DbSet Usage
+
+```csharp
+public class ApplicationDbContext : DbContext
+{
+    // DbSet properties
+    public DbSet<Product> Products { get; set; }
+    public DbSet<Category> Categories { get; set; }
+}
+
+// Usage
+using (var context = new ApplicationDbContext())
+{
+    // Query all products
+    var allProducts = context.Products.ToList();
+    
+    // Filtered query
+    var activeProducts = context.Products
+        .Where(p => p.IsActive)
+        .ToList();
+}
+```
+
+### DbSet Operations
+
+#### Querying
+
+```csharp
+// Find by primary key
+var product = context.Products.Find(1);
+var productAsync = await context.Products.FindAsync(1);
+
+// First or default
+var firstProduct = context.Products.FirstOrDefault();
+var specificProduct = context.Products
+    .FirstOrDefault(p => p.Name == "Laptop");
+
+// Single (throws if not exactly one)
+var singleProduct = context.Products.Single(p => p.Id == 1);
+
+// Any (check existence)
+bool hasProducts = context.Products.Any();
+bool hasExpensive = context.Products.Any(p => p.Price > 1000);
+
+// Count
+int totalProducts = context.Products.Count();
+int activeCount = context.Products.Count(p => p.IsActive);
+```
+
+#### Adding Entities
+
+```csharp
+// Add single entity
+var newProduct = new Product { Name = "Laptop", Price = 999.99m };
+context.Products.Add(newProduct);
+await context.SaveChangesAsync();
+
+// Add multiple entities
+var products = new List<Product>
+{
+    new Product { Name = "Mouse", Price = 29.99m },
+    new Product { Name = "Keyboard", Price = 79.99m }
+};
+context.Products.AddRange(products);
+await context.SaveChangesAsync();
+```
+
+#### Updating Entities
+
+```csharp
+// Update tracked entity
+var product = await context.Products.FindAsync(1);
+product.Price = 899.99m;
+await context.SaveChangesAsync();
+
+// Update untracked entity
+var product = new Product { Id = 1, Name = "Laptop", Price = 899.99m };
+context.Products.Update(product);
+await context.SaveChangesAsync();
+
+// Update specific properties
+var product = await context.Products.FindAsync(1);
+context.Entry(product).Property(p => p.Price).CurrentValue = 899.99m;
+await context.SaveChangesAsync();
+```
+
+#### Deleting Entities
+
+```csharp
+// Remove single entity
+var product = await context.Products.FindAsync(1);
+context.Products.Remove(product);
+await context.SaveChangesAsync();
+
+// Remove multiple entities
+var products = context.Products.Where(p => p.IsDiscontinued).ToList();
+context.Products.RemoveRange(products);
+await context.SaveChangesAsync();
+```
+
+### DbSet with LINQ
+
+```csharp
+// Complex queries
+var result = context.Products
+    .Where(p => p.Price > 100)
+    .OrderBy(p => p.Name)
+    .Select(p => new
+    {
+        p.Id,
+        p.Name,
+        p.Price,
+        CategoryName = p.Category.Name
+    })
+    .ToList();
+
+// Joins
+var productsWithCategories = context.Products
+    .Join(context.Categories,
+        product => product.CategoryId,
+        category => category.Id,
+        (product, category) => new
+        {
+            ProductName = product.Name,
+            CategoryName = category.Name
+        })
+    .ToList();
+
+// Group by
+var categoryCounts = context.Products
+    .GroupBy(p => p.CategoryId)
+    .Select(g => new
+    {
+        CategoryId = g.Key,
+        Count = g.Count(),
+        AvgPrice = g.Average(p => p.Price)
+    })
+    .ToList();
+```
+
+### Local DbSet
+
+```csharp
+// Access locally tracked entities without database query
+var localProducts = context.Products.Local;
+
+// Add to local cache
+var newProduct = new Product { Name = "Test" };
+context.Products.Local.Add(newProduct);
+
+// Check local cache
+var product = context.Products.Local
+    .FirstOrDefault(p => p.Id == 1);
+```
+
+## Advanced DbContext Features
+
+### Change Tracker
+
+```csharp
+// Access change tracker
+var entries = context.ChangeTracker.Entries();
+
+// Get modified entities
+var modifiedEntries = context.ChangeTracker.Entries()
+    .Where(e => e.State == EntityState.Modified);
+
+// Detect changes manually
+context.ChangeTracker.DetectChanges();
+
+// Clear change tracker
+context.ChangeTracker.Clear();
+```
+
+### Database Operations
+
+```csharp
+// Ensure database is created
+context.Database.EnsureCreated();
+
+// Ensure database is deleted
+context.Database.EnsureDeleted();
+
+// Execute migrations
+context.Database.Migrate();
+
+// Execute raw SQL
+context.Database.ExecuteSqlRaw("DELETE FROM Products WHERE IsDeleted = 1");
+
+// Begin transaction
+using var transaction = context.Database.BeginTransaction();
+try
+{
+    context.Products.Add(newProduct);
+    await context.SaveChangesAsync();
+    
+    context.Orders.Add(newOrder);
+    await context.SaveChangesAsync();
+    
+    await transaction.CommitAsync();
+}
+catch
+{
+    await transaction.RollbackAsync();
+    throw;
+}
+```
+
+### Connection Management
+
+```csharp
+// Get connection string
+var connectionString = context.Database.GetConnectionString();
+
+// Open connection
+await context.Database.OpenConnectionAsync();
+
+// Close connection
+await context.Database.CloseConnectionAsync();
+
+// Check if can connect
+bool canConnect = await context.Database.CanConnectAsync();
+```
+
+## Best Practices
+
+### 1. Use Async Methods
+
+```csharp
+// Good
+var products = await context.Products.ToListAsync();
+await context.SaveChangesAsync();
+
+// Avoid
+var products = context.Products.ToList();
+context.SaveChanges();
+```
+
+### 2. Dispose DbContext Properly
+
+```csharp
+// Good - using statement
+using (var context = new ApplicationDbContext())
+{
+    // Use context
+}
+
+// Good - dependency injection (automatic disposal)
+public class ProductService
+{
+    private readonly ApplicationDbContext _context;
+    
+    public ProductService(ApplicationDbContext context)
+    {
+        _context = context;
+    }
+}
+```
+
+### 3. Configure DbContext Lifetime
+
+```csharp
+// Scoped lifetime (default, recommended)
+services.AddDbContext<ApplicationDbContext>(options =>
+    options.UseSqlServer(connectionString),
+    ServiceLifetime.Scoped);
+
+// Transient (new instance each time)
+services.AddDbContext<ApplicationDbContext>(options =>
+    options.UseSqlServer(connectionString),
+    ServiceLifetime.Transient);
+```
+
+### 4. Use AsNoTracking for Read-Only Queries
+
+```csharp
+// Read-only query
+var products = await context.Products
+    .AsNoTracking()
+    .ToListAsync();
+```
+
+## Interview Tips
+
+- **Explain DbContext role**: Session with database, manages entities
+- **Describe DbSet purpose**: Represents entity collection, provides LINQ
+- **Show lifecycle management**: Using statements, DI, disposal
+- **Demonstrate CRUD operations**: Add, query, update, delete
+- **Discuss change tracking**: How EF Core tracks entity changes
+- **Mention OnModelCreating**: Configure entities and relationships
+- **Explain SaveChanges**: Persists changes to database
+- **Show best practices**: Async, disposal, AsNoTracking
+
+## Summary
+
+DbContext is the central class in EF Core that manages database connections, change tracking, and entity operations. DbSet represents collections of entities and provides LINQ query capabilities. Together, they form the foundation of data access in EF Core applications, enabling developers to work with databases using strongly-typed .NET objects.

@@ -239,3 +239,77 @@ InterviewHelper Team
     `
   };
 };
+
+export const getAnnouncementEmail = (
+  userName: string,
+  subject: string,
+  message: string
+): EmailTemplate => {
+  return {
+    subject: `${subject} - InterviewHelper`,
+    html: `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <style>
+            body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+            .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 8px 8px 0 0; }
+            .content { background: #f9fafb; padding: 30px; border-radius: 0 0 8px 8px; }
+            .message-box { background: white; padding: 20px; border-left: 4px solid #667eea; margin: 20px 0; border-radius: 4px; line-height: 1.8; }
+            .footer { text-align: center; margin-top: 30px; color: #6b7280; font-size: 14px; }
+            .button { display: inline-block; padding: 12px 24px; background: #667eea; color: white; text-decoration: none; border-radius: 6px; margin-top: 20px; }
+            .highlight { background: #e0e7ff; padding: 15px; border-radius: 4px; margin: 20px 0; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <div class="header">
+              <h1>📢 Important Announcement</h1>
+            </div>
+            <div class="content">
+              <p>Hi ${userName},</p>
+              
+              <div class="message-box">
+                ${message.split('\n').map(line => `<p>${line}</p>`).join('')}
+              </div>
+              
+              <div class="highlight">
+                <strong>💡 Need Help or Found an Issue?</strong><br>
+                <p style="margin-top: 10px;">If you encounter any problems or have suggestions, please don't hesitate to reach out to us. Your feedback helps us improve!</p>
+              </div>
+              
+              <a href="https://interviewhelper.in" class="button">Visit InterviewHelper</a>
+              
+              <div class="footer">
+                <p>Thank you for being part of our community! 🚀</p>
+                <p>InterviewHelper Team</p>
+                <p style="margin-top: 15px; font-size: 12px;">
+                  If you have any questions or feedback, please reply to this email.
+                </p>
+              </div>
+            </div>
+          </div>
+        </body>
+      </html>
+    `,
+    text: `
+Hi ${userName},
+
+📢 ${subject}
+
+${message}
+
+💡 Need Help or Found an Issue?
+If you encounter any problems or have suggestions, please don't hesitate to reach out to us. Your feedback helps us improve!
+
+Visit InterviewHelper: https://interviewhelper.in
+
+Thank you for being part of our community!
+
+InterviewHelper Team
+
+If you have any questions or feedback, please reply to this email.
+    `
+  };
+};

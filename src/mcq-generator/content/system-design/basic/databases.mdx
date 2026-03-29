@@ -1,0 +1,506 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Database Fundamentals
+---
+
+# Database Fundamentals
+
+## SQL vs NoSQL
+
+```javascript
+const databaseComparison = {
+  sql: {
+    structure: 'Structured, relational tables',
+    schema: 'Fixed schema, predefined',
+    scaling: 'Vertical (scale up)',
+    transactions: 'ACID compliant',
+    examples: ['PostgreSQL', 'MySQL', 'SQL Server'],
+    useCases: ['Financial systems', 'ERP', 'Traditional apps']
+  },
+  
+  nosql: {
+    structure: 'Flexible, various models',
+    schema: 'Dynamic schema',
+    scaling: 'Horizontal (scale out)',
+    transactions: 'BASE (eventual consistency)',
+    examples: ['MongoDB', 'Cassandra', 'Redis', 'DynamoDB'],
+    useCases: ['Big data', 'Real-time apps', 'High scalability']
+  }
+};
+```
+
+## Database Selection Criteria
+
+```javascript
+class DatabaseSelector {
+  selectDatabase(requirements) {
+    const factors = {
+      dataStructure: requirements.structured ? 'SQL' : 'NoSQL',
+      scalability: requirements.scale > 1000000 ? 'NoSQL' : 'SQL',
+      consistency: requirements.strongConsistency ? 'SQL' : 'NoSQL',
+      transactions: requirements.complexTransactions ? 'SQL' : 'NoSQL',
+      queryComplexity: requirements.complexJoins ? 'SQL' : 'NoSQL',
+      readWriteRatio: requirements.readHeavy ? 'NoSQL' : 'SQL'
+    };
+    
+    // Count votes
+    const votes = Object.values(factors);
+    const sqlVotes = votes.filter(v => v === 'SQL').length;
+    const nosqlVotes = votes.filter(v => v === 'NoSQL').length;
+    
+    return {
+      recommendation: sqlVotes > nosqlVotes ? 'SQL' : 'NoSQL',
+      factors,
+      confidence: Math.abs(sqlVotes - nosqlVotes) / votes.length
+    };
+  }
+}
+
+// Example
+const selector = new DatabaseSelector();
+console.log(selector.selectDatabase({
+  structured: true,
+  scale: 100000,
+  strongConsistency: true,
+  complexTransactions: true,
+  complexJoins: true,
+  readHeavy: false
+}));
+// Recommendation: SQL
+```
+
+## Database Patterns
+
+### 1. Read Replicas
+
+```javascript
+class DatabaseWithReplicas {
+  constructor() {
+    this.primary = 'db-primary.example.com';
+    this.replicas = [
+      'db-replica-1.example.com',
+      'db-replica-2.example.com',
+      'db-replica-3.example.com'
+    ];
+    this.currentReplica = 0;
+  }
+  
+  // All writes go to primary
+  async write(query) {
+    return await this.executeQuery(this.primary, query);
+  }
+  
+  // Reads distributed across replicas
+  async read(query) {
+    const replica = this.replicas[this.currentReplica];
+    this.currentReplica = (this.currentReplica + 1) % this.replicas.length;
+    return await this.executeQuery(replica, query);
+  }
+  
+  async executeQuery(server, query) {
+    console.log(`Executing on ${server}: ${query}`);
+    // Execute query
+  }
+}
+```
+
+### 2. Database Sharding
+
+```javascript
+class ShardedDatabase {
+  constructor(shards) {
+    this.shards = shards;
+  }
+  
+  // Hash-based sharding
+  getShardByHash(key) {
+    const hash = this.hash(key);
+    const shardIndex = hash % this.shards.length;
+    return this.shards[shardIndex];
+  }
+  
+  // Range-based sharding
+  getShardByRange(key) {
+    // Example: User IDs 1-1M → Shard 1, 1M-2M → Shard 2
+    const userId = parseInt(key);
+    const shardIndex = Math.floor(userId / 1000000);
+    return this.shards[shardIndex];
+  }
+  
+  hash(key) {
+    let hash = 0;
+    for (let i = 0; i < key.length; i++) {
+      hash = ((hash << 5) - hash) + key.charCodeAt(i);
+      hash = hash & hash;
+    }
+    return Math.abs(hash);
+  }
+  
+  async query(key, query) {
+    const shard = this.getShardByHash(key);
+    return await shard.execute(query);
+  }
+}
+```
+
+### 3. Connection Pooling
+
+```javascript
+const { Pool } = require('pg');
+
+class ConnectionPool {
+  constructor(config) {
+    this.pool = new Pool({
+      host: config.host,
+      port: config.port,
+      database: config.database,
+      user: config.user,
+      password: config.password,
+      max: 20,              // Maximum pool size
+      min: 5,               // Minimum pool size
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 2000
+    });
+    
+    this.pool.on('error', (err) => {
+      console.error('Unexpected pool error:', err);
+    });
+  }
+  
+  async query(sql, params) {
+    const start = Date.now();
+    const client = await this.pool.connect();
+    
+    try {
+      const result = await client.query(sql, params);
+      const duration = Date.now() - start;
+      console.log(`Query executed in ${duration}ms`);
+      return result;
+    } finally {
+      client.release();
+    }
+  }
+  
+  async close() {
+    await this.pool.end();
+  }
+}
+```
+
+## Indexing
+
+```javascript
+// Create indexes for frequently queried columns
+const indexingExamples = {
+  singleColumn: `
+    CREATE INDEX idx_users_email ON users(email);
+  `,
+  
+  composite: `
+    CREATE INDEX idx_orders_user_date ON orders(user_id, order_date);
+  `,
+  
+  unique: `
+    CREATE UNIQUE INDEX idx_users_username ON users(username);
+  `,
+  
+  partial: `
+    CREATE INDEX idx_active_users ON users(email) WHERE status = 'active';
+  `,
+  
+  fullText: `
+    CREATE INDEX idx_posts_content ON posts USING GIN(to_tsvector('english', content));
+  `
+};
+
+// Index usage analysis
+class IndexAnalyzer {
+  async analyzeQuery(query) {
+    const explain = await db.query(`EXPLAIN ANALYZE ${query}`);
+    
+    return {
+      usesIndex: explain.includes('Index Scan'),
+      scanType: this.extractScanType(explain),
+      estimatedRows: this.extractEstimatedRows(explain),
+      actualRows: this.extractActualRows(explain),
+      executionTime: this.extractExecutionTime(explain)
+    };
+  }
+}
+```
+
+## Query Optimization
+
+```javascript
+class QueryOptimizer {
+  // ❌ Bad: N+1 query problem
+  async getUsersWithOrdersBad() {
+    const users = await db.query('SELECT * FROM users');
+    
+    for (const user of users) {
+      user.orders = await db.query(
+        'SELECT * FROM orders WHERE user_id = $1',
+        [user.id]
+      );
+    }
+    
+    return users;
+  }
+  
+  // ✅ Good: Single query with JOIN
+  async getUsersWithOrdersGood() {
+    return await db.query(`
+      SELECT 
+        u.*,
+        json_agg(o.*) as orders
+      FROM users u
+      LEFT JOIN orders o ON u.id = o.user_id
+      GROUP BY u.id
+    `);
+  }
+  
+  // Use EXPLAIN to analyze
+  async explainQuery(query) {
+    const result = await db.query(`EXPLAIN ANALYZE ${query}`);
+    console.log(result.rows);
+  }
+}
+```
+
+## Transactions
+
+```javascript
+class TransactionManager {
+  async transferMoney(fromAccount, toAccount, amount) {
+    const client = await pool.connect();
+    
+    try {
+      await client.query('BEGIN');
+      
+      // Debit from account
+      await client.query(
+        'UPDATE accounts SET balance = balance - $1 WHERE id = $2',
+        [amount, fromAccount]
+      );
+      
+      // Credit to account
+      await client.query(
+        'UPDATE accounts SET balance = balance + $1 WHERE id = $2',
+        [amount, toAccount]
+      );
+      
+      await client.query('COMMIT');
+      console.log('Transaction completed');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      console.error('Transaction failed:', error);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+}
+```
+
+## Database Normalization
+
+```javascript
+const normalizationLevels = {
+  '1NF': {
+    rule: 'Eliminate repeating groups',
+    example: {
+      before: { id: 1, name: 'John', phones: '123,456,789' },
+      after: [
+        { id: 1, name: 'John', phone: '123' },
+        { id: 1, name: 'John', phone: '456' },
+        { id: 1, name: 'John', phone: '789' }
+      ]
+    }
+  },
+  
+  '2NF': {
+    rule: 'Remove partial dependencies',
+    example: {
+      before: { orderId: 1, productId: 1, productName: 'Widget', qty: 5 },
+      after: {
+        orders: { orderId: 1, productId: 1, qty: 5 },
+        products: { productId: 1, productName: 'Widget' }
+      }
+    }
+  },
+  
+  '3NF': {
+    rule: 'Remove transitive dependencies',
+    example: {
+      before: { id: 1, city: 'NYC', state: 'NY', country: 'USA' },
+      after: {
+        users: { id: 1, cityId: 1 },
+        cities: { id: 1, name: 'NYC', stateId: 1 },
+        states: { id: 1, name: 'NY', countryId: 1 }
+      }
+    }
+  }
+};
+```
+
+## Denormalization for Performance
+
+```javascript
+// Trade storage for speed
+class DenormalizedSchema {
+  // ❌ Normalized (multiple JOINs)
+  async getUserPostsNormalized(userId) {
+    return await db.query(`
+      SELECT 
+        p.*,
+        u.name as author_name,
+        u.avatar as author_avatar,
+        COUNT(l.id) as like_count,
+        COUNT(c.id) as comment_count
+      FROM posts p
+      JOIN users u ON p.user_id = u.id
+      LEFT JOIN likes l ON p.id = l.post_id
+      LEFT JOIN comments c ON p.id = c.post_id
+      WHERE p.user_id = $1
+      GROUP BY p.id, u.name, u.avatar
+    `, [userId]);
+  }
+  
+  // ✅ Denormalized (single query)
+  async getUserPostsDenormalized(userId) {
+    return await db.query(`
+      SELECT 
+        id,
+        content,
+        author_name,
+        author_avatar,
+        like_count,
+        comment_count,
+        created_at
+      FROM posts_denormalized
+      WHERE user_id = $1
+    `, [userId]);
+  }
+  
+  // Update denormalized data
+  async updatePost(postId, updates) {
+    await db.query('BEGIN');
+    
+    try {
+      // Update normalized table
+      await db.query(
+        'UPDATE posts SET content = $1 WHERE id = $2',
+        [updates.content, postId]
+      );
+      
+      // Update denormalized table
+      await db.query(
+        'UPDATE posts_denormalized SET content = $1 WHERE id = $2',
+        [updates.content, postId]
+      );
+      
+      await db.query('COMMIT');
+    } catch (error) {
+      await db.query('ROLLBACK');
+      throw error;
+    }
+  }
+}
+```
+
+## .NET Database Access
+
+```csharp
+using Npgsql;
+using Dapper;
+
+public class DatabaseService
+{
+    private readonly string _connectionString;
+    
+    public DatabaseService(IConfiguration configuration)
+    {
+        _connectionString = configuration.GetConnectionString("DefaultConnection");
+    }
+    
+    // Dapper for simple queries
+    public async Task<IEnumerable<User>> GetUsers()
+    {
+        using var connection = new NpgsqlConnection(_connectionString);
+        return await connection.QueryAsync<User>("SELECT * FROM users");
+    }
+    
+    // Parameterized queries (prevent SQL injection)
+    public async Task<User> GetUserById(int id)
+    {
+        using var connection = new NpgsqlConnection(_connectionString);
+        return await connection.QueryFirstOrDefaultAsync<User>(
+            "SELECT * FROM users WHERE id = @Id",
+            new { Id = id }
+        );
+    }
+    
+    // Transactions
+    public async Task TransferMoney(int fromAccount, int toAccount, decimal amount)
+    {
+        using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync();
+        
+        using var transaction = await connection.BeginTransactionAsync();
+        
+        try
+        {
+            await connection.ExecuteAsync(
+                "UPDATE accounts SET balance = balance - @Amount WHERE id = @Id",
+                new { Amount = amount, Id = fromAccount },
+                transaction
+            );
+            
+            await connection.ExecuteAsync(
+                "UPDATE accounts SET balance = balance + @Amount WHERE id = @Id",
+                new { Amount = amount, Id = toAccount },
+                transaction
+            );
+            
+            await transaction.CommitAsync();
+        }
+        catch
+        {
+            await transaction.RollbackAsync();
+            throw;
+        }
+    }
+}
+```
+
+## Database Best Practices
+
+```javascript
+const databaseBestPractices = [
+  'Use connection pooling',
+  'Create indexes on frequently queried columns',
+  'Avoid N+1 query problems',
+  'Use parameterized queries (prevent SQL injection)',
+  'Implement proper transaction handling',
+  'Monitor slow queries',
+  'Use read replicas for read-heavy workloads',
+  'Implement database backups',
+  'Use appropriate data types',
+  'Normalize for data integrity, denormalize for performance',
+  'Set up proper foreign key constraints',
+  'Monitor database metrics (connections, CPU, memory)'
+];
+```
+
+## Interview Tips
+
+- **Explain SQL vs NoSQL**: When to use each
+- **Show scaling patterns**: Read replicas, sharding
+- **Demonstrate optimization**: Indexing, query optimization
+- **Discuss transactions**: ACID properties
+- **Mention normalization**: Trade-offs with denormalization
+- **Show connection pooling**: Resource management
+
+## Summary
+
+Choose SQL for structured data with complex relationships and strong consistency. Choose NoSQL for flexible schemas and horizontal scalability. Use read replicas to scale reads. Implement sharding for write scalability. Create indexes on frequently queried columns. Use connection pooling for efficient resource usage. Implement proper transaction handling for data integrity. Normalize for data consistency, denormalize for read performance. Monitor query performance and optimize slow queries. Essential for building scalable data layers.

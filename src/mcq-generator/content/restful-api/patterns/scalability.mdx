@@ -1,0 +1,472 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: API Scalability
+---
+
+# API Scalability
+
+## Scalability Types
+
+### Vertical Scaling (Scale Up)
+```
+┌─────────────┐
+│  4 CPU      │
+│  8 GB RAM   │  →  ┌─────────────┐
+│  100 GB SSD │     │  8 CPU      │
+└─────────────┘     │  16 GB RAM  │
+                    │  200 GB SSD │
+                    └─────────────┘
+```
+
+### Horizontal Scaling (Scale Out)
+```
+┌─────────┐          ┌─────────┐  ┌─────────┐  ┌─────────┐
+│ Server  │    →     │ Server  │  │ Server  │  │ Server  │
+└─────────┘          └─────────┘  └─────────┘  └─────────┘
+```
+
+## 1. Stateless Architecture
+
+```javascript
+// ❌ Bad - Stateful (stores session in memory)
+const sessions = new Map();
+
+app.post('/api/auth/login', (req, res) => {
+  const sessionId = generateSessionId();
+  sessions.set(sessionId, { userId: user.id });
+  res.json({ sessionId });
+});
+
+// ✅ Good - Stateless (JWT)
+app.post('/api/auth/login', (req, res) => {
+  const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET);
+  res.json({ token });
+});
+
+// ✅ Good - External session store (Redis)
+app.post('/api/auth/login', async (req, res) => {
+  const sessionId = generateSessionId();
+  await redis.setex(`session:${sessionId}`, 3600, JSON.stringify({ userId: user.id }));
+  res.json({ sessionId });
+});
+```
+
+## 2. Load Balancing
+
+```javascript
+// Nginx load balancer
+const nginxConfig = `
+upstream api_backend {
+    least_conn;  # or ip_hash, round_robin
+    
+    server api1.example.com:3000 weight=3;
+    server api2.example.com:3000 weight=2;
+    server api3.example.com:3000 weight=1;
+    
+    # Health checks
+    server api4.example.com:3000 backup;
+}
+
+server {
+    listen 80;
+    
+    location /api {
+        proxy_pass http://api_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        
+        # Timeouts
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 10s;
+        proxy_read_timeout 10s;
+    }
+}
+`;
+```
+
+## 3. Database Scaling
+
+### Read Replicas
+
+```javascript
+// Primary for writes
+const primaryDb = mongoose.createConnection(process.env.PRIMARY_DB_URI);
+
+// Replicas for reads
+const replicaDb = mongoose.createConnection(process.env.REPLICA_DB_URI);
+
+// Write operations
+app.post('/api/users', async (req, res) => {
+  const User = primaryDb.model('User');
+  const user = await User.create(req.body);
+  res.status(201).json(user);
+});
+
+// Read operations
+app.get('/api/users', async (req, res) => {
+  const User = replicaDb.model('User');
+  const users = await User.find();
+  res.json(users);
+});
+```
+
+### Database Sharding
+
+```javascript
+// Shard by user ID
+function getShardForUser(userId) {
+  const shardCount = 4;
+  const hash = hashCode(userId);
+  return hash % shardCount;
+}
+
+app.get('/api/users/:id', async (req, res) => {
+  const shardId = getShardForUser(req.params.id);
+  const db = getShardConnection(shardId);
+  
+  const user = await db.collection('users').findOne({ _id: req.params.id });
+  res.json(user);
+});
+```
+
+## 4. Caching Layers
+
+```javascript
+// Multi-level caching
+class CacheService {
+  constructor() {
+    this.memoryCache = new Map();
+    this.redisClient = redis.createClient();
+  }
+  
+  async get(key) {
+    // L1: Memory cache
+    if (this.memoryCache.has(key)) {
+      return this.memoryCache.get(key);
+    }
+    
+    // L2: Redis cache
+    const cached = await this.redisClient.get(key);
+    if (cached) {
+      const value = JSON.parse(cached);
+      this.memoryCache.set(key, value);
+      return value;
+    }
+    
+    return null;
+  }
+  
+  async set(key, value, ttl = 300) {
+    this.memoryCache.set(key, value);
+    await this.redisClient.setex(key, ttl, JSON.stringify(value));
+  }
+}
+
+const cache = new CacheService();
+
+app.get('/api/users/:id', async (req, res) => {
+  const cacheKey = `user:${req.params.id}`;
+  
+  // Try cache
+  let user = await cache.get(cacheKey);
+  
+  if (!user) {
+    // Load from database
+    user = await User.findById(req.params.id);
+    await cache.set(cacheKey, user);
+  }
+  
+  res.json(user);
+});
+```
+
+## 5. Message Queues
+
+```javascript
+const Bull = require('bull');
+
+// Create queues
+const emailQueue = new Bull('emails', {
+  redis: { host: 'localhost', port: 6379 }
+});
+
+const imageQueue = new Bull('images', {
+  redis: { host: 'localhost', port: 6379 }
+});
+
+// Offload heavy tasks
+app.post('/api/users', async (req, res) => {
+  const user = await User.create(req.body);
+  
+  // Queue email (don't wait)
+  await emailQueue.add({ userId: user.id, type: 'welcome' });
+  
+  // Queue image processing
+  if (req.body.avatar) {
+    await imageQueue.add({ userId: user.id, image: req.body.avatar });
+  }
+  
+  res.status(201).json(user);
+});
+
+// Process queues in workers
+emailQueue.process(5, async (job) => {
+  await sendEmail(job.data);
+});
+
+imageQueue.process(3, async (job) => {
+  await processImage(job.data);
+});
+```
+
+## 6. Microservices Architecture
+
+```javascript
+// API Gateway
+app.use('/api/users', createProxyMiddleware({
+  target: 'http://user-service:3001',
+  changeOrigin: true
+}));
+
+app.use('/api/orders', createProxyMiddleware({
+  target: 'http://order-service:3002',
+  changeOrigin: true
+}));
+
+app.use('/api/payments', createProxyMiddleware({
+  target: 'http://payment-service:3003',
+  changeOrigin: true
+}));
+
+// Each service scales independently
+// docker-compose.yml
+const dockerCompose = `
+version: '3'
+services:
+  user-service:
+    image: user-service
+    deploy:
+      replicas: 3
+  
+  order-service:
+    image: order-service
+    deploy:
+      replicas: 5
+  
+  payment-service:
+    image: payment-service
+    deploy:
+      replicas: 2
+`;
+```
+
+## 7. Auto-Scaling
+
+```yaml
+# Kubernetes Horizontal Pod Autoscaler
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: api-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: api-deployment
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+```
+
+## 8. CDN Integration
+
+```javascript
+// Serve static content from CDN
+app.get('/api/products/:id/images', async (req, res) => {
+  const product = await Product.findById(req.params.id);
+  
+  const images = product.images.map(img => ({
+    url: `https://cdn.example.com/products/${img.id}`,
+    thumbnail: `https://cdn.example.com/products/thumbs/${img.id}`
+  }));
+  
+  res.set('Cache-Control', 'public, max-age=86400');
+  res.json(images);
+});
+```
+
+## 9. Database Connection Pooling
+
+```javascript
+// MongoDB
+mongoose.connect(process.env.MONGODB_URI, {
+  maxPoolSize: 50,
+  minPoolSize: 10,
+  serverSelectionTimeoutMS: 5000
+});
+
+// PostgreSQL
+const { Pool } = require('pg');
+const pool = new Pool({
+  max: 50,
+  min: 10,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 2000
+});
+
+app.get('/api/users', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const result = await client.query('SELECT * FROM users');
+    res.json(result.rows);
+  } finally {
+    client.release();
+  }
+});
+```
+
+## 10. Rate Limiting per User Tier
+
+```javascript
+const getRateLimit = (user) => {
+  const limits = {
+    free: { windowMs: 15 * 60 * 1000, max: 100 },
+    basic: { windowMs: 15 * 60 * 1000, max: 1000 },
+    premium: { windowMs: 15 * 60 * 1000, max: 10000 }
+  };
+  
+  return limits[user.tier] || limits.free;
+};
+
+app.use('/api', authenticate, (req, res, next) => {
+  const limits = getRateLimit(req.user);
+  const limiter = rateLimit({
+    ...limits,
+    keyGenerator: (req) => req.user.id
+  });
+  
+  limiter(req, res, next);
+});
+```
+
+## 11. Circuit Breaker
+
+```javascript
+const CircuitBreaker = require('opossum');
+
+const options = {
+  timeout: 3000,
+  errorThresholdPercentage: 50,
+  resetTimeout: 30000
+};
+
+const callExternalService = async (url) => {
+  const response = await fetch(url);
+  return response.json();
+};
+
+const breaker = new CircuitBreaker(callExternalService, options);
+
+breaker.on('open', () => {
+  console.log('Circuit breaker opened');
+});
+
+app.get('/api/external-data', async (req, res) => {
+  try {
+    const data = await breaker.fire('https://external-api.com/data');
+    res.json(data);
+  } catch (error) {
+    res.status(503).json({ error: 'Service temporarily unavailable' });
+  }
+});
+```
+
+## 12. Monitoring and Metrics
+
+```javascript
+const prometheus = require('prom-client');
+
+const requestDuration = new prometheus.Histogram({
+  name: 'http_request_duration_seconds',
+  help: 'Duration of HTTP requests',
+  labelNames: ['method', 'route', 'status']
+});
+
+const activeConnections = new prometheus.Gauge({
+  name: 'active_connections',
+  help: 'Number of active connections'
+});
+
+app.use((req, res, next) => {
+  const start = Date.now();
+  activeConnections.inc();
+  
+  res.on('finish', () => {
+    const duration = (Date.now() - start) / 1000;
+    requestDuration.observe(
+      { method: req.method, route: req.route?.path, status: res.statusCode },
+      duration
+    );
+    activeConnections.dec();
+  });
+  
+  next();
+});
+```
+
+## Scalability Checklist
+
+```javascript
+const scalabilityChecklist = {
+  architecture: [
+    'Stateless design',
+    'Horizontal scaling',
+    'Load balancing',
+    'Microservices (if needed)'
+  ],
+  database: [
+    'Read replicas',
+    'Connection pooling',
+    'Sharding (if needed)',
+    'Caching'
+  ],
+  performance: [
+    'Multi-level caching',
+    'CDN for static assets',
+    'Message queues',
+    'Async processing'
+  ],
+  infrastructure: [
+    'Auto-scaling',
+    'Circuit breakers',
+    'Health checks',
+    'Monitoring'
+  ]
+};
+```
+
+## Interview Tips
+
+- **Explain scaling types**: Vertical vs horizontal
+- **Show stateless**: JWT, external sessions
+- **Demonstrate load balancing**: Nginx configuration
+- **Discuss caching**: Multi-level caching
+- **Mention queues**: Async processing
+- **Show auto-scaling**: Kubernetes HPA
+
+## Summary
+
+Scale REST APIs with stateless architecture, horizontal scaling, load balancing, database read replicas, multi-level caching, message queues, microservices, auto-scaling, CDN integration, connection pooling, rate limiting, circuit breakers, and monitoring. Design for horizontal scalability from the start. Use external session stores. Implement caching at multiple levels. Essential for high-traffic REST APIs.

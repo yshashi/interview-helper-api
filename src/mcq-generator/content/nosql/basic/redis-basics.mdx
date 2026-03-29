@@ -1,0 +1,485 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Redis Basics
+---
+
+# Redis Basics
+
+## What is Redis?
+
+**Redis** (Remote Dictionary Server) is an in-memory key-value data store used as a database, cache, message broker, and streaming engine.
+
+## Key Features
+
+**Speed:** Sub-millisecond response times make Redis one of the fastest databases available.
+
+**Rich Data Structures:** Supports strings, hashes, lists, sets, and sorted sets - far beyond simple key-value storage.
+
+**Persistence:** Optional disk persistence with RDB snapshots and AOF (Append-Only File) logs.
+
+**Replication:** Master-slave replication for high availability and read scaling.
+
+**Clustering:** Automatic sharding across multiple nodes for horizontal scaling.
+
+**Pub/Sub:** Built-in publish/subscribe messaging for real-time communication.
+
+## Installation and Setup
+
+**Install Redis:**
+- macOS: `brew install redis`
+- Ubuntu: `sudo apt-get install redis-server`
+- Windows: Download from Redis website or use WSL
+
+**Start Redis Server:** Run `redis-server` in terminal
+
+**Redis CLI:** Use `redis-cli` to interact with Redis directly
+
+**Node.js Clients:**
+- Standard client: `npm install redis`
+- Alternative (ioredis): `npm install ioredis`
+
+**.NET Client:** `Install-Package StackExchange.Redis`
+
+## Data Structures
+
+### 1. Strings
+
+Strings are the most basic Redis data type, storing text or binary data up to 512 MB.
+
+**Basic Operations:**
+- **SET/GET:** Store and retrieve values
+- **SETEX:** Set value with expiration time (useful for sessions)
+- **SETNX:** Set only if key doesn't exist (prevents overwrites)
+- **MSET/MGET:** Set or get multiple keys in one operation
+
+**Atomic Counters:**
+- **INCR/DECR:** Increment or decrement by 1
+- **INCRBY/DECRBY:** Increment or decrement by specified amount
+- Thread-safe operations perfect for counters, rate limiting
+
+**Example Use Cases:**
+- Caching API responses
+- Storing session tokens
+- Page view counters
+- Rate limiting counters
+
+```javascript
+// JavaScript Example
+const redis = require('redis');
+const client = redis.createClient();
+await client.connect();
+
+// Cache user data with 1-hour expiration
+await client.setEx('user:1:name', 3600, 'John Doe');
+const name = await client.get('user:1:name');
+
+// Atomic counter for page views
+await client.incr('page:home:views');
+```
+
+### 2. Hashes
+
+Hashes are like objects or dictionaries, storing field-value pairs under a single key. Perfect for representing objects.
+
+**Operations:**
+- **HSET/HGET:** Set or get individual fields
+- **HGETALL:** Retrieve all fields and values
+- **HMGET:** Get multiple fields at once
+- **HEXISTS:** Check if field exists
+- **HDEL:** Delete specific fields
+- **HINCRBY:** Increment numeric field values
+
+**Advantages:**
+- Memory efficient for objects
+- Atomic field updates
+- Retrieve only needed fields
+
+**Example Use Cases:**
+- User profiles
+- Product details
+- Shopping carts
+- Configuration settings
+
+```javascript
+// Store user as hash
+await client.hSet('user:1', {
+  name: 'John Doe',
+  email: 'john@example.com',
+  loginCount: '0'
+});
+
+// Increment login counter
+await client.hIncrBy('user:1', 'loginCount', 1);
+
+// Get specific fields
+const email = await client.hGet('user:1', 'email');
+```
+
+### 3. Lists
+
+Lists are ordered collections of strings, functioning like arrays or queues.
+
+**Operations:**
+- **LPUSH/RPUSH:** Add elements to left (head) or right (tail)
+- **LPOP/RPOP:** Remove and return elements from either end
+- **LRANGE:** Get elements in a range
+- **LLEN:** Get list length
+- **LTRIM:** Keep only specified range
+- **BLPOP/BRPOP:** Blocking pop - wait for elements
+
+**Use Cases:**
+- **Task Queues:** LPUSH to add jobs, RPOP to process
+- **Activity Feeds:** Recent activities with LTRIM to limit size
+- **Message Queues:** Producer-consumer patterns
+- **Undo/Redo:** Stack-like operations
+
+```javascript
+// Job queue implementation
+await client.lPush('queue:jobs', JSON.stringify({ task: 'send-email' }));
+
+// Worker processes jobs
+const job = await client.rPop('queue:jobs');
+
+// Blocking pop waits for new jobs
+const nextJob = await client.blPop('queue:jobs', 5); // Wait 5 seconds
+```
+
+### 4. Sets
+
+Sets are unordered collections of unique strings. No duplicates allowed.
+
+**Operations:**
+- **SADD:** Add members (duplicates ignored)
+- **SMEMBERS:** Get all members
+- **SISMEMBER:** Check if member exists
+- **SREM:** Remove members
+- **SCARD:** Get set size
+- **SRANDMEMBER:** Get random member
+
+**Set Operations:**
+- **SUNION:** Combine multiple sets
+- **SINTER:** Find common members
+- **SDIFF:** Find difference between sets
+
+**Use Cases:**
+- **Tags:** User tags, product categories
+- **Unique Visitors:** Track unique IPs
+- **Relationships:** Followers, friends
+- **Filtering:** Find common interests
+
+```javascript
+// User tags
+await client.sAdd('tags:user:1', ['premium', 'verified']);
+
+// Check if user has tag
+const isPremium = await client.sIsMember('tags:user:1', 'premium');
+
+// Find users with common tags
+const commonTags = await client.sInter(['tags:user:1', 'tags:user:2']);
+```
+
+### 5. Sorted Sets
+
+Sorted sets combine sets with scores, keeping members ordered by score. Each member is unique with an associated score.
+
+**Operations:**
+- **ZADD:** Add members with scores
+- **ZRANGE:** Get members by rank (position)
+- **ZRANGEBYSCORE:** Get members by score range
+- **ZRANK:** Get member's rank (0-based)
+- **ZSCORE:** Get member's score
+- **ZINCRBY:** Increment member's score
+- **ZREM:** Remove members
+
+**Use Cases:**
+- **Leaderboards:** Game scores, rankings
+- **Priority Queues:** Tasks with priorities
+- **Time-series Data:** Events with timestamps
+- **Rate Limiting:** Sliding window counters
+
+```javascript
+// Gaming leaderboard
+await client.zAdd('leaderboard', [
+  { score: 100, value: 'player1' },
+  { score: 200, value: 'player2' }
+]);
+
+// Get top 10 players
+const top10 = await client.zRange('leaderboard', 0, 9, { REV: true });
+
+// Update player score
+await client.zIncrBy('leaderboard', 50, 'player1');
+```
+
+## Common Use Cases
+
+### 1. Caching
+
+Redis excels at caching due to its in-memory speed. Implement cache-aside pattern: check cache first, load from database on miss, then cache the result.
+
+**Strategy:**
+- Check Redis cache before database query
+- Set expiration time to prevent stale data
+- Use JSON serialization for complex objects
+- Cache frequently accessed data
+
+**Benefits:**
+- Reduces database load by 80-90%
+- Sub-millisecond response times
+- Automatic expiration with TTL
+
+```javascript
+// Cache-aside pattern
+async function getUserWithCache(userId) {
+  const cacheKey = `user:${userId}`;
+  
+  // Try cache first
+  let user = await client.get(cacheKey);
+  if (user) return JSON.parse(user);
+  
+  // Load from database on cache miss
+  user = await db.users.findById(userId);
+  
+  // Cache for 5 minutes
+  await client.setEx(cacheKey, 300, JSON.stringify(user));
+  return user;
+}
+```
+
+### 2. Session Storage
+
+Store user sessions in Redis for fast access and automatic expiration. Use hashes to store session data efficiently.
+
+**Advantages:**
+- Fast session lookup (< 1ms)
+- Automatic cleanup with TTL
+- Shared sessions across servers
+- Easy session invalidation
+
+**Implementation:**
+- Use hash for structured session data
+- Set expiration for security
+- Extend TTL on activity
+
+```javascript
+async function createSession(userId, sessionData) {
+  const sessionId = generateSessionId();
+  const key = `session:${sessionId}`;
+  
+  await client.hSet(key, {
+    userId,
+    ...sessionData,
+    createdAt: Date.now()
+  });
+  
+  // Expire after 24 hours
+  await client.expire(key, 86400);
+  return sessionId;
+}
+```
+
+### 3. Rate Limiting
+
+Implement sliding window rate limiting using sorted sets. Track requests with timestamps as scores.
+
+**Sliding Window Algorithm:**
+1. Remove expired requests (older than window)
+2. Count requests in current window
+3. Allow or reject based on limit
+4. Add current request to window
+
+**Benefits:**
+- Accurate rate limiting
+- No boundary issues
+- Automatic cleanup
+- Distributed-safe
+
+```javascript
+async function checkRateLimit(userId, limit = 100, window = 60) {
+  const key = `ratelimit:${userId}`;
+  const now = Date.now();
+  const windowStart = now - (window * 1000);
+  
+  // Remove old entries and count current requests
+  await client.zRemRangeByScore(key, 0, windowStart);
+  const count = await client.zCard(key);
+  
+  if (count >= limit) {
+    return { allowed: false, remaining: 0 };
+  }
+  
+  // Add current request
+  await client.zAdd(key, [{ score: now, value: `${now}` }]);
+  await client.expire(key, window);
+  
+  return { allowed: true, remaining: limit - count - 1 };
+}
+```
+
+### 4. Pub/Sub Messaging
+
+Redis provides publish/subscribe messaging for real-time communication between services.
+
+**How It Works:**
+- Publishers send messages to channels
+- Subscribers receive messages from channels
+- Messages are fire-and-forget (not persisted)
+- Multiple subscribers can listen to same channel
+
+**Use Cases:**
+- Real-time notifications
+- Chat applications
+- Live updates
+- Event broadcasting
+
+**Note:** Messages are not stored. Use streams for persistent messaging.
+
+```javascript
+// Subscriber
+const subscriber = client.duplicate();
+await subscriber.connect();
+
+await subscriber.subscribe('notifications', (message) => {
+  const data = JSON.parse(message);
+  console.log('Received:', data);
+});
+
+// Publisher
+await client.publish('notifications', JSON.stringify({
+  type: 'new-order',
+  orderId: '123'
+}));
+```
+
+## .NET with Redis
+
+```csharp
+using StackExchange.Redis;
+
+public class RedisService
+{
+    private readonly IDatabase _db;
+    
+    public RedisService()
+    {
+        var redis = ConnectionMultiplexer.Connect("localhost");
+        _db = redis.GetDatabase();
+    }
+    
+    // String operations
+    public async Task SetAsync(string key, string value, TimeSpan? expiry = null)
+    {
+        await _db.StringSetAsync(key, value, expiry);
+    }
+    
+    public async Task<string> GetAsync(string key)
+    {
+        return await _db.StringGetAsync(key);
+    }
+    
+    // Hash operations
+    public async Task SetHashAsync(string key, Dictionary<string, string> values)
+    {
+        var entries = values.Select(kv => 
+            new HashEntry(kv.Key, kv.Value)).ToArray();
+        await _db.HashSetAsync(key, entries);
+    }
+    
+    public async Task<Dictionary<string, string>> GetHashAsync(string key)
+    {
+        var entries = await _db.HashGetAllAsync(key);
+        return entries.ToDictionary(
+            e => e.Name.ToString(),
+            e => e.Value.ToString()
+        );
+    }
+    
+    // List operations
+    public async Task PushAsync(string key, string value)
+    {
+        await _db.ListRightPushAsync(key, value);
+    }
+    
+    public async Task<string> PopAsync(string key)
+    {
+        return await _db.ListLeftPopAsync(key);
+    }
+}
+```
+
+## Persistence
+
+Redis offers two persistence mechanisms to save in-memory data to disk.
+
+### RDB (Redis Database Backup)
+
+**Snapshot-based persistence:**
+- Creates point-in-time snapshots
+- Compact single file
+- Fast restart times
+- Good for backups
+
+**Configuration:**
+- `save 900 1` - Save if 1 key changed in 15 minutes
+- `save 300 10` - Save if 10 keys changed in 5 minutes
+- `save 60 10000` - Save if 10,000 keys changed in 1 minute
+
+**Trade-off:** May lose data between snapshots
+
+### AOF (Append-Only File)
+
+**Log-based persistence:**
+- Logs every write operation
+- More durable than RDB
+- Larger file size
+- Slower restart
+
+**Sync Options:**
+- `always` - Sync every write (slowest, safest)
+- `everysec` - Sync every second (balanced)
+- `no` - Let OS decide (fastest, least safe)
+
+**Best Practice:** Use both RDB and AOF for maximum durability
+
+## Transactions
+
+Redis transactions execute multiple commands atomically using MULTI/EXEC.
+
+**Characteristics:**
+- All commands executed sequentially
+- No other commands interleaved
+- All or nothing execution
+- No rollback on errors
+
+**How It Works:**
+1. **MULTI** - Start transaction
+2. Queue commands
+3. **EXEC** - Execute all commands atomically
+
+**Use Cases:**
+- Update multiple keys together
+- Increment counters atomically
+- Ensure data consistency
+
+```javascript
+const multi = client.multi();
+
+multi.set('key1', 'value1');
+multi.set('key2', 'value2');
+multi.incr('counter');
+
+const results = await multi.exec();
+```
+
+## Interview Tips
+
+- **Explain Redis**: In-memory key-value store
+- **Show data structures**: Strings, hashes, lists, sets, sorted sets
+- **Demonstrate use cases**: Caching, sessions, rate limiting
+- **Discuss persistence**: RDB and AOF
+- **Mention pub/sub**: Messaging patterns
+- **Show examples**: Node.js, .NET implementations
+
+## Summary
+
+Redis is an in-memory key-value store offering sub-millisecond performance. Supports multiple data structures: strings, hashes, lists, sets, and sorted sets. Common use cases include caching, session storage, rate limiting, and pub/sub messaging. Provides optional persistence with RDB snapshots and AOF logs. Supports replication and clustering for high availability. Essential for high-performance applications requiring fast data access.

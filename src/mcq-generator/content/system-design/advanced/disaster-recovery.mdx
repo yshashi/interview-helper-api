@@ -1,0 +1,493 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Disaster Recovery
+---
+
+# Disaster Recovery
+
+## What is Disaster Recovery?
+
+Disaster recovery (DR) is the process of restoring systems and data after a catastrophic event. It ensures business continuity when primary systems fail due to natural disasters, hardware failures, cyber attacks, or human error.
+
+## Key Concepts
+
+**Recovery Time Objective (RTO):** Maximum acceptable downtime
+- Example: System must be restored within 4 hours
+
+**Recovery Point Objective (RPO):** Maximum acceptable data loss
+- Example: Can lose up to 1 hour of data
+
+**Business Continuity:** Maintaining operations during and after disaster
+
+**Failover:** Switching to backup system when primary fails
+
+**Failback:** Returning to primary system after recovery
+
+## RTO and RPO Trade-offs
+
+**Lower RTO/RPO = Higher Cost**
+
+**RTO Examples:**
+- **Minutes:** Hot standby, active-active replication (expensive)
+- **Hours:** Warm standby, regular backups (moderate cost)
+- **Days:** Cold standby, archived backups (low cost)
+
+**RPO Examples:**
+- **Zero data loss:** Synchronous replication (expensive, high latency)
+- **Minutes:** Asynchronous replication, frequent backups
+- **Hours:** Periodic backups (low cost, acceptable for some data)
+
+## DR Strategies
+
+### 1. Backup and Restore (Lowest Cost, Highest RTO/RPO)
+
+**Approach:** Regular backups stored off-site, restore when needed
+
+**RTO:** Days
+**RPO:** Hours to days
+
+**Use Case:** Non-critical systems, acceptable downtime
+
+```javascript
+// Automated backup script
+const { exec } = require('child_process');
+const AWS = require('aws-sdk');
+const s3 = new AWS.S3();
+
+async function backupDatabase() {
+  const timestamp = new Date().toISOString().replace(/:/g, '-');
+  const filename = `backup-${timestamp}.sql`;
+  
+  // Create backup
+  await new Promise((resolve, reject) => {
+    exec(`mongodump --uri="${process.env.DB_URI}" --archive=${filename}`, 
+      (error) => error ? reject(error) : resolve()
+    );
+  });
+  
+  // Upload to S3
+  const fileContent = fs.readFileSync(filename);
+  await s3.putObject({
+    Bucket: 'my-backups',
+    Key: `database/${filename}`,
+    Body: fileContent
+  }).promise();
+  
+  // Delete local file
+  fs.unlinkSync(filename);
+  
+  console.log(`Backup completed: ${filename}`);
+}
+
+// Schedule daily backups
+const cron = require('node-cron');
+cron.schedule('0 2 * * *', backupDatabase); // 2 AM daily
+```
+
+### 2. Pilot Light (Low Cost, Moderate RTO/RPO)
+
+**Approach:** Minimal version of environment always running, scale up when needed
+
+**RTO:** Hours
+**RPO:** Minutes to hours
+
+**Components Always Running:**
+- Database with replication
+- Core application servers (minimal capacity)
+
+**Components Scaled During DR:**
+- Additional application servers
+- Load balancers
+- Caching layers
+
+**Use Case:** Cost-sensitive with moderate recovery requirements
+
+### 3. Warm Standby (Moderate Cost, Low RTO/RPO)
+
+**Approach:** Scaled-down but fully functional environment always running
+
+**RTO:** Minutes to hours
+**RPO:** Minutes
+
+**Setup:**
+- Secondary region with reduced capacity
+- Continuous data replication
+- Ready to scale up quickly
+
+**Use Case:** Important systems requiring quick recovery
+
+```javascript
+// Warm standby with automatic failover
+class WarmStandbyManager {
+  constructor() {
+    this.primaryRegion = 'us-east-1';
+    this.drRegion = 'us-west-2';
+    this.healthCheckInterval = 30000; // 30 seconds
+  }
+  
+  async startHealthChecks() {
+    setInterval(async () => {
+      const primaryHealthy = await this.checkRegionHealth(this.primaryRegion);
+      
+      if (!primaryHealthy) {
+        console.log('Primary region unhealthy, initiating failover');
+        await this.failover();
+      }
+    }, this.healthCheckInterval);
+  }
+  
+  async checkRegionHealth(region) {
+    try {
+      const response = await fetch(`https://${region}.myapp.com/health`, {
+        timeout: 5000
+      });
+      return response.ok;
+    } catch (error) {
+      return false;
+    }
+  }
+  
+  async failover() {
+    // Update DNS to point to DR region
+    await this.updateDNS(this.drRegion);
+    
+    // Scale up DR region
+    await this.scaleUpRegion(this.drRegion);
+    
+    // Notify team
+    await this.sendAlert('Failover to DR region initiated');
+  }
+  
+  async updateDNS(region) {
+    const route53 = new AWS.Route53();
+    await route53.changeResourceRecordSets({
+      HostedZoneId: process.env.HOSTED_ZONE_ID,
+      ChangeBatch: {
+        Changes: [{
+          Action: 'UPSERT',
+          ResourceRecordSet: {
+            Name: 'myapp.com',
+            Type: 'A',
+            TTL: 60,
+            ResourceRecords: [{ Value: this.getRegionIP(region) }]
+          }
+        }]
+      }
+    }).promise();
+  }
+}
+```
+
+### 4. Hot Standby / Multi-Site (Highest Cost, Lowest RTO/RPO)
+
+**Approach:** Full production environment in multiple regions, active-active
+
+**RTO:** Seconds to minutes
+**RPO:** Near-zero
+
+**Setup:**
+- Multiple active regions
+- Real-time data replication
+- Global load balancing
+- Automatic failover
+
+**Use Case:** Mission-critical systems, zero tolerance for downtime
+
+```javascript
+// Multi-region active-active setup
+class MultiRegionSetup {
+  constructor() {
+    this.regions = [
+      { name: 'us-east-1', endpoint: 'https://us-east.myapp.com', weight: 70 },
+      { name: 'eu-west-1', endpoint: 'https://eu-west.myapp.com', weight: 30 }
+    ];
+  }
+  
+  // Global load balancing
+  async routeRequest(userLocation) {
+    const healthyRegions = await this.getHealthyRegions();
+    
+    if (healthyRegions.length === 0) {
+      throw new Error('No healthy regions available');
+    }
+    
+    // Route to nearest healthy region
+    const nearest = this.findNearestRegion(userLocation, healthyRegions);
+    return nearest.endpoint;
+  }
+  
+  async getHealthyRegions() {
+    const healthChecks = await Promise.all(
+      this.regions.map(async region => ({
+        ...region,
+        healthy: await this.checkHealth(region.endpoint)
+      }))
+    );
+    
+    return healthChecks.filter(r => r.healthy);
+  }
+  
+  findNearestRegion(userLocation, regions) {
+    // Calculate distance and return nearest
+    return regions.reduce((nearest, region) => {
+      const distance = this.calculateDistance(userLocation, region.name);
+      return distance < nearest.distance 
+        ? { ...region, distance }
+        : nearest;
+    }, { distance: Infinity });
+  }
+}
+```
+
+## Data Replication for DR
+
+### Synchronous Replication
+
+**Approach:** Write to primary and DR simultaneously
+
+**Pros:** Zero data loss (RPO = 0)
+**Cons:** Higher latency, both sites must be available
+
+**Use Case:** Financial transactions, critical data
+
+### Asynchronous Replication
+
+**Approach:** Write to primary, replicate to DR in background
+
+**Pros:** Lower latency, primary not blocked
+**Cons:** Potential data loss (RPO > 0)
+
+**Use Case:** Most applications
+
+```javascript
+// Database replication setup (MongoDB)
+const replicaSetConfig = {
+  _id: 'myReplicaSet',
+  members: [
+    // Primary region
+    { _id: 0, host: 'primary-1.us-east-1:27017', priority: 2 },
+    { _id: 1, host: 'primary-2.us-east-1:27017', priority: 1 },
+    
+    // DR region (lower priority)
+    { _id: 2, host: 'dr-1.us-west-2:27017', priority: 0 },
+    { _id: 3, host: 'dr-2.us-west-2:27017', priority: 0 }
+  ]
+};
+
+// Initialize replica set
+rs.initiate(replicaSetConfig);
+
+// Write concern for synchronous replication
+await db.collection('transactions').insertOne(document, {
+  writeConcern: { w: 'majority', j: true }
+});
+```
+
+## DR Testing
+
+**Why Test:** Ensure DR plan works when needed
+
+**Testing Types:**
+
+**Tabletop Exercise:** Walk through DR plan with team
+
+**Simulation:** Test failover without affecting production
+
+**Full DR Drill:** Complete failover to DR site
+
+**Frequency:** Quarterly or semi-annually
+
+```javascript
+class DRTestManager {
+  async runDRTest() {
+    console.log('Starting DR test...');
+    
+    const testResults = {
+      startTime: new Date(),
+      steps: []
+    };
+    
+    try {
+      // Step 1: Verify backups
+      testResults.steps.push(await this.verifyBackups());
+      
+      // Step 2: Test failover
+      testResults.steps.push(await this.testFailover());
+      
+      // Step 3: Verify data integrity
+      testResults.steps.push(await this.verifyDataIntegrity());
+      
+      // Step 4: Test application functionality
+      testResults.steps.push(await this.testApplications());
+      
+      // Step 5: Measure RTO/RPO
+      testResults.steps.push(await this.measureRTORPO());
+      
+      testResults.endTime = new Date();
+      testResults.success = testResults.steps.every(s => s.passed);
+      
+      await this.generateReport(testResults);
+      
+    } catch (error) {
+      testResults.error = error.message;
+      testResults.success = false;
+    }
+    
+    return testResults;
+  }
+  
+  async verifyBackups() {
+    const latestBackup = await this.getLatestBackup();
+    const age = Date.now() - latestBackup.timestamp;
+    
+    return {
+      step: 'Verify Backups',
+      passed: age < 86400000, // Less than 24 hours old
+      details: `Latest backup: ${new Date(latestBackup.timestamp)}`
+    };
+  }
+}
+```
+
+## DR Runbook
+
+**Purpose:** Step-by-step instructions for disaster recovery
+
+**Contents:**
+
+1. **Detection:** How to identify disaster
+2. **Assessment:** Evaluate impact and decide on DR
+3. **Notification:** Who to notify (team, stakeholders, customers)
+4. **Failover Steps:** Detailed technical steps
+5. **Verification:** How to verify DR success
+6. **Communication:** Status updates to stakeholders
+7. **Failback:** Return to primary when ready
+
+```markdown
+# DR Runbook
+
+## 1. Detection
+- Monitor alerts for region failure
+- Check health dashboards
+- Verify with multiple sources
+
+## 2. Assessment
+- Estimated downtime: ___
+- Data loss: ___
+- Business impact: ___
+- Decision: Proceed with DR? Yes/No
+
+## 3. Notification
+- [ ] Notify on-call team
+- [ ] Alert management
+- [ ] Update status page
+- [ ] Inform customers (if needed)
+
+## 4. Failover Steps
+1. Update DNS to DR region
+   ```bash
+   aws route53 change-resource-record-sets --hosted-zone-id Z123 ...
+   ```
+2. Scale up DR environment
+   ```bash
+   aws autoscaling set-desired-capacity --auto-scaling-group-name dr-asg --desired-capacity 10
+   ```
+3. Verify database replication
+4. Test critical functionality
+5. Monitor metrics
+
+## 5. Verification
+- [ ] Application responding
+- [ ] Database accessible
+- [ ] Critical features working
+- [ ] Performance acceptable
+
+## 6. Communication
+- Post-incident report
+- Root cause analysis
+- Lessons learned
+```
+
+## .NET DR Implementation
+
+```csharp
+public class DisasterRecoveryService
+{
+    private readonly IConfiguration _config;
+    private readonly IHealthCheckService _healthCheck;
+    
+    public async Task<bool> InitiateFailover()
+    {
+        var drRegion = _config["DR:Region"];
+        
+        // 1. Verify DR region health
+        var drHealthy = await _healthCheck.CheckRegionAsync(drRegion);
+        if (!drHealthy)
+        {
+            throw new Exception("DR region is not healthy");
+        }
+        
+        // 2. Update DNS
+        await UpdateDNSAsync(drRegion);
+        
+        // 3. Scale up DR environment
+        await ScaleUpDRAsync(drRegion);
+        
+        // 4. Verify failover
+        await Task.Delay(TimeSpan.FromMinutes(2)); // Allow DNS propagation
+        var success = await VerifyFailoverAsync(drRegion);
+        
+        // 5. Notify team
+        await SendNotificationAsync($"Failover to {drRegion} completed");
+        
+        return success;
+    }
+    
+    public async Task<BackupResult> CreateBackup()
+    {
+        var timestamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss");
+        var backupName = $"backup-{timestamp}";
+        
+        // Create database backup
+        await _dbContext.Database.ExecuteSqlRawAsync(
+            $"BACKUP DATABASE MyDatabase TO DISK = '{backupName}.bak'"
+        );
+        
+        // Upload to cloud storage
+        await UploadToCloudStorageAsync(backupName);
+        
+        return new BackupResult
+        {
+            Name = backupName,
+            Timestamp = DateTime.UtcNow,
+            Size = GetBackupSize(backupName)
+        };
+    }
+}
+```
+
+## Best Practices
+
+- **Define clear RTO/RPO** - Based on business requirements
+- **Automate DR processes** - Reduce human error
+- **Test regularly** - Quarterly DR drills
+- **Document everything** - Detailed runbooks
+- **Monitor replication lag** - Ensure data sync
+- **Use multiple regions** - Geographic redundancy
+- **Implement health checks** - Automatic failover
+- **Train team** - Everyone knows their role
+- **Review and update** - DR plan evolves with system
+- **Consider costs** - Balance requirements and budget
+
+## Interview Tips
+
+- **Explain RTO/RPO**: Downtime vs data loss tolerance
+- **Show DR strategies**: Backup, pilot light, warm/hot standby
+- **Demonstrate replication**: Synchronous vs asynchronous
+- **Discuss testing**: Why and how to test DR
+- **Mention automation**: Reduce manual steps
+- **Show cost trade-offs**: Higher availability = higher cost
+
+## Summary
+
+Disaster recovery ensures business continuity after catastrophic events. Define RTO (maximum downtime) and RPO (maximum data loss) based on business needs. DR strategies: backup/restore (cheapest, highest RTO/RPO), pilot light (minimal always-on), warm standby (scaled-down active), hot standby/multi-site (full active-active, lowest RTO/RPO). Use synchronous replication for zero data loss or asynchronous for lower latency. Test DR regularly with drills. Automate failover processes. Document detailed runbooks. Monitor replication lag. Balance cost with requirements. Essential for mission-critical systems requiring high availability.

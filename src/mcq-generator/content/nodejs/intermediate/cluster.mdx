@@ -1,0 +1,151 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Cluster Module in Node.js
+---
+
+# Cluster Module in Node.js
+
+## What is Cluster Module?
+
+The **cluster** module allows you to create child processes (workers) that share the same server port, enabling you to take advantage of multi-core systems.
+
+## Basic Usage
+
+```javascript
+const cluster = require('cluster');
+const http = require('http');
+const numCPUs = require('os').cpus().length;
+
+if (cluster.isMaster) {
+  console.log(`Master ${process.pid} is running`);
+  
+  // Fork workers
+  for (let i = 0; i < numCPUs; i++) {
+    cluster.fork();
+  }
+  
+  cluster.on('exit', (worker, code, signal) => {
+    console.log(`Worker ${worker.process.pid} died`);
+    cluster.fork(); // Replace dead worker
+  });
+} else {
+  // Workers share TCP connection
+  http.createServer((req, res) => {
+    res.writeHead(200);
+    res.end('Hello World\n');
+  }).listen(8000);
+  
+  console.log(`Worker ${process.pid} started`);
+}
+```
+
+## Load Balancing
+
+Node.js automatically distributes incoming connections across workers using round-robin.
+
+```javascript
+const cluster = require('cluster');
+const express = require('express');
+const os = require('os');
+
+if (cluster.isMaster) {
+  const numWorkers = os.cpus().length;
+  
+  for (let i = 0; i < numWorkers; i++) {
+    cluster.fork();
+  }
+} else {
+  const app = express();
+  
+  app.get('/', (req, res) => {
+    res.send(`Handled by worker ${process.pid}`);
+  });
+  
+  app.listen(3000);
+}
+```
+
+## Worker Communication
+
+```javascript
+if (cluster.isMaster) {
+  const worker = cluster.fork();
+  
+  // Send message to worker
+  worker.send('Hello Worker');
+  
+  // Receive message from worker
+  worker.on('message', (msg) => {
+    console.log('Master received:', msg);
+  });
+} else {
+  // Receive message from master
+  process.on('message', (msg) => {
+    console.log('Worker received:', msg);
+    
+    // Send message to master
+    process.send('Hello Master');
+  });
+}
+```
+
+## Graceful Shutdown
+
+```javascript
+if (cluster.isMaster) {
+  const workers = [];
+  
+  for (let i = 0; i < numCPUs; i++) {
+    workers.push(cluster.fork());
+  }
+  
+  process.on('SIGTERM', () => {
+    workers.forEach(worker => {
+      worker.send('shutdown');
+      worker.disconnect();
+    });
+  });
+} else {
+  const server = http.createServer((req, res) => {
+    res.end('OK');
+  });
+  
+  process.on('message', (msg) => {
+    if (msg === 'shutdown') {
+      server.close(() => {
+        process.exit(0);
+      });
+    }
+  });
+  
+  server.listen(3000);
+}
+```
+
+## PM2 Alternative
+
+```bash
+# Install PM2
+npm install -g pm2
+
+# Start app with cluster mode
+pm2 start app.js -i max
+
+# Monitor
+pm2 monit
+
+# Reload without downtime
+pm2 reload app
+```
+
+## Interview Tips
+
+- **Explain cluster**: Multi-core utilization
+- **Show master-worker**: Process architecture
+- **Demonstrate load balancing**: Automatic distribution
+- **Discuss communication**: Message passing
+- **Mention PM2**: Production cluster management
+
+## Summary
+
+Cluster module creates worker processes to utilize multi-core CPUs. Master process manages workers, distributes load using round-robin. Workers share server ports. Use for CPU-intensive applications or high-traffic servers.

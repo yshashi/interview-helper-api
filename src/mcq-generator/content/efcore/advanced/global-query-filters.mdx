@@ -1,0 +1,127 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Global Query Filters in EF Core
+---
+
+# Global Query Filters in EF Core
+
+## What are Global Query Filters?
+
+**Global query filters** are LINQ predicates automatically applied to all queries for an entity type. They're useful for implementing soft delete, multi-tenancy, and other cross-cutting concerns.
+
+## Basic Usage
+
+```csharp
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    modelBuilder.Entity<Product>()
+        .HasQueryFilter(p => !p.IsDeleted);
+}
+
+// All queries automatically filter deleted products
+var products = context.Products.ToList(); // WHERE IsDeleted = 0
+```
+
+## Soft Delete Implementation
+
+```csharp
+public class Product
+{
+    public int Id { get; set; }
+    public string Name { get; set; }
+    public bool IsDeleted { get; set; }
+    public DateTime? DeletedAt { get; set; }
+}
+
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    modelBuilder.Entity<Product>()
+        .HasQueryFilter(p => !p.IsDeleted);
+}
+
+// Soft delete
+var product = await context.Products.FindAsync(id);
+product.IsDeleted = true;
+product.DeletedAt = DateTime.UtcNow;
+await context.SaveChangesAsync();
+```
+
+## Multi-Tenancy
+
+```csharp
+public interface ITenantEntity
+{
+    int TenantId { get; set; }
+}
+
+public class Product : ITenantEntity
+{
+    public int Id { get; set; }
+    public string Name { get; set; }
+    public int TenantId { get; set; }
+}
+
+public class ApplicationDbContext : DbContext
+{
+    private readonly int _currentTenantId;
+    
+    public ApplicationDbContext(DbContextOptions options, ITenantProvider tenantProvider)
+        : base(options)
+    {
+        _currentTenantId = tenantProvider.GetCurrentTenantId();
+    }
+    
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<Product>()
+            .HasQueryFilter(p => p.TenantId == _currentTenantId);
+    }
+}
+```
+
+## Ignoring Query Filters
+
+```csharp
+// Ignore all query filters
+var allProducts = context.Products
+    .IgnoreQueryFilters()
+    .ToList();
+
+// Include deleted products
+var deletedProducts = context.Products
+    .IgnoreQueryFilters()
+    .Where(p => p.IsDeleted)
+    .ToList();
+```
+
+## Multiple Filters
+
+```csharp
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    modelBuilder.Entity<Product>()
+        .HasQueryFilter(p => !p.IsDeleted && p.TenantId == _currentTenantId);
+}
+```
+
+## Navigation Property Filters
+
+```csharp
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    modelBuilder.Entity<Blog>()
+        .HasQueryFilter(b => !b.IsDeleted);
+    
+    modelBuilder.Entity<Post>()
+        .HasQueryFilter(p => !p.IsDeleted);
+}
+
+// Both filters applied
+var blogs = context.Blogs
+    .Include(b => b.Posts)
+    .ToList();
+```
+
+## Summary
+
+Global query filters in EF Core automatically apply LINQ predicates to all queries for an entity. They're ideal for soft delete, multi-tenancy, and security. Use IgnoreQueryFilters() to bypass them when needed.

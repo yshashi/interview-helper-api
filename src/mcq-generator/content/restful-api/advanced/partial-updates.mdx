@@ -1,0 +1,382 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Partial Updates (PATCH)
+---
+
+# Partial Updates (PATCH)
+
+## PUT vs PATCH
+
+| Aspect | PUT | PATCH |
+|--------|-----|-------|
+| **Purpose** | Replace entire resource | Update part of resource |
+| **Idempotent** | Yes | Not guaranteed |
+| **Request Body** | Complete resource | Partial changes |
+| **Missing Fields** | Set to null/default | Unchanged |
+
+## Basic PATCH Implementation
+
+```javascript
+// Node.js/Express
+app.patch('/api/users/:id', async (req, res) => {
+  const updates = req.body;
+  
+  const user = await User.findByIdAndUpdate(
+    req.params.id,
+    { $set: updates },
+    { new: true, runValidators: true }
+  );
+  
+  if (!user) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+  
+  res.json(user);
+});
+
+// Usage
+PATCH /api/users/123
+{
+  "email": "newemail@example.com"
+}
+// Only email is updated, other fields unchanged
+```
+
+```csharp
+// .NET
+[HttpPatch("{id}")]
+public async Task<IActionResult> PatchUser(int id, [FromBody] JsonPatchDocument<User> patchDoc)
+{
+    var user = await _context.Users.FindAsync(id);
+    if (user == null) return NotFound();
+    
+    patchDoc.ApplyTo(user, ModelState);
+    
+    if (!ModelState.IsValid)
+    {
+        return BadRequest(ModelState);
+    }
+    
+    await _context.SaveChangesAsync();
+    return NoContent();
+}
+
+// Usage
+PATCH /api/users/123
+[
+  { "op": "replace", "path": "/email", "value": "newemail@example.com" }
+]
+```
+
+## JSON Patch (RFC 6902)
+
+```json
+// Add operation
+[
+  { "op": "add", "path": "/tags/-", "value": "new-tag" }
+]
+
+// Remove operation
+[
+  { "op": "remove", "path": "/tags/0" }
+]
+
+// Replace operation
+[
+  { "op": "replace", "path": "/email", "value": "new@example.com" }
+]
+
+// Move operation
+[
+  { "op": "move", "from": "/tags/0", "path": "/tags/1" }
+]
+
+// Copy operation
+[
+  { "op": "copy", "from": "/email", "path": "/backupEmail" }
+]
+
+// Test operation (conditional)
+[
+  { "op": "test", "path": "/version", "value": 1 },
+  { "op": "replace", "path": "/name", "value": "New Name" }
+]
+```
+
+## JSON Patch Implementation
+
+```javascript
+const jsonpatch = require('fast-json-patch');
+
+app.patch('/api/users/:id', async (req, res) => {
+  const user = await User.findById(req.params.id);
+  if (!user) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+  
+  try {
+    const userObj = user.toObject();
+    const patchedUser = jsonpatch.applyPatch(userObj, req.body).newDocument;
+    
+    Object.assign(user, patchedUser);
+    await user.save();
+    
+    res.json(user);
+  } catch (error) {
+    res.status(400).json({ error: 'Invalid patch document' });
+  }
+});
+```
+
+## JSON Merge Patch (RFC 7386)
+
+```json
+// Simpler format - just send changes
+{
+  "email": "new@example.com",
+  "name": "New Name"
+}
+
+// To delete a field, set to null
+{
+  "middleName": null
+}
+```
+
+```javascript
+// Merge patch implementation
+app.patch('/api/users/:id', async (req, res) => {
+  const user = await User.findById(req.params.id);
+  if (!user) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+  
+  // Merge changes
+  Object.keys(req.body).forEach(key => {
+    if (req.body[key] === null) {
+      user[key] = undefined; // Delete field
+    } else {
+      user[key] = req.body[key]; // Update field
+    }
+  });
+  
+  await user.save();
+  res.json(user);
+});
+```
+
+## Validation for Partial Updates
+
+```javascript
+const Joi = require('joi');
+
+// Schema for partial updates (all fields optional)
+const patchUserSchema = Joi.object({
+  name: Joi.string().min(2).max(100),
+  email: Joi.string().email(),
+  age: Joi.number().min(0).max(150),
+  city: Joi.string()
+}).min(1); // At least one field required
+
+app.patch('/api/users/:id', async (req, res) => {
+  const { error } = patchUserSchema.validate(req.body);
+  if (error) {
+    return res.status(400).json({ error: error.details[0].message });
+  }
+  
+  const user = await User.findByIdAndUpdate(
+    req.params.id,
+    { $set: req.body },
+    { new: true, runValidators: true }
+  );
+  
+  res.json(user);
+});
+```
+
+```csharp
+// .NET validation
+public class PatchUserDto
+{
+    [EmailAddress]
+    public string? Email { get; set; }
+    
+    [StringLength(100, MinimumLength = 2)]
+    public string? Name { get; set; }
+    
+    [Range(0, 150)]
+    public int? Age { get; set; }
+}
+
+[HttpPatch("{id}")]
+public async Task<IActionResult> PatchUser(int id, PatchUserDto dto)
+{
+    if (!ModelState.IsValid)
+    {
+        return BadRequest(ModelState);
+    }
+    
+    var user = await _context.Users.FindAsync(id);
+    if (user == null) return NotFound();
+    
+    if (dto.Email != null) user.Email = dto.Email;
+    if (dto.Name != null) user.Name = dto.Name;
+    if (dto.Age.HasValue) user.Age = dto.Age.Value;
+    
+    await _context.SaveChangesAsync();
+    return Ok(user);
+}
+```
+
+## Nested Object Updates
+
+```javascript
+// Update nested fields
+PATCH /api/users/123
+{
+  "address.city": "New York",
+  "address.zipCode": "10001"
+}
+
+app.patch('/api/users/:id', async (req, res) => {
+  const updates = {};
+  
+  Object.keys(req.body).forEach(key => {
+    updates[key] = req.body[key];
+  });
+  
+  const user = await User.findByIdAndUpdate(
+    req.params.id,
+    { $set: updates },
+    { new: true }
+  );
+  
+  res.json(user);
+});
+```
+
+## Array Updates
+
+```javascript
+// Add to array
+PATCH /api/users/123
+{
+  "tags": { "$push": "new-tag" }
+}
+
+// Remove from array
+PATCH /api/users/123
+{
+  "tags": { "$pull": "old-tag" }
+}
+
+// Update array element
+PATCH /api/users/123
+{
+  "tags.0": "updated-tag"
+}
+
+app.patch('/api/users/:id', async (req, res) => {
+  const user = await User.findById(req.params.id);
+  
+  if (req.body.tags?.$push) {
+    user.tags.push(req.body.tags.$push);
+  } else if (req.body.tags?.$pull) {
+    user.tags = user.tags.filter(tag => tag !== req.body.tags.$pull);
+  }
+  
+  await user.save();
+  res.json(user);
+});
+```
+
+## Optimistic Locking
+
+```javascript
+// Version-based updates
+app.patch('/api/users/:id', async (req, res) => {
+  const { version, ...updates } = req.body;
+  
+  const user = await User.findOneAndUpdate(
+    { _id: req.params.id, version },
+    {
+      $set: updates,
+      $inc: { version: 1 }
+    },
+    { new: true }
+  );
+  
+  if (!user) {
+    return res.status(409).json({
+      error: 'Conflict: Resource was modified by another request'
+    });
+  }
+  
+  res.json(user);
+});
+
+// Usage
+PATCH /api/users/123
+{
+  "version": 5,
+  "email": "new@example.com"
+}
+```
+
+## Angular Implementation
+
+```typescript
+@Injectable()
+export class UserService {
+  // Simple merge patch
+  patchUser(id: string, updates: Partial<User>): Observable<User> {
+    return this.http.patch<User>(`${this.apiUrl}/users/${id}`, updates);
+  }
+  
+  // JSON Patch
+  jsonPatchUser(id: string, operations: JsonPatchOperation[]): Observable<User> {
+    return this.http.patch<User>(
+      `${this.apiUrl}/users/${id}`,
+      operations,
+      {
+        headers: { 'Content-Type': 'application/json-patch+json' }
+      }
+    );
+  }
+}
+
+interface JsonPatchOperation {
+  op: 'add' | 'remove' | 'replace' | 'move' | 'copy' | 'test';
+  path: string;
+  value?: any;
+  from?: string;
+}
+
+// Component usage
+this.userService.patchUser('123', {
+  email: 'new@example.com'
+}).subscribe(user => {
+  console.log('User updated:', user);
+});
+
+// JSON Patch usage
+this.userService.jsonPatchUser('123', [
+  { op: 'replace', path: '/email', value: 'new@example.com' },
+  { op: 'add', path: '/tags/-', value: 'premium' }
+]).subscribe(user => {
+  console.log('User patched:', user);
+});
+```
+
+## Interview Tips
+
+- **Explain PATCH**: Partial resource updates
+- **Show vs PUT**: Replace vs update
+- **Demonstrate formats**: JSON Patch, Merge Patch
+- **Discuss validation**: Partial schemas
+- **Mention optimistic locking**: Version control
+- **Show implementation**: Node.js, .NET, Angular
+
+## Summary
+
+PATCH updates part of a resource without replacing entire entity. Use JSON Patch (RFC 6902) for complex operations or JSON Merge Patch (RFC 7386) for simple updates. Validate partial updates with optional field schemas. Handle nested objects and arrays. Implement optimistic locking with versions. More efficient than PUT for large resources. Essential for flexible REST APIs.

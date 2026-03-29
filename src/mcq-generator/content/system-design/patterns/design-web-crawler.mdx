@@ -1,0 +1,656 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Design Web Crawler
+---
+
+# Design Web Crawler
+
+## Requirements
+
+### Functional Requirements
+
+- Crawl web pages starting from seed URLs
+- Extract and follow links
+- Store page content
+- Respect robots.txt
+- Handle duplicate URLs
+- Prioritize important pages
+
+### Non-Functional Requirements
+
+**Scale:**
+- Crawl 1 billion pages per month
+- 400 pages per second average
+- Store HTML content and metadata
+
+**Performance:**
+- Efficient URL deduplication
+- Parallel crawling
+- Politeness (don't overload servers)
+
+**Reliability:**
+- Handle failures gracefully
+- Resume from interruptions
+- Avoid infinite loops
+
+## Capacity Estimation
+
+**Storage:**
+- Average page: 100 KB
+- 1 billion pages × 100 KB = 100 TB
+- With metadata and indexes: ~150 TB
+
+**Bandwidth:**
+- 400 pages/second × 100 KB = 40 MB/second
+
+**URL Frontier:**
+- Billions of URLs to crawl
+- Need efficient queue management
+
+## High-Level Design
+
+```
+┌──────────────┐
+│ Seed URLs    │
+└──────┬───────┘
+       │
+┌──────▼───────────────┐
+│ URL Frontier         │
+│ (Priority Queue)     │
+└──────┬───────────────┘
+       │
+┌──────▼───────────────┐
+│ Fetcher Pool         │
+│ (Multiple Workers)   │
+└──────┬───────────────┘
+       │
+┌──────▼───────────────┐
+│ DNS Resolver         │
+│ (with cache)         │
+└──────┬───────────────┘
+       │
+┌──────▼───────────────┐
+│ HTML Downloader      │
+└──────┬───────────────┘
+       │
+       ├────────┬────────┐
+       │        │        │
+┌──────▼───┐ ┌─▼──────┐ ┌▼────────┐
+│ Content  │ │ Link   │ │ URL     │
+│ Storage  │ │Extract │ │ Dedup   │
+└──────────┘ └─┬──────┘ └─────────┘
+               │
+          ┌────▼────┐
+          │ URL     │
+          │Frontier │
+          └─────────┘
+```
+
+## Core Components
+
+### 1. URL Frontier
+
+**Purpose:** Manage URLs to be crawled with prioritization
+
+```javascript
+class URLFrontier {
+  constructor(redis) {
+    this.redis = redis;
+    this.queues = {
+      high: 'frontier:high',
+      medium: 'frontier:medium',
+      low: 'frontier:low'
+    };
+  }
+  
+  async addURL(url, priority = 'medium') {
+    // Check if already crawled
+    const crawled = await this.redis.sismember('crawled_urls', url);
+    if (crawled) return false;
+    
+    // Check if already in frontier
+    const inFrontier = await this.redis.sismember('frontier_urls', url);
+    if (inFrontier) return false;
+    
+    // Add to frontier
+    await this.redis.sadd('frontier_urls', url);
+    await this.redis.lpush(this.queues[priority], url);
+    
+    return true;
+  }
+  
+  async getNextURL() {
+    // Try high priority first
+    for (const priority of ['high', 'medium', 'low']) {
+      const url = await this.redis.rpop(this.queues[priority]);
+      if (url) {
+        await this.redis.srem('frontier_urls', url);
+        return { url, priority };
+      }
+    }
+    
+    return null;
+  }
+  
+  async markCrawled(url) {
+    await this.redis.sadd('crawled_urls', url);
+  }
+  
+  async getStats() {
+    const high = await this.redis.llen(this.queues.high);
+    const medium = await this.redis.llen(this.queues.medium);
+    const low = await this.redis.llen(this.queues.low);
+    const crawled = await this.redis.scard('crawled_urls');
+    
+    return { high, medium, low, crawled, total: high + medium + low };
+  }
+}
+```
+
+### 2. Fetcher with Politeness
+
+**Purpose:** Download pages while respecting rate limits
+
+```javascript
+const axios = require('axios');
+const robotsParser = require('robots-parser');
+
+class Fetcher {
+  constructor() {
+    this.hostQueues = new Map(); // hostname -> queue
+    this.robotsCache = new Map();
+    this.dnsCache = new Map();
+    this.minDelay = 1000; // 1 second between requests to same host
+  }
+  
+  async fetch(url) {
+    const urlObj = new URL(url);
+    const hostname = urlObj.hostname;
+    
+    // Check robots.txt
+    const allowed = await this.isAllowedByRobots(url);
+    if (!allowed) {
+      return { error: 'Blocked by robots.txt' };
+    }
+    
+    // Enforce politeness delay
+    await this.waitForHostDelay(hostname);
+    
+    try {
+      // Fetch page
+      const response = await axios.get(url, {
+        timeout: 10000,
+        maxRedirects: 5,
+        headers: {
+          'User-Agent': 'MyWebCrawler/1.0 (+http://example.com/bot)'
+        }
+      });
+      
+      // Update last fetch time for host
+      this.updateHostTimestamp(hostname);
+      
+      return {
+        url,
+        statusCode: response.status,
+        headers: response.headers,
+        content: response.data,
+        contentType: response.headers['content-type']
+      };
+      
+    } catch (error) {
+      return {
+        url,
+        error: error.message,
+        statusCode: error.response?.status
+      };
+    }
+  }
+  
+  async isAllowedByRobots(url) {
+    const urlObj = new URL(url);
+    const robotsUrl = `${urlObj.protocol}//${urlObj.hostname}/robots.txt`;
+    
+    // Check cache
+    if (this.robotsCache.has(robotsUrl)) {
+      const robots = this.robotsCache.get(robotsUrl);
+      return robots.isAllowed(url, 'MyWebCrawler');
+    }
+    
+    try {
+      // Fetch robots.txt
+      const response = await axios.get(robotsUrl, { timeout: 5000 });
+      const robots = robotsParser(robotsUrl, response.data);
+      
+      // Cache for 24 hours
+      this.robotsCache.set(robotsUrl, robots);
+      setTimeout(() => this.robotsCache.delete(robotsUrl), 86400000);
+      
+      return robots.isAllowed(url, 'MyWebCrawler');
+    } catch (error) {
+      // If robots.txt not found, allow crawling
+      return true;
+    }
+  }
+  
+  async waitForHostDelay(hostname) {
+    const lastFetch = this.hostQueues.get(hostname) || 0;
+    const timeSinceLastFetch = Date.now() - lastFetch;
+    
+    if (timeSinceLastFetch < this.minDelay) {
+      await new Promise(resolve => 
+        setTimeout(resolve, this.minDelay - timeSinceLastFetch)
+      );
+    }
+  }
+  
+  updateHostTimestamp(hostname) {
+    this.hostQueues.set(hostname, Date.now());
+  }
+}
+```
+
+### 3. Link Extractor
+
+**Purpose:** Extract and normalize URLs from HTML
+
+```javascript
+const cheerio = require('cheerio');
+
+class LinkExtractor {
+  extractLinks(html, baseUrl) {
+    const $ = cheerio.load(html);
+    const links = new Set();
+    
+    $('a[href]').each((i, elem) => {
+      const href = $(elem).attr('href');
+      
+      try {
+        // Resolve relative URLs
+        const absoluteUrl = new URL(href, baseUrl).href;
+        
+        // Normalize URL
+        const normalized = this.normalizeURL(absoluteUrl);
+        
+        if (this.isValidURL(normalized)) {
+          links.add(normalized);
+        }
+      } catch (error) {
+        // Invalid URL, skip
+      }
+    });
+    
+    return Array.from(links);
+  }
+  
+  normalizeURL(url) {
+    const urlObj = new URL(url);
+    
+    // Remove fragment
+    urlObj.hash = '';
+    
+    // Sort query parameters
+    urlObj.searchParams.sort();
+    
+    // Remove trailing slash
+    if (urlObj.pathname.endsWith('/') && urlObj.pathname.length > 1) {
+      urlObj.pathname = urlObj.pathname.slice(0, -1);
+    }
+    
+    // Lowercase hostname
+    urlObj.hostname = urlObj.hostname.toLowerCase();
+    
+    return urlObj.href;
+  }
+  
+  isValidURL(url) {
+    const urlObj = new URL(url);
+    
+    // Only HTTP/HTTPS
+    if (!['http:', 'https:'].includes(urlObj.protocol)) {
+      return false;
+    }
+    
+    // Skip common non-HTML files
+    const skipExtensions = ['.pdf', '.jpg', '.png', '.gif', '.zip', '.exe'];
+    if (skipExtensions.some(ext => urlObj.pathname.endsWith(ext))) {
+      return false;
+    }
+    
+    return true;
+  }
+}
+```
+
+### 4. Content Storage
+
+**Purpose:** Store crawled pages efficiently
+
+```javascript
+class ContentStorage {
+  constructor(s3, db) {
+    this.s3 = s3;
+    this.db = db;
+  }
+  
+  async storePage(page) {
+    const { url, content, statusCode, headers, fetchedAt } = page;
+    
+    // Generate content hash for deduplication
+    const contentHash = this.hashContent(content);
+    
+    // Check if content already stored
+    const existing = await this.db.query(
+      'SELECT id FROM pages WHERE content_hash = ?',
+      [contentHash]
+    );
+    
+    let contentKey;
+    if (existing.length === 0) {
+      // Store content in S3
+      contentKey = `pages/${contentHash.substring(0, 2)}/${contentHash}`;
+      await this.s3.putObject({
+        Bucket: 'crawler-content',
+        Key: contentKey,
+        Body: content,
+        ContentType: headers['content-type']
+      }).promise();
+    } else {
+      contentKey = existing[0].content_key;
+    }
+    
+    // Store metadata in database
+    await this.db.query(
+      `INSERT INTO pages (url, content_hash, content_key, status_code, fetched_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      [url, contentHash, contentKey, statusCode, fetchedAt]
+    );
+    
+    return { contentHash, contentKey };
+  }
+  
+  hashContent(content) {
+    const crypto = require('crypto');
+    return crypto.createHash('sha256').update(content).digest('hex');
+  }
+}
+```
+
+### 5. Crawler Worker
+
+**Purpose:** Orchestrate crawling process
+
+```javascript
+class CrawlerWorker {
+  constructor(frontier, fetcher, linkExtractor, storage) {
+    this.frontier = frontier;
+    this.fetcher = fetcher;
+    this.linkExtractor = linkExtractor;
+    this.storage = storage;
+    this.running = false;
+  }
+  
+  async start() {
+    this.running = true;
+    
+    while (this.running) {
+      try {
+        // Get next URL
+        const next = await this.frontier.getNextURL();
+        
+        if (!next) {
+          // No URLs in frontier, wait
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          continue;
+        }
+        
+        await this.crawlURL(next.url);
+        
+      } catch (error) {
+        console.error('Crawler error:', error);
+      }
+    }
+  }
+  
+  async crawlURL(url) {
+    console.log(`Crawling: ${url}`);
+    
+    // Fetch page
+    const page = await this.fetcher.fetch(url);
+    
+    if (page.error) {
+      console.error(`Failed to fetch ${url}:`, page.error);
+      await this.frontier.markCrawled(url);
+      return;
+    }
+    
+    // Store content
+    await this.storage.storePage({
+      url,
+      content: page.content,
+      statusCode: page.statusCode,
+      headers: page.headers,
+      fetchedAt: new Date()
+    });
+    
+    // Extract links
+    if (page.contentType?.includes('text/html')) {
+      const links = this.linkExtractor.extractLinks(page.content, url);
+      
+      // Calculate priority based on depth and PageRank
+      const priority = this.calculatePriority(url, links);
+      
+      // Add links to frontier
+      for (const link of links) {
+        await this.frontier.addURL(link, priority);
+      }
+    }
+    
+    // Mark as crawled
+    await this.frontier.markCrawled(url);
+  }
+  
+  calculatePriority(sourceUrl, links) {
+    // Simple heuristic: shorter URLs = higher priority
+    const depth = sourceUrl.split('/').length;
+    
+    if (depth <= 3) return 'high';
+    if (depth <= 5) return 'medium';
+    return 'low';
+  }
+  
+  stop() {
+    this.running = false;
+  }
+}
+```
+
+## URL Deduplication
+
+```javascript
+class URLDeduplicator {
+  constructor(redis) {
+    this.redis = redis;
+    this.bloomFilter = new BloomFilter(redis);
+  }
+  
+  async isDuplicate(url) {
+    // Quick check with Bloom filter
+    const maybeExists = await this.bloomFilter.contains(url);
+    if (!maybeExists) {
+      await this.bloomFilter.add(url);
+      return false;
+    }
+    
+    // Confirm with Redis set
+    const exists = await this.redis.sismember('seen_urls', url);
+    if (exists) {
+      return true;
+    }
+    
+    // Add to set
+    await this.redis.sadd('seen_urls', url);
+    return false;
+  }
+}
+
+class BloomFilter {
+  constructor(redis) {
+    this.redis = redis;
+    this.key = 'bloom_filter';
+    this.size = 10000000; // 10 million bits
+    this.hashCount = 3;
+  }
+  
+  async add(item) {
+    const hashes = this.getHashes(item);
+    
+    for (const hash of hashes) {
+      await this.redis.setbit(this.key, hash, 1);
+    }
+  }
+  
+  async contains(item) {
+    const hashes = this.getHashes(item);
+    
+    for (const hash of hashes) {
+      const bit = await this.redis.getbit(this.key, hash);
+      if (bit === 0) {
+        return false;
+      }
+    }
+    
+    return true; // Probably exists
+  }
+  
+  getHashes(item) {
+    const hashes = [];
+    const crypto = require('crypto');
+    
+    for (let i = 0; i < this.hashCount; i++) {
+      const hash = crypto.createHash('md5')
+        .update(item + i)
+        .digest('hex');
+      
+      hashes.push(parseInt(hash.substring(0, 8), 16) % this.size);
+    }
+    
+    return hashes;
+  }
+}
+```
+
+## Distributed Crawling
+
+```javascript
+class DistributedCrawler {
+  constructor(workerId, totalWorkers) {
+    this.workerId = workerId;
+    this.totalWorkers = totalWorkers;
+  }
+  
+  shouldCrawl(url) {
+    // Consistent hashing to assign URLs to workers
+    const hash = this.hashURL(url);
+    const assignedWorker = hash % this.totalWorkers;
+    
+    return assignedWorker === this.workerId;
+  }
+  
+  hashURL(url) {
+    const crypto = require('crypto');
+    const hash = crypto.createHash('md5').update(url).digest('hex');
+    return parseInt(hash.substring(0, 8), 16);
+  }
+}
+```
+
+## Database Schema
+
+```sql
+CREATE TABLE pages (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  url VARCHAR(2048) UNIQUE NOT NULL,
+  content_hash VARCHAR(64) NOT NULL,
+  content_key VARCHAR(255) NOT NULL,
+  status_code INT,
+  fetched_at TIMESTAMP,
+  INDEX idx_content_hash (content_hash),
+  INDEX idx_fetched_at (fetched_at)
+);
+
+CREATE TABLE links (
+  source_url VARCHAR(2048) NOT NULL,
+  target_url VARCHAR(2048) NOT NULL,
+  anchor_text TEXT,
+  discovered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_source (source_url),
+  INDEX idx_target (target_url)
+);
+```
+
+## .NET Implementation
+
+```csharp
+public class WebCrawler
+{
+    private readonly IUrlFrontier _frontier;
+    private readonly IFetcher _fetcher;
+    private readonly ILinkExtractor _linkExtractor;
+    private readonly IContentStorage _storage;
+    
+    public async Task CrawlAsync(string url)
+    {
+        // Fetch page
+        var page = await _fetcher.FetchAsync(url);
+        
+        if (page.Error != null)
+        {
+            return;
+        }
+        
+        // Store content
+        await _storage.StorePageAsync(page);
+        
+        // Extract links
+        if (page.ContentType?.Contains("text/html") == true)
+        {
+            var links = _linkExtractor.ExtractLinks(page.Content, url);
+            
+            foreach (var link in links)
+            {
+                await _frontier.AddUrlAsync(link);
+            }
+        }
+        
+        // Mark as crawled
+        await _frontier.MarkCrawledAsync(url);
+    }
+}
+```
+
+## Best Practices
+
+- **Respect robots.txt** - Check before crawling
+- **Implement politeness** - Delay between requests to same host
+- **Use Bloom filters** - Efficient URL deduplication
+- **Prioritize URLs** - Important pages first
+- **Handle failures** - Retry with exponential backoff
+- **Normalize URLs** - Avoid duplicate crawling
+- **Distributed crawling** - Consistent hashing for work distribution
+- **Monitor progress** - Track crawl rate and errors
+- **Store efficiently** - Deduplicate content by hash
+- **DNS caching** - Reduce DNS lookups
+
+## Interview Tips
+
+- **Start with requirements** - Scale, politeness, deduplication
+- **Design URL frontier** - Priority queue with deduplication
+- **Show politeness** - Rate limiting per host
+- **Implement deduplication** - Bloom filter + Redis set
+- **Extract links** - Parse HTML, normalize URLs
+- **Discuss distributed** - Consistent hashing for workers
+- **Address challenges** - Infinite loops, duplicate content
+
+## Summary
+
+Web crawler fetches pages starting from seed URLs. Use URL frontier with priority queue for crawl order. Implement politeness with per-host rate limiting (1 second delay). Respect robots.txt before crawling. Deduplicate URLs with Bloom filter and Redis set. Extract and normalize links from HTML. Store content in S3 with metadata in database. Deduplicate content by hash. Distribute work across workers using consistent hashing. Handle 400 pages/second. Store 100 TB of content. Essential pattern for search engines and data collection systems.

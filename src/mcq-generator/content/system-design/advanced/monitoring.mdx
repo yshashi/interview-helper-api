@@ -1,0 +1,521 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Monitoring & Observability
+---
+
+# Monitoring & Observability
+
+## Monitoring vs Observability
+
+**Monitoring:** Collecting and analyzing predefined metrics to detect known issues
+
+**Observability:** Understanding system internal state from external outputs, discovering unknown issues
+
+**The Three Pillars of Observability:**
+1. **Metrics:** Numerical measurements over time
+2. **Logs:** Discrete events with context
+3. **Traces:** Request flow through distributed system
+
+## Metrics
+
+**Definition:** Numerical data points measured over time
+
+**Types:**
+
+**Counters:** Values that only increase
+- Total requests
+- Error count
+- Bytes transferred
+
+**Gauges:** Values that can go up or down
+- Current memory usage
+- Active connections
+- Queue depth
+
+**Histograms:** Distribution of values
+- Request latency percentiles
+- Response size distribution
+
+**Key Metrics to Monitor:**
+
+**Application Metrics:**
+- Request rate (requests per second)
+- Error rate (errors per second)
+- Latency (P50, P95, P99)
+- Saturation (resource utilization)
+
+**Infrastructure Metrics:**
+- CPU usage
+- Memory usage
+- Disk I/O
+- Network bandwidth
+
+**Business Metrics:**
+- User signups
+- Revenue
+- Conversion rate
+- Active users
+
+```javascript
+const prometheus = require('prom-client');
+
+// Create metrics
+const httpRequestDuration = new prometheus.Histogram({
+  name: 'http_request_duration_seconds',
+  help: 'Duration of HTTP requests in seconds',
+  labelNames: ['method', 'route', 'status_code'],
+  buckets: [0.1, 0.5, 1, 2, 5]
+});
+
+const httpRequestTotal = new prometheus.Counter({
+  name: 'http_requests_total',
+  help: 'Total number of HTTP requests',
+  labelNames: ['method', 'route', 'status_code']
+});
+
+const activeConnections = new prometheus.Gauge({
+  name: 'active_connections',
+  help: 'Number of active connections'
+});
+
+// Middleware to collect metrics
+app.use((req, res, next) => {
+  const start = Date.now();
+  
+  res.on('finish', () => {
+    const duration = (Date.now() - start) / 1000;
+    
+    httpRequestDuration
+      .labels(req.method, req.route?.path || req.path, res.statusCode)
+      .observe(duration);
+    
+    httpRequestTotal
+      .labels(req.method, req.route?.path || req.path, res.statusCode)
+      .inc();
+  });
+  
+  next();
+});
+
+// Expose metrics endpoint
+app.get('/metrics', async (req, res) => {
+  res.set('Content-Type', prometheus.register.contentType);
+  res.end(await prometheus.register.metrics());
+});
+```
+
+## Logging
+
+**Purpose:** Record discrete events for debugging and audit
+
+**Log Levels:**
+- **ERROR:** Application errors requiring attention
+- **WARN:** Potential issues, degraded functionality
+- **INFO:** Important business events
+- **DEBUG:** Detailed diagnostic information
+- **TRACE:** Very detailed, usually disabled in production
+
+**Structured Logging:**
+
+```javascript
+const winston = require('winston');
+
+const logger = winston.createLogger({
+  level: 'info',
+  format: winston.format.combine(
+    winston.format.timestamp(),
+    winston.format.errors({ stack: true }),
+    winston.format.json()
+  ),
+  defaultMeta: { service: 'user-service' },
+  transports: [
+    new winston.transports.File({ filename: 'error.log', level: 'error' }),
+    new winston.transports.File({ filename: 'combined.log' })
+  ]
+});
+
+// Log with context
+logger.info('User logged in', {
+  userId: '123',
+  ipAddress: '192.168.1.1',
+  userAgent: 'Mozilla/5.0...',
+  timestamp: new Date().toISOString()
+});
+
+logger.error('Payment failed', {
+  userId: '123',
+  orderId: '456',
+  amount: 99.99,
+  errorCode: 'INSUFFICIENT_FUNDS',
+  stack: error.stack
+});
+```
+
+**Best Practices:**
+- Use structured logging (JSON)
+- Include correlation IDs
+- Log at appropriate levels
+- Don't log sensitive data (passwords, credit cards)
+- Use consistent field names
+- Include context (user ID, request ID)
+
+## Distributed Tracing
+
+**Purpose:** Track requests across multiple services
+
+**Concepts:**
+
+**Trace:** Complete journey of a request
+**Span:** Single operation within a trace
+**Context Propagation:** Passing trace ID between services
+
+```javascript
+const opentelemetry = require('@opentelemetry/api');
+const { NodeTracerProvider } = require('@opentelemetry/sdk-trace-node');
+const { JaegerExporter } = require('@opentelemetry/exporter-jaeger');
+
+// Setup tracing
+const provider = new NodeTracerProvider();
+const exporter = new JaegerExporter({
+  endpoint: 'http://localhost:14268/api/traces'
+});
+
+provider.addSpanProcessor(
+  new opentelemetry.SimpleSpanProcessor(exporter)
+);
+
+provider.register();
+
+const tracer = opentelemetry.trace.getTracer('user-service');
+
+// Create spans
+app.get('/api/users/:id', async (req, res) => {
+  const span = tracer.startSpan('get_user');
+  
+  try {
+    span.setAttribute('user.id', req.params.id);
+    
+    // Database query span
+    const dbSpan = tracer.startSpan('database_query', {
+      parent: span
+    });
+    const user = await db.users.findById(req.params.id);
+    dbSpan.end();
+    
+    // External API call span
+    const apiSpan = tracer.startSpan('fetch_user_orders', {
+      parent: span
+    });
+    const orders = await fetch(`http://order-service/api/orders?userId=${req.params.id}`);
+    apiSpan.end();
+    
+    span.setStatus({ code: opentelemetry.SpanStatusCode.OK });
+    res.json({ user, orders });
+  } catch (error) {
+    span.setStatus({
+      code: opentelemetry.SpanStatusCode.ERROR,
+      message: error.message
+    });
+    span.recordException(error);
+    res.status(500).json({ error: error.message });
+  } finally {
+    span.end();
+  }
+});
+```
+
+## Health Checks
+
+**Purpose:** Verify service is operational
+
+**Types:**
+
+**Liveness:** Is service alive?
+- Returns 200 if process running
+- Kubernetes restarts pod if fails
+
+**Readiness:** Is service ready to accept traffic?
+- Checks dependencies (database, cache)
+- Kubernetes removes from load balancer if fails
+
+```javascript
+// Liveness check (simple)
+app.get('/health/live', (req, res) => {
+  res.status(200).json({ status: 'alive' });
+});
+
+// Readiness check (comprehensive)
+app.get('/health/ready', async (req, res) => {
+  const checks = {
+    database: false,
+    cache: false,
+    externalAPI: false
+  };
+  
+  try {
+    // Check database
+    await db.ping();
+    checks.database = true;
+    
+    // Check cache
+    await cache.ping();
+    checks.cache = true;
+    
+    // Check external API
+    const response = await fetch('http://external-api/health', {
+      timeout: 2000
+    });
+    checks.externalAPI = response.ok;
+    
+    const allHealthy = Object.values(checks).every(v => v);
+    
+    res.status(allHealthy ? 200 : 503).json({
+      status: allHealthy ? 'ready' : 'not ready',
+      checks
+    });
+  } catch (error) {
+    res.status(503).json({
+      status: 'not ready',
+      checks,
+      error: error.message
+    });
+  }
+});
+```
+
+## Alerting
+
+**Purpose:** Notify team of issues requiring attention
+
+**Alert Conditions:**
+
+**Threshold-Based:**
+- CPU usage > 80% for 5 minutes
+- Error rate > 1% for 10 minutes
+- Response time P95 > 2 seconds
+
+**Anomaly-Based:**
+- Request rate 50% below normal
+- Unusual error patterns
+- Unexpected traffic spikes
+
+**Alert Fatigue Prevention:**
+- Set appropriate thresholds
+- Group related alerts
+- Use severity levels
+- Implement on-call rotation
+- Auto-resolve when issue fixed
+
+```javascript
+class AlertManager {
+  constructor(notificationService) {
+    this.notificationService = notificationService;
+    this.activeAlerts = new Map();
+  }
+  
+  async checkMetrics() {
+    const metrics = await this.getMetrics();
+    
+    // CPU alert
+    if (metrics.cpuUsage > 80) {
+      await this.raiseAlert('high_cpu', {
+        severity: 'warning',
+        message: `CPU usage at ${metrics.cpuUsage}%`,
+        value: metrics.cpuUsage,
+        threshold: 80
+      });
+    } else {
+      await this.resolveAlert('high_cpu');
+    }
+    
+    // Error rate alert
+    const errorRate = metrics.errors / metrics.requests;
+    if (errorRate > 0.01) {
+      await this.raiseAlert('high_error_rate', {
+        severity: 'critical',
+        message: `Error rate at ${(errorRate * 100).toFixed(2)}%`,
+        value: errorRate,
+        threshold: 0.01
+      });
+    } else {
+      await this.resolveAlert('high_error_rate');
+    }
+  }
+  
+  async raiseAlert(alertId, details) {
+    if (this.activeAlerts.has(alertId)) {
+      return; // Already alerted
+    }
+    
+    this.activeAlerts.set(alertId, {
+      ...details,
+      raisedAt: new Date()
+    });
+    
+    await this.notificationService.send({
+      title: `[${details.severity.toUpperCase()}] ${alertId}`,
+      message: details.message,
+      details
+    });
+  }
+  
+  async resolveAlert(alertId) {
+    if (!this.activeAlerts.has(alertId)) {
+      return; // Not active
+    }
+    
+    const alert = this.activeAlerts.get(alertId);
+    this.activeAlerts.delete(alertId);
+    
+    await this.notificationService.send({
+      title: `[RESOLVED] ${alertId}`,
+      message: 'Alert has been resolved',
+      duration: Date.now() - alert.raisedAt.getTime()
+    });
+  }
+}
+```
+
+## Dashboards
+
+**Purpose:** Visualize system health and performance
+
+**Key Dashboards:**
+
+**Service Dashboard:**
+- Request rate
+- Error rate
+- Latency (P50, P95, P99)
+- Active instances
+
+**Infrastructure Dashboard:**
+- CPU, memory, disk usage
+- Network traffic
+- Container/pod status
+
+**Business Dashboard:**
+- User signups
+- Revenue
+- Conversion funnel
+- Active users
+
+**Grafana Example:**
+
+```javascript
+// Prometheus queries for Grafana
+const queries = {
+  requestRate: 'rate(http_requests_total[5m])',
+  errorRate: 'rate(http_requests_total{status_code=~"5.."}[5m])',
+  latencyP95: 'histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))',
+  cpuUsage: 'rate(process_cpu_seconds_total[5m]) * 100',
+  memoryUsage: 'process_resident_memory_bytes / 1024 / 1024'
+};
+```
+
+## .NET Monitoring
+
+```csharp
+using Prometheus;
+using Serilog;
+using OpenTelemetry.Trace;
+
+// Metrics
+public class MetricsService
+{
+    private static readonly Counter RequestCounter = Metrics
+        .CreateCounter("http_requests_total", "Total HTTP requests",
+            new CounterConfiguration
+            {
+                LabelNames = new[] { "method", "endpoint", "status" }
+            });
+    
+    private static readonly Histogram RequestDuration = Metrics
+        .CreateHistogram("http_request_duration_seconds", "HTTP request duration",
+            new HistogramConfiguration
+            {
+                LabelNames = new[] { "method", "endpoint" },
+                Buckets = new[] { 0.1, 0.5, 1, 2, 5 }
+            });
+    
+    public void RecordRequest(string method, string endpoint, int status, double duration)
+    {
+        RequestCounter.WithLabels(method, endpoint, status.ToString()).Inc();
+        RequestDuration.WithLabels(method, endpoint).Observe(duration);
+    }
+}
+
+// Structured logging
+Log.Logger = new LoggerConfiguration()
+    .WriteTo.Console(new JsonFormatter())
+    .WriteTo.File(new JsonFormatter(), "logs/app.json", rollingInterval: RollingInterval.Day)
+    .Enrich.WithProperty("Application", "UserService")
+    .CreateLogger();
+
+Log.Information("User {UserId} logged in from {IpAddress}", userId, ipAddress);
+
+// Health checks
+public void ConfigureServices(IServiceCollection services)
+{
+    services.AddHealthChecks()
+        .AddCheck("database", () =>
+        {
+            try
+            {
+                _dbContext.Database.CanConnect();
+                return HealthCheckResult.Healthy();
+            }
+            catch (Exception ex)
+            {
+                return HealthCheckResult.Unhealthy(ex.Message);
+            }
+        })
+        .AddCheck("cache", () =>
+        {
+            try
+            {
+                _cache.Ping();
+                return HealthCheckResult.Healthy();
+            }
+            catch (Exception ex)
+            {
+                return HealthCheckResult.Unhealthy(ex.Message);
+            }
+        });
+}
+
+public void Configure(IApplicationBuilder app)
+{
+    app.UseHealthChecks("/health/live");
+    app.UseHealthChecks("/health/ready");
+    
+    // Expose metrics
+    app.UseMetricServer();
+    app.UseHttpMetrics();
+}
+```
+
+## Best Practices
+
+- **Monitor the Four Golden Signals**: Latency, traffic, errors, saturation
+- **Use structured logging**: JSON format with consistent fields
+- **Implement distributed tracing**: Track requests across services
+- **Set up proper health checks**: Liveness and readiness
+- **Create meaningful dashboards**: Focus on actionable metrics
+- **Configure smart alerts**: Avoid alert fatigue
+- **Include correlation IDs**: Link logs, metrics, traces
+- **Monitor business metrics**: Not just technical metrics
+- **Test monitoring**: Ensure alerts fire correctly
+- **Document runbooks**: How to respond to alerts
+
+## Interview Tips
+
+- **Explain three pillars**: Metrics, logs, traces
+- **Show key metrics**: Latency, error rate, throughput
+- **Demonstrate health checks**: Liveness vs readiness
+- **Discuss alerting**: Threshold-based, avoiding fatigue
+- **Mention tools**: Prometheus, Grafana, Jaeger, ELK
+- **Show correlation**: Linking logs, metrics, traces
+
+## Summary
+
+Monitoring collects predefined metrics to detect known issues. Observability understands system state from outputs to discover unknown issues. Three pillars: metrics (numerical data), logs (discrete events), traces (request flow). Monitor Four Golden Signals: latency, traffic, errors, saturation. Use structured logging with correlation IDs. Implement distributed tracing to track requests across services. Create liveness and readiness health checks. Set up dashboards for visualization. Configure smart alerts with appropriate thresholds. Use tools like Prometheus, Grafana, Jaeger, ELK stack. Essential for maintaining reliable, performant systems.

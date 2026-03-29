@@ -1,0 +1,162 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Fluent API in EF Core
+---
+
+# Fluent API in EF Core
+
+## What is Fluent API?
+
+**Fluent API** provides a way to configure entity mappings and relationships using method chaining in the `OnModelCreating` method. It offers more configuration options than Data Annotations.
+
+## Basic Configuration
+
+```csharp
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    modelBuilder.Entity<Product>(entity =>
+    {
+        entity.HasKey(e => e.Id);
+        entity.Property(e => e.Name).IsRequired().HasMaxLength(200);
+        entity.Property(e => e.Price).HasColumnType("decimal(18,2)");
+        entity.ToTable("Products");
+    });
+}
+```
+
+## Property Configuration
+
+```csharp
+modelBuilder.Entity<Product>()
+    .Property(p => p.Name)
+    .IsRequired()
+    .HasMaxLength(200)
+    .HasColumnName("ProductName")
+    .HasDefaultValue("Unknown");
+
+modelBuilder.Entity<Product>()
+    .Property(p => p.Price)
+    .HasColumnType("decimal(18,2)")
+    .HasPrecision(18, 2);
+
+modelBuilder.Entity<Product>()
+    .Property(p => p.CreatedAt)
+    .HasDefaultValueSql("GETUTCDATE()");
+```
+
+## Primary Keys
+
+```csharp
+// Single column primary key
+modelBuilder.Entity<Product>()
+    .HasKey(p => p.Id);
+
+// Composite primary key
+modelBuilder.Entity<OrderItem>()
+    .HasKey(oi => new { oi.OrderId, oi.ProductId });
+
+// Alternate key
+modelBuilder.Entity<Product>()
+    .HasAlternateKey(p => p.SKU);
+```
+
+## Indexes
+
+```csharp
+// Single column index
+modelBuilder.Entity<Product>()
+    .HasIndex(p => p.Name);
+
+// Unique index
+modelBuilder.Entity<User>()
+    .HasIndex(u => u.Email)
+    .IsUnique();
+
+// Composite index
+modelBuilder.Entity<Product>()
+    .HasIndex(p => new { p.CategoryId, p.IsActive })
+    .HasDatabaseName("IX_Product_Category_Active");
+
+// Filtered index
+modelBuilder.Entity<Product>()
+    .HasIndex(p => p.Price)
+    .HasFilter("[IsActive] = 1");
+```
+
+## Relationships
+
+```csharp
+// One-to-Many
+modelBuilder.Entity<Post>()
+    .HasOne(p => p.Blog)
+    .WithMany(b => b.Posts)
+    .HasForeignKey(p => p.BlogId)
+    .OnDelete(DeleteBehavior.Cascade);
+
+// One-to-One
+modelBuilder.Entity<User>()
+    .HasOne(u => u.Profile)
+    .WithOne(p => p.User)
+    .HasForeignKey<UserProfile>(p => p.UserId);
+
+// Many-to-Many
+modelBuilder.Entity<Student>()
+    .HasMany(s => s.Courses)
+    .WithMany(c => c.Students)
+    .UsingEntity(j => j.ToTable("StudentCourses"));
+```
+
+## Table Mapping
+
+```csharp
+// Table name
+modelBuilder.Entity<Product>()
+    .ToTable("Products", schema: "dbo");
+
+// Table splitting
+modelBuilder.Entity<Order>()
+    .ToTable("Orders");
+
+modelBuilder.Entity<OrderDetails>()
+    .ToTable("Orders");
+
+modelBuilder.Entity<OrderDetails>()
+    .HasOne(od => od.Order)
+    .WithOne(o => o.Details)
+    .HasForeignKey<OrderDetails>(od => od.OrderId);
+```
+
+## Value Conversions
+
+```csharp
+modelBuilder.Entity<Product>()
+    .Property(p => p.Status)
+    .HasConversion<string>();
+
+modelBuilder.Entity<User>()
+    .Property(u => u.DateOfBirth)
+    .HasConversion(
+        v => v.ToUniversalTime(),
+        v => DateTime.SpecifyKind(v, DateTimeKind.Utc));
+```
+
+## Global Query Filters
+
+```csharp
+modelBuilder.Entity<Product>()
+    .HasQueryFilter(p => !p.IsDeleted);
+
+modelBuilder.Entity<Post>()
+    .HasQueryFilter(p => p.IsPublished);
+```
+
+## Owned Entities
+
+```csharp
+modelBuilder.Entity<Order>().OwnsOne(o => o.ShippingAddress);
+modelBuilder.Entity<Order>().OwnsOne(o => o.BillingAddress);
+```
+
+## Summary
+
+Fluent API in EF Core provides comprehensive configuration options for entities, properties, relationships, and database mappings through method chaining in OnModelCreating.

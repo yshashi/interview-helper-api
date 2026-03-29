@@ -1,0 +1,369 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Securing CI/CD Pipelines
+---
+
+# Securing CI/CD Pipelines
+
+## Security Best Practices
+
+1. **Secrets Management**
+2. **Dependency Scanning**
+3. **Container Security**
+4. **Code Scanning (SAST)**
+5. **Access Control**
+6. **Audit Logging**
+
+## Secrets Management
+
+```yaml
+# GitHub Actions with secrets
+name: Secure Pipeline
+
+on: [push]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Deploy
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: ./deploy.sh
+```
+
+## Dependency Scanning
+
+```yaml
+# npm audit
+jobs:
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Audit dependencies
+        run: npm audit --audit-level=high
+      
+      - name: Check for vulnerabilities
+        run: |
+          VULNERABILITIES=$(npm audit --json | jq '.metadata.vulnerabilities.high + .metadata.vulnerabilities.critical')
+          if [ $VULNERABILITIES -gt 0 ]; then
+            echo "Found $VULNERABILITIES high/critical vulnerabilities"
+            exit 1
+          fi
+```
+
+## SAST (Static Application Security Testing)
+
+```yaml
+# CodeQL analysis
+name: CodeQL
+
+on: [push, pull_request]
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v2
+        with:
+          languages: javascript, typescript
+      
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v2
+      
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v2
+```
+
+## Container Security
+
+```yaml
+# Trivy container scanning
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Build image
+        run: docker build -t myapp:${{ github.sha }} .
+      
+      - name: Run Trivy scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: myapp:${{ github.sha }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+      
+      - name: Upload results
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: 'trivy-results.sarif'
+```
+
+## Dockerfile Security
+
+```dockerfile
+# Secure Dockerfile
+FROM node:18-alpine AS build
+
+# Don't run as root
+RUN addgroup -g 1001 -S nodejs
+RUN adduser -S nodejs -u 1001
+
+WORKDIR /app
+
+# Copy only package files first
+COPY --chown=nodejs:nodejs package*.json ./
+RUN npm ci --only=production
+
+# Copy application
+COPY --chown=nodejs:nodejs . .
+RUN npm run build
+
+# Production stage
+FROM node:18-alpine
+
+RUN addgroup -g 1001 -S nodejs
+RUN adduser -S nodejs -u 1001
+
+WORKDIR /app
+
+# Copy from build stage
+COPY --from=build --chown=nodejs:nodejs /app/dist ./dist
+COPY --from=build --chown=nodejs:nodejs /app/node_modules ./node_modules
+
+# Switch to non-root user
+USER nodejs
+
+EXPOSE 3000
+CMD ["node", "dist/index.js"]
+```
+
+## Access Control
+
+```yaml
+# Branch protection
+# .github/workflows/enforce-reviews.yml
+name: Enforce Reviews
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  check-reviews:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check approvals
+        run: |
+          APPROVALS=$(gh pr view ${{ github.event.pull_request.number }} \
+            --json reviews -q '.reviews | length')
+          
+          if [ $APPROVALS -lt 2 ]; then
+            echo "Requires at least 2 approvals"
+            exit 1
+          fi
+```
+
+## RBAC (Role-Based Access Control)
+
+```yaml
+# Kubernetes RBAC
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: deployment-manager
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "create", "update", "patch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: deployment-manager-binding
+subjects:
+  - kind: ServiceAccount
+    name: ci-cd-sa
+roleRef:
+  kind: Role
+  name: deployment-manager
+  apiGroup: rbac.authorization.k8s.io
+```
+
+## Image Signing
+
+```yaml
+# Cosign image signing
+jobs:
+  sign:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@main
+      
+      - name: Sign image
+        run: |
+          cosign sign --key cosign.key \
+            myapp:${{ github.sha }}
+      
+      - name: Verify signature
+        run: |
+          cosign verify --key cosign.pub \
+            myapp:${{ github.sha }}
+```
+
+## Network Policies
+
+```yaml
+# Kubernetes NetworkPolicy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: api-network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app: api
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: frontend
+      ports:
+        - protocol: TCP
+          port: 5000
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: database
+      ports:
+        - protocol: TCP
+          port: 5432
+```
+
+## Secrets Scanning
+
+```yaml
+# GitGuardian secrets detection
+name: Secrets Detection
+
+on: [push, pull_request]
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      
+      - name: GitGuardian scan
+        uses: GitGuardian/ggshield-action@master
+        env:
+          GITHUB_PUSH_BEFORE_SHA: ${{ github.event.before }}
+          GITHUB_PUSH_BASE_SHA: ${{ github.event.base }}
+          GITHUB_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GITGUARDIAN_API_KEY: ${{ secrets.GITGUARDIAN_API_KEY }}
+```
+
+## Compliance Scanning
+
+```yaml
+# OPA (Open Policy Agent)
+package kubernetes.admission
+
+deny[msg] {
+  input.request.kind.kind == "Deployment"
+  not input.request.object.spec.template.spec.securityContext.runAsNonRoot
+  msg := "Containers must not run as root"
+}
+
+deny[msg] {
+  input.request.kind.kind == "Deployment"
+  container := input.request.object.spec.template.spec.containers[_]
+  not container.securityContext.readOnlyRootFilesystem
+  msg := sprintf("Container %s must have read-only root filesystem", [container.name])
+}
+```
+
+## Audit Logging
+
+```javascript
+// Audit log middleware
+const auditLog = (req, res, next) => {
+  const audit = {
+    timestamp: new Date(),
+    user: req.user?.id,
+    action: `${req.method} ${req.path}`,
+    ip: req.ip,
+    userAgent: req.headers['user-agent']
+  };
+  
+  res.on('finish', () => {
+    audit.statusCode = res.statusCode;
+    audit.duration = Date.now() - req.startTime;
+    
+    logger.info('Audit log', audit);
+    
+    // Store in database
+    db.auditLogs.create(audit);
+  });
+  
+  next();
+};
+
+app.use(auditLog);
+```
+
+## Security Headers
+
+```javascript
+// Helmet for security headers
+const helmet = require('helmet');
+
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrc: ["'self'"],
+      imgSrc: ["'self'", "data:", "https:"]
+    }
+  },
+  hsts: {
+    maxAge: 31536000,
+    includeSubDomains: true,
+    preload: true
+  }
+}));
+```
+
+## Interview Tips
+
+- **Explain secrets**: Never hardcode, use vault
+- **Show scanning**: Dependencies, containers, code
+- **Demonstrate RBAC**: Access control
+- **Discuss signing**: Image verification
+- **Mention policies**: Network, security
+- **Show audit**: Logging all actions
+
+## Summary
+
+Secure CI/CD pipelines with proper secrets management, dependency scanning, SAST, container security, access control, and audit logging. Use tools like Trivy, CodeQL, and GitGuardian. Implement RBAC and network policies. Sign container images. Scan for vulnerabilities. Maintain audit trails. Essential for secure DevOps practices.

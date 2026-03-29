@@ -1,0 +1,86 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Owned Entity Types in EF Core
+---
+
+# Owned Entity Types in EF Core
+
+## What are Owned Entities?
+
+**Owned entities** are types that don't have their own identity and are always accessed through their owner. They're useful for value objects and complex types.
+
+## Basic Configuration
+
+```csharp
+public class Order
+{
+    public int Id { get; set; }
+    public Address ShippingAddress { get; set; }
+    public Address BillingAddress { get; set; }
+}
+
+public class Address
+{
+    public string Street { get; set; }
+    public string City { get; set; }
+    public string ZipCode { get; set; }
+}
+
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    modelBuilder.Entity<Order>().OwnsOne(o => o.ShippingAddress);
+    modelBuilder.Entity<Order>().OwnsOne(o => o.BillingAddress);
+}
+```
+
+## Table Splitting
+
+```csharp
+// Owned entity stored in same table
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    modelBuilder.Entity<Order>().OwnsOne(o => o.ShippingAddress, sa =>
+    {
+        sa.Property(a => a.Street).HasColumnName("ShippingStreet");
+        sa.Property(a => a.City).HasColumnName("ShippingCity");
+        sa.Property(a => a.ZipCode).HasColumnName("ShippingZipCode");
+    });
+}
+```
+
+## Separate Table
+
+```csharp
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    modelBuilder.Entity<Order>().OwnsOne(o => o.ShippingAddress, sa =>
+    {
+        sa.ToTable("ShippingAddresses");
+    });
+}
+```
+
+## Collections of Owned Types
+
+```csharp
+public class Customer
+{
+    public int Id { get; set; }
+    public string Name { get; set; }
+    public ICollection<Address> Addresses { get; set; }
+}
+
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    modelBuilder.Entity<Customer>().OwnsMany(c => c.Addresses, a =>
+    {
+        a.WithOwner().HasForeignKey("CustomerId");
+        a.Property<int>("Id");
+        a.HasKey("Id");
+    });
+}
+```
+
+## Summary
+
+Owned entities in EF Core represent value objects without identity. Configure using OwnsOne/OwnsMany. They can be stored in the same table or separate tables.

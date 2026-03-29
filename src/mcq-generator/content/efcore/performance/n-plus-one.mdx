@@ -1,0 +1,198 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: N+1 Query Problem in EF Core
+---
+
+# N+1 Query Problem in EF Core
+
+## What is the N+1 Problem?
+
+The **N+1 query problem** occurs when you execute 1 query to fetch N records, then execute N additional queries to fetch related data for each record, resulting in N+1 total queries.
+
+## Example of N+1 Problem
+
+```csharp
+// BAD - Causes N+1 queries
+var blogs = await context.Blogs.ToListAsync(); // 1 query
+
+foreach (var blog in blogs) // N queries (one per blog)
+{
+    Console.WriteLine($"{blog.Name}: {blog.Posts.Count} posts");
+}
+
+// SQL Generated:
+// SELECT * FROM Blogs
+// SELECT * FROM Posts WHERE BlogId = 1
+// SELECT * FROM Posts WHERE BlogId = 2
+// SELECT * FROM Posts WHERE BlogId = 3
+// ... (N queries)
+```
+
+## Solutions
+
+### 1. Eager Loading with Include
+
+```csharp
+// GOOD - Single query with JOIN
+var blogs = await context.Blogs
+    .Include(b => b.Posts)
+    .ToListAsync();
+
+foreach (var blog in blogs)
+{
+    Console.WriteLine($"{blog.Name}: {blog.Posts.Count} posts");
+}
+
+// SQL Generated:
+// SELECT b.*, p.*
+// FROM Blogs b
+// LEFT JOIN Posts p ON b.Id = p.BlogId
+```
+
+### 2. Projection with Select
+
+```csharp
+// GOOD - Single query, only needed data
+var blogData = await context.Blogs
+    .Select(b => new
+    {
+        b.Name,
+        PostCount = b.Posts.Count,
+        RecentPosts = b.Posts
+            .OrderByDescending(p => p.PublishedDate)
+            .Take(5)
+            .Select(p => new { p.Title, p.PublishedDate })
+    })
+    .ToListAsync();
+```
+
+### 3. Split Query (Multiple Collections)
+
+```csharp
+// GOOD - Separate queries but controlled
+var blogs = await context.Blogs
+    .AsSplitQuery()
+    .Include(b => b.Posts)
+    .Include(b => b.Contributors)
+    .ToListAsync();
+
+// SQL Generated:
+// SELECT * FROM Blogs
+// SELECT * FROM Posts WHERE BlogId IN (...)
+// SELECT * FROM Contributors WHERE BlogId IN (...)
+```
+
+### 4. Explicit Loading
+
+```csharp
+var blogs = await context.Blogs.ToListAsync();
+
+// Load all posts in one query
+await context.Entry(blogs.First())
+    .Collection(b => b.Posts)
+    .Query()
+    .LoadAsync();
+```
+
+## Detecting N+1 Problems
+
+### Enable SQL Logging
+
+```csharp
+services.AddDbContext<ApplicationDbContext>(options =>
+    options.UseSqlServer(connectionString)
+           .LogTo(Console.WriteLine, LogLevel.Information)
+           .EnableSensitiveDataLogging());
+```
+
+### Use Profiling Tools
+
+- SQL Server Profiler
+- Entity Framework Profiler
+- MiniProfiler
+- Application Insights
+
+## Common Scenarios
+
+### Loading Related Collections
+
+```csharp
+// BAD
+var orders = await context.Orders.ToListAsync();
+foreach (var order in orders)
+{
+    var items = order.OrderItems.ToList(); // N+1
+}
+
+// GOOD
+var orders = await context.Orders
+    .Include(o => o.OrderItems)
+    .ToListAsync();
+```
+
+### Nested Relationships
+
+```csharp
+// BAD
+var blogs = await context.Blogs.ToListAsync();
+foreach (var blog in blogs)
+{
+    foreach (var post in blog.Posts) // N+1
+    {
+        var author = post.Author; // Another N+1
+    }
+}
+
+// GOOD
+var blogs = await context.Blogs
+    .Include(b => b.Posts)
+        .ThenInclude(p => p.Author)
+    .ToListAsync();
+```
+
+### Conditional Loading
+
+```csharp
+// BAD
+var products = await context.Products.ToListAsync();
+foreach (var product in products)
+{
+    if (product.CategoryId == 5)
+    {
+        var category = product.Category; // N+1
+    }
+}
+
+// GOOD
+var products = await context.Products
+    .Include(p => p.Category)
+    .ToListAsync();
+```
+
+## Performance Impact
+
+```csharp
+// N+1 Problem
+// 1 query + 1000 queries = 1001 queries
+// Time: ~5000ms
+
+// With Include
+// 1 query with JOIN
+// Time: ~50ms
+
+// 100x performance improvement!
+```
+
+## Best Practices
+
+1. **Always use Include** for navigation properties you'll access
+2. **Use Select** for projections when you don't need full entities
+3. **Enable SQL logging** during development
+4. **Profile your queries** regularly
+5. **Use split queries** for multiple collections
+6. **Avoid lazy loading** in loops
+7. **Test with realistic data volumes**
+
+## Summary
+
+The N+1 problem causes performance issues by executing multiple queries instead of one. Solve it using eager loading (Include), projections (Select), or split queries. Always profile queries during development to detect N+1 problems early.

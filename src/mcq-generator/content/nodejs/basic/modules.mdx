@@ -1,0 +1,247 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Modules in Node.js
+---
+
+# Modules in Node.js
+
+## What are Modules?
+
+**Modules** are reusable blocks of code whose existence does not impact other code. Node.js has a module system that allows you to include and use code from other files.
+
+## Types of Modules
+
+### 1. Core Modules (Built-in)
+
+```javascript
+const fs = require('fs');
+const http = require('http');
+const path = require('path');
+const os = require('os');
+const events = require('events');
+```
+
+### 2. Local Modules (Custom)
+
+```javascript
+// math.js
+function add(a, b) {
+  return a + b;
+}
+
+function subtract(a, b) {
+  return a - b;
+}
+
+module.exports = { add, subtract };
+
+// app.js
+const math = require('./math');
+console.log(math.add(5, 3)); // 8
+```
+
+### 3. Third-Party Modules
+
+```javascript
+const express = require('express');
+const mongoose = require('mongoose');
+const axios = require('axios');
+```
+
+## CommonJS Modules
+
+### Exporting
+
+```javascript
+// Single export
+module.exports = function() {
+  console.log('Hello');
+};
+
+// Multiple exports
+module.exports = {
+  name: 'John',
+  age: 30,
+  greet: function() {
+    console.log('Hello');
+  }
+};
+
+// Named exports
+exports.add = (a, b) => a + b;
+exports.subtract = (a, b) => a - b;
+```
+
+### Importing
+
+```javascript
+// Import entire module
+const math = require('./math');
+
+// Destructuring
+const { add, subtract } = require('./math');
+
+// Import with different name
+const calculator = require('./math');
+```
+
+## ES6 Modules
+
+### Exporting
+
+```javascript
+// Named exports
+export const name = 'John';
+export function greet() {
+  console.log('Hello');
+}
+
+// Default export
+export default class User {
+  constructor(name) {
+    this.name = name;
+  }
+}
+
+// Export list
+const add = (a, b) => a + b;
+const subtract = (a, b) => a - b;
+export { add, subtract };
+```
+
+### Importing
+
+```javascript
+// Named imports
+import { name, greet } from './module.js';
+
+// Default import
+import User from './User.js';
+
+// Import all
+import * as math from './math.js';
+
+// Rename imports
+import { add as sum } from './math.js';
+```
+
+## Module Patterns
+
+### Singleton Pattern
+
+```javascript
+// database.js
+class Database {
+  constructor() {
+    this.connection = null;
+  }
+  
+  connect() {
+    if (!this.connection) {
+      this.connection = createConnection();
+    }
+    return this.connection;
+  }
+}
+
+module.exports = new Database();
+```
+
+### Factory Pattern
+
+```javascript
+// userFactory.js
+module.exports = function createUser(name, email) {
+  return {
+    name,
+    email,
+    createdAt: new Date()
+  };
+};
+
+// Usage
+const createUser = require('./userFactory');
+const user = createUser('John', 'john@example.com');
+```
+
+## Module Caching
+
+```javascript
+// counter.js
+let count = 0;
+
+module.exports = {
+  increment: () => ++count,
+  getCount: () => count
+};
+
+// app.js
+const counter1 = require('./counter');
+const counter2 = require('./counter');
+
+counter1.increment();
+console.log(counter2.getCount()); // 1 (same instance)
+```
+
+## Core Modules Examples
+
+### File System (fs)
+
+```javascript
+const fs = require('fs');
+
+// Read file
+fs.readFile('file.txt', 'utf8', (err, data) => {
+  if (err) throw err;
+  console.log(data);
+});
+
+// Write file
+fs.writeFile('output.txt', 'Hello World', (err) => {
+  if (err) throw err;
+  console.log('File written');
+});
+```
+
+### Path
+
+```javascript
+const path = require('path');
+
+console.log(path.join(__dirname, 'files', 'data.txt'));
+console.log(path.basename('/users/john/file.txt')); // file.txt
+console.log(path.extname('file.txt')); // .txt
+```
+
+### HTTP
+
+```javascript
+const http = require('http');
+
+const server = http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end('Hello World');
+});
+
+server.listen(3000);
+```
+
+## Best Practices
+
+1. **Use descriptive names** for modules
+2. **Keep modules focused** on single responsibility
+3. **Avoid circular dependencies**
+4. **Use ES6 modules** for new projects
+5. **Cache expensive operations**
+
+## Interview Tips
+
+- **Explain module types**: Core, local, third-party
+- **Show CommonJS vs ES6**: Different syntax
+- **Demonstrate exports**: module.exports vs export
+- **Discuss caching**: Modules are cached
+- **Mention core modules**: fs, http, path, etc.
+
+## Summary
+
+Node.js modules are reusable code blocks. Three types: core (built-in), local (custom), and third-party (npm). CommonJS uses require/module.exports, ES6 uses import/export. Modules are cached after first load.

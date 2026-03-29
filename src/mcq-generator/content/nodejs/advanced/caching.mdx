@@ -1,0 +1,242 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Caching in Node.js
+---
+
+# Caching in Node.js
+
+## What is Caching?
+
+**Caching** stores frequently accessed data in memory for faster retrieval, reducing database queries and improving performance.
+
+## In-Memory Caching
+
+### Simple Object Cache
+
+```javascript
+const cache = {};
+
+function getData(key) {
+  if (cache[key]) {
+    console.log('Cache hit');
+    return cache[key];
+  }
+  
+  console.log('Cache miss');
+  const data = fetchFromDatabase(key);
+  cache[key] = data;
+  return data;
+}
+```
+
+### Map Cache
+
+```javascript
+const cache = new Map();
+
+function getCachedData(key) {
+  if (cache.has(key)) {
+    return cache.get(key);
+  }
+  
+  const data = expensiveOperation(key);
+  cache.set(key, data);
+  return data;
+}
+```
+
+## Node-Cache
+
+```javascript
+const NodeCache = require('node-cache');
+const myCache = new NodeCache({ stdTTL: 100 });
+
+// Set cache
+myCache.set('key', 'value', 10000); // 10 seconds
+
+// Get cache
+const value = myCache.get('key');
+
+// Delete cache
+myCache.del('key');
+
+// Clear all
+myCache.flushAll();
+
+// Get stats
+console.log(myCache.getStats());
+```
+
+## Redis Caching
+
+```javascript
+const redis = require('redis');
+const client = redis.createClient();
+
+await client.connect();
+
+// Set cache
+await client.set('user:1', JSON.stringify(user), {
+  EX: 3600 // Expire in 1 hour
+});
+
+// Get cache
+const cached = await client.get('user:1');
+const user = JSON.parse(cached);
+
+// Delete cache
+await client.del('user:1');
+
+// Set with pattern
+await client.setEx('session:abc123', 1800, sessionData);
+```
+
+## Cache Middleware
+
+```javascript
+const cache = new Map();
+
+function cacheMiddleware(duration) {
+  return (req, res, next) => {
+    const key = req.originalUrl;
+    const cached = cache.get(key);
+    
+    if (cached) {
+      return res.json(cached);
+    }
+    
+    res.originalJson = res.json;
+    res.json = (body) => {
+      cache.set(key, body);
+      setTimeout(() => cache.delete(key), duration);
+      res.originalJson(body);
+    };
+    
+    next();
+  };
+}
+
+// Usage
+app.get('/api/users', cacheMiddleware(60000), async (req, res) => {
+  const users = await User.find();
+  res.json(users);
+});
+```
+
+## Cache Strategies
+
+### 1. Cache-Aside (Lazy Loading)
+
+```javascript
+async function getUser(id) {
+  // Check cache
+  const cached = await cache.get(`user:${id}`);
+  if (cached) return JSON.parse(cached);
+  
+  // Fetch from database
+  const user = await User.findById(id);
+  
+  // Store in cache
+  await cache.set(`user:${id}`, JSON.stringify(user), 'EX', 3600);
+  
+  return user;
+}
+```
+
+### 2. Write-Through
+
+```javascript
+async function updateUser(id, data) {
+  // Update database
+  const user = await User.findByIdAndUpdate(id, data, { new: true });
+  
+  // Update cache
+  await cache.set(`user:${id}`, JSON.stringify(user), 'EX', 3600);
+  
+  return user;
+}
+```
+
+### 3. Write-Behind
+
+```javascript
+const writeQueue = [];
+
+async function updateUser(id, data) {
+  // Update cache immediately
+  await cache.set(`user:${id}`, JSON.stringify(data));
+  
+  // Queue database write
+  writeQueue.push({ id, data });
+  
+  return data;
+}
+
+// Process queue periodically
+setInterval(async () => {
+  while (writeQueue.length > 0) {
+    const { id, data } = writeQueue.shift();
+    await User.findByIdAndUpdate(id, data);
+  }
+}, 5000);
+```
+
+## Cache Invalidation
+
+```javascript
+// Time-based
+await cache.setEx('key', 3600, value);
+
+// Event-based
+async function updateUser(id, data) {
+  const user = await User.findByIdAndUpdate(id, data);
+  
+  // Invalidate cache
+  await cache.del(`user:${id}`);
+  
+  return user;
+}
+
+// Pattern-based
+async function invalidateUserCaches(userId) {
+  const keys = await cache.keys(`user:${userId}:*`);
+  if (keys.length > 0) {
+    await cache.del(keys);
+  }
+}
+```
+
+## LRU Cache
+
+```javascript
+const LRU = require('lru-cache');
+
+const cache = new LRU({
+  max: 500, // Maximum items
+  maxAge: 1000 * 60 * 60 // 1 hour
+});
+
+cache.set('key', 'value');
+const value = cache.get('key');
+```
+
+## Best Practices
+
+1. **Set appropriate TTL** (Time To Live)
+2. **Implement cache invalidation**
+3. **Monitor cache hit/miss ratio**
+4. **Use Redis for distributed caching**
+5. **Cache expensive operations**
+6. **Don't cache everything**
+
+## Interview Tips
+
+- **Explain caching purpose**: Improve performance
+- **Show strategies**: Cache-aside, write-through, write-behind
+- **Demonstrate Redis**: Distributed caching
+- **Discuss invalidation**: Time-based, event-based
+- **Mention LRU**: Least Recently Used eviction
+
+## Summary
+
+Caching stores frequently accessed data in memory. Use in-memory caching for single instances, Redis for distributed systems. Implement cache-aside pattern for reads, write-through for updates. Set TTL and invalidate caches appropriately.

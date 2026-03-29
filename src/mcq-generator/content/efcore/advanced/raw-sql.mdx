@@ -1,0 +1,93 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Raw SQL Queries in EF Core
+---
+
+# Raw SQL Queries in EF Core
+
+## Executing Raw SQL
+
+### FromSqlRaw
+
+```csharp
+var products = context.Products
+    .FromSqlRaw("SELECT * FROM Products WHERE Price > {0}", 100)
+    .ToList();
+
+// With LINQ composition
+var expensiveProducts = context.Products
+    .FromSqlRaw("SELECT * FROM Products WHERE CategoryId = {0}", categoryId)
+    .Where(p => p.IsActive)
+    .OrderBy(p => p.Name)
+    .ToList();
+```
+
+### FromSqlInterpolated
+
+```csharp
+decimal minPrice = 100;
+var products = context.Products
+    .FromSqlInterpolated($"SELECT * FROM Products WHERE Price > {minPrice}")
+    .ToList();
+```
+
+## Executing Non-Query SQL
+
+```csharp
+// ExecuteSqlRaw
+int rowsAffected = context.Database
+    .ExecuteSqlRaw("UPDATE Products SET IsActive = 0 WHERE Stock = 0");
+
+// ExecuteSqlInterpolated
+int categoryId = 5;
+int rowsAffected = context.Database
+    .ExecuteSqlInterpolated($"DELETE FROM Products WHERE CategoryId = {categoryId}");
+```
+
+## Stored Procedures
+
+```csharp
+// Call stored procedure
+var products = context.Products
+    .FromSqlRaw("EXEC GetProductsByCategory @CategoryId = {0}", categoryId)
+    .ToList();
+
+// With output parameter
+var categoryIdParam = new SqlParameter("@CategoryId", SqlDbType.Int) { Value = 5 };
+var products = context.Products
+    .FromSqlRaw("EXEC GetProductsByCategory @CategoryId", categoryIdParam)
+    .ToList();
+```
+
+## SQL Injection Prevention
+
+```csharp
+// SAFE - Parameterized
+var products = context.Products
+    .FromSqlRaw("SELECT * FROM Products WHERE Name = {0}", userInput)
+    .ToList();
+
+// UNSAFE - String concatenation
+var products = context.Products
+    .FromSqlRaw($"SELECT * FROM Products WHERE Name = '{userInput}'") // DON'T DO THIS
+    .ToList();
+```
+
+## Limitations
+
+```csharp
+// Must return all columns
+// Must include key column
+// Cannot contain JOIN with related entities
+// SQL must be composable
+
+// This works
+var products = context.Products
+    .FromSqlRaw("SELECT * FROM Products")
+    .Include(p => p.Category)
+    .ToList();
+```
+
+## Summary
+
+EF Core supports raw SQL queries using FromSqlRaw/FromSqlInterpolated for queries and ExecuteSqlRaw/ExecuteSqlInterpolated for commands. Always use parameterized queries to prevent SQL injection.

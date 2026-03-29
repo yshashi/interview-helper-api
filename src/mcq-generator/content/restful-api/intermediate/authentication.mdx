@@ -1,0 +1,366 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Authentication in REST APIs
+---
+
+# Authentication in REST APIs
+
+## Authentication Methods
+
+### 1. JWT (JSON Web Tokens)
+
+```javascript
+// Node.js/Express - JWT Authentication
+const jwt = require('jsonwebtoken');
+
+// Login endpoint
+app.post('/api/auth/login', async (req, res) => {
+  const { email, password } = req.body;
+  
+  const user = await User.findOne({ email });
+  if (!user || !await user.comparePassword(password)) {
+    return res.status(401).json({ error: 'Invalid credentials' });
+  }
+  
+  const token = jwt.sign(
+    { userId: user._id, email: user.email, role: user.role },
+    process.env.JWT_SECRET,
+    { expiresIn: '24h' }
+  );
+  
+  res.json({ token, user: { id: user._id, email: user.email } });
+});
+
+// Auth middleware
+const authenticate = (req, res, next) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  
+  if (!token) {
+    return res.status(401).json({ error: 'No token provided' });
+  }
+  
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = decoded;
+    next();
+  } catch (error) {
+    res.status(401).json({ error: 'Invalid token' });
+  }
+};
+
+// Protected route
+app.get('/api/profile', authenticate, async (req, res) => {
+  const user = await User.findById(req.user.userId);
+  res.json(user);
+});
+```
+
+```csharp
+// .NET - JWT Authentication
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.IdentityModel.Tokens;
+
+// Startup.cs
+services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidateAudience = true,
+            ValidateLifetime = true,
+            ValidateIssuerSigningKey = true,
+            ValidIssuer = Configuration["Jwt:Issuer"],
+            ValidAudience = Configuration["Jwt:Audience"],
+            IssuerSigningKey = new SymmetricSecurityKey(
+                Encoding.UTF8.GetBytes(Configuration["Jwt:Key"]))
+        };
+    });
+
+// Controller
+[HttpPost("login")]
+public async Task<ActionResult<object>> Login(LoginDto dto)
+{
+    var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == dto.Email);
+    if (user == null || !VerifyPassword(dto.Password, user.PasswordHash))
+    {
+        return Unauthorized();
+    }
+    
+    var token = GenerateJwtToken(user);
+    return Ok(new { token, user = new { user.Id, user.Email } });
+}
+
+private string GenerateJwtToken(User user)
+{
+    var claims = new[]
+    {
+        new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
+        new Claim(ClaimTypes.Email, user.Email),
+        new Claim(ClaimTypes.Role, user.Role)
+    };
+    
+    var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["Jwt:Key"]));
+    var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+    
+    var token = new JwtSecurityToken(
+        issuer: _configuration["Jwt:Issuer"],
+        audience: _configuration["Jwt:Audience"],
+        claims: claims,
+        expires: DateTime.Now.AddHours(24),
+        signingCredentials: creds);
+    
+    return new JwtSecurityTokenHandler().WriteToken(token);
+}
+
+[Authorize]
+[HttpGet("profile")]
+public async Task<ActionResult<User>> GetProfile()
+{
+    var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+    var user = await _context.Users.FindAsync(int.Parse(userId));
+    return Ok(user);
+}
+```
+
+### 2. API Keys
+
+```javascript
+// API Key authentication
+app.use('/api', (req, res, next) => {
+  const apiKey = req.headers['x-api-key'];
+  
+  if (!apiKey) {
+    return res.status(401).json({ error: 'API key required' });
+  }
+  
+  const validKey = await ApiKey.findOne({ key: apiKey, active: true });
+  if (!validKey) {
+    return res.status(401).json({ error: 'Invalid API key' });
+  }
+  
+  req.apiKey = validKey;
+  next();
+});
+
+// Usage
+GET /api/users
+X-API-Key: abc123xyz789
+```
+
+### 3. OAuth 2.0
+
+```javascript
+// OAuth 2.0 with Passport.js
+const passport = require('passport');
+const GoogleStrategy = require('passport-google-oauth20').Strategy;
+
+passport.use(new GoogleStrategy({
+    clientID: process.env.GOOGLE_CLIENT_ID,
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+    callbackURL: '/api/auth/google/callback'
+  },
+  async (accessToken, refreshToken, profile, done) => {
+    let user = await User.findOne({ googleId: profile.id });
+    
+    if (!user) {
+      user = await User.create({
+        googleId: profile.id,
+        email: profile.emails[0].value,
+        name: profile.displayName
+      });
+    }
+    
+    done(null, user);
+  }
+));
+
+app.get('/api/auth/google',
+  passport.authenticate('google', { scope: ['profile', 'email'] }));
+
+app.get('/api/auth/google/callback',
+  passport.authenticate('google', { session: false }),
+  (req, res) => {
+    const token = jwt.sign({ userId: req.user._id }, process.env.JWT_SECRET);
+    res.redirect(`/auth/success?token=${token}`);
+  }
+);
+```
+
+## Angular Authentication Service
+
+```typescript
+import { Injectable } from '@angular/core';
+import { HttpClient, HttpHeaders } from '@angular/common/http';
+import { BehaviorSubject, Observable } from 'rxjs';
+import { tap } from 'rxjs/operators';
+
+@Injectable({ providedIn: 'root' })
+export class AuthService {
+  private currentUserSubject = new BehaviorSubject<User | null>(null);
+  public currentUser$ = this.currentUserSubject.asObservable();
+  
+  constructor(private http: HttpClient) {
+    const token = localStorage.getItem('token');
+    if (token) {
+      this.loadProfile();
+    }
+  }
+  
+  login(email: string, password: string): Observable<{ token: string; user: User }> {
+    return this.http.post<{ token: string; user: User }>(
+      `${this.apiUrl}/auth/login`,
+      { email, password }
+    ).pipe(
+      tap(response => {
+        localStorage.setItem('token', response.token);
+        this.currentUserSubject.next(response.user);
+      })
+    );
+  }
+  
+  logout() {
+    localStorage.removeItem('token');
+    this.currentUserSubject.next(null);
+  }
+  
+  getToken(): string | null {
+    return localStorage.getItem('token');
+  }
+  
+  isAuthenticated(): boolean {
+    return !!this.getToken();
+  }
+  
+  private loadProfile() {
+    this.http.get<User>(`${this.apiUrl}/profile`).subscribe(
+      user => this.currentUserSubject.next(user),
+      () => this.logout()
+    );
+  }
+}
+
+// HTTP Interceptor
+@Injectable()
+export class AuthInterceptor implements HttpInterceptor {
+  constructor(private authService: AuthService) {}
+  
+  intercept(req: HttpRequest<any>, next: HttpHandler): Observable<HttpEvent<any>> {
+    const token = this.authService.getToken();
+    
+    if (token) {
+      req = req.clone({
+        setHeaders: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+    }
+    
+    return next.handle(req);
+  }
+}
+```
+
+## Refresh Tokens
+
+```javascript
+// Generate access and refresh tokens
+app.post('/api/auth/login', async (req, res) => {
+  const user = await authenticateUser(req.body);
+  
+  const accessToken = jwt.sign(
+    { userId: user._id },
+    process.env.JWT_SECRET,
+    { expiresIn: '15m' }
+  );
+  
+  const refreshToken = jwt.sign(
+    { userId: user._id },
+    process.env.REFRESH_SECRET,
+    { expiresIn: '7d' }
+  );
+  
+  await RefreshToken.create({ token: refreshToken, userId: user._id });
+  
+  res.json({ accessToken, refreshToken });
+});
+
+// Refresh endpoint
+app.post('/api/auth/refresh', async (req, res) => {
+  const { refreshToken } = req.body;
+  
+  if (!refreshToken) {
+    return res.status(401).json({ error: 'Refresh token required' });
+  }
+  
+  try {
+    const decoded = jwt.verify(refreshToken, process.env.REFRESH_SECRET);
+    const storedToken = await RefreshToken.findOne({ token: refreshToken });
+    
+    if (!storedToken) {
+      return res.status(401).json({ error: 'Invalid refresh token' });
+    }
+    
+    const accessToken = jwt.sign(
+      { userId: decoded.userId },
+      process.env.JWT_SECRET,
+      { expiresIn: '15m' }
+    );
+    
+    res.json({ accessToken });
+  } catch (error) {
+    res.status(401).json({ error: 'Invalid refresh token' });
+  }
+});
+```
+
+## Role-Based Access Control
+
+```javascript
+// RBAC middleware
+const authorize = (...roles) => {
+  return (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    
+    if (!roles.includes(req.user.role)) {
+      return res.status(403).json({ error: 'Insufficient permissions' });
+    }
+    
+    next();
+  };
+};
+
+// Usage
+app.delete('/api/users/:id', authenticate, authorize('admin'), async (req, res) => {
+  await User.findByIdAndDelete(req.params.id);
+  res.status(204).send();
+});
+```
+
+```csharp
+// .NET RBAC
+[Authorize(Roles = "Admin")]
+[HttpDelete("{id}")]
+public async Task<IActionResult> DeleteUser(int id)
+{
+    var user = await _context.Users.FindAsync(id);
+    _context.Users.Remove(user);
+    await _context.SaveChangesAsync();
+    return NoContent();
+}
+```
+
+## Interview Tips
+
+- **Explain JWT**: Token-based authentication
+- **Show implementation**: Node.js, .NET, Angular
+- **Demonstrate OAuth**: Third-party authentication
+- **Discuss refresh tokens**: Long-lived sessions
+- **Mention RBAC**: Role-based access
+- **Show interceptors**: Angular HTTP interceptor
+
+## Summary
+
+REST API authentication commonly uses JWT for stateless token-based auth. Include token in Authorization header as Bearer token. Implement login endpoint to generate tokens. Use middleware to verify tokens on protected routes. Support refresh tokens for long sessions. Implement RBAC for authorization. Use HTTP interceptors in Angular to add tokens automatically. Essential for secure REST APIs.

@@ -1,0 +1,311 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: API Composition Pattern
+---
+
+# API Composition Pattern
+
+## What is API Composition?
+
+**API Composition** aggregates data from multiple microservices into a single response, typically implemented in an API Gateway or BFF.
+
+## Problem
+
+```javascript
+// Client needs data from multiple services
+// Without composition: Multiple requests
+const user = await fetch('http://user-service/users/123');
+const orders = await fetch('http://order-service/orders?userId=123');
+const reviews = await fetch('http://review-service/reviews?userId=123');
+
+// Client must combine data
+const profile = {
+  user: user.data,
+  orders: orders.data,
+  reviews: reviews.data
+};
+```
+
+## Solution: API Composition
+
+```javascript
+// API Gateway composes response
+app.get('/api/users/:id/profile', async (req, res) => {
+  const userId = req.params.id;
+  
+  // Fetch from multiple services in parallel
+  const [user, orders, reviews] = await Promise.all([
+    axios.get(`http://user-service/users/${userId}`),
+    axios.get(`http://order-service/orders?userId=${userId}`),
+    axios.get(`http://review-service/reviews?userId=${userId}`)
+  ]);
+  
+  // Compose response
+  res.json({
+    user: user.data,
+    orders: orders.data,
+    reviews: reviews.data
+  });
+});
+```
+
+## Nested Composition
+
+```javascript
+app.get('/api/orders/:id/details', async (req, res) => {
+  const orderId = req.params.id;
+  
+  // Get order
+  const order = await axios.get(`http://order-service/orders/${orderId}`);
+  
+  // Get related data
+  const [user, items] = await Promise.all([
+    axios.get(`http://user-service/users/${order.data.userId}`),
+    Promise.all(
+      order.data.items.map(item =>
+        axios.get(`http://product-service/products/${item.productId}`)
+      )
+    )
+  ]);
+  
+  // Compose nested response
+  res.json({
+    order: {
+      ...order.data,
+      user: user.data,
+      items: order.data.items.map((item, index) => ({
+        ...item,
+        product: items[index].data
+      }))
+    }
+  });
+});
+```
+
+## Error Handling
+
+```javascript
+app.get('/api/users/:id/profile', async (req, res) => {
+  const userId = req.params.id;
+  
+  try {
+    const [user, orders, reviews] = await Promise.allSettled([
+      axios.get(`http://user-service/users/${userId}`),
+      axios.get(`http://order-service/orders?userId=${userId}`),
+      axios.get(`http://review-service/reviews?userId=${userId}`)
+    ]);
+    
+    // Partial response if some services fail
+    res.json({
+      user: user.status === 'fulfilled' ? user.value.data : null,
+      orders: orders.status === 'fulfilled' ? orders.value.data : [],
+      reviews: reviews.status === 'fulfilled' ? reviews.value.data : [],
+      errors: {
+        user: user.status === 'rejected' ? user.reason.message : null,
+        orders: orders.status === 'rejected' ? orders.reason.message : null,
+        reviews: reviews.status === 'rejected' ? reviews.reason.message : null
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+```
+
+## Caching
+
+```javascript
+const NodeCache = require('node-cache');
+const cache = new NodeCache({ stdTTL: 300 });
+
+app.get('/api/users/:id/profile', async (req, res) => {
+  const userId = req.params.id;
+  const cacheKey = `profile:${userId}`;
+  
+  // Check cache
+  const cached = cache.get(cacheKey);
+  if (cached) {
+    return res.json(cached);
+  }
+  
+  // Fetch and compose
+  const [user, orders, reviews] = await Promise.all([
+    axios.get(`http://user-service/users/${userId}`),
+    axios.get(`http://order-service/orders?userId=${userId}`),
+    axios.get(`http://review-service/reviews?userId=${userId}`)
+  ]);
+  
+  const profile = {
+    user: user.data,
+    orders: orders.data,
+    reviews: reviews.data
+  };
+  
+  // Cache result
+  cache.set(cacheKey, profile);
+  
+  res.json(profile);
+});
+```
+
+## GraphQL Composition
+
+```javascript
+const { ApolloServer, gql } = require('apollo-server-express');
+
+const typeDefs = gql`
+  type User {
+    id: ID!
+    name: String!
+    email: String!
+    orders: [Order!]!
+    reviews: [Review!]!
+  }
+  
+  type Order {
+    id: ID!
+    total: Float!
+    items: [OrderItem!]!
+  }
+  
+  type OrderItem {
+    product: Product!
+    quantity: Int!
+  }
+  
+  type Product {
+    id: ID!
+    name: String!
+    price: Float!
+  }
+  
+  type Review {
+    id: ID!
+    rating: Int!
+    comment: String!
+  }
+  
+  type Query {
+    user(id: ID!): User
+  }
+`;
+
+const resolvers = {
+  Query: {
+    user: async (_, { id }) => {
+      const response = await axios.get(`http://user-service/users/${id}`);
+      return response.data;
+    }
+  },
+  User: {
+    orders: async (user) => {
+      const response = await axios.get(`http://order-service/orders?userId=${user.id}`);
+      return response.data;
+    },
+    reviews: async (user) => {
+      const response = await axios.get(`http://review-service/reviews?userId=${user.id}`);
+      return response.data;
+    }
+  },
+  OrderItem: {
+    product: async (item) => {
+      const response = await axios.get(`http://product-service/products/${item.productId}`);
+      return response.data;
+    }
+  }
+};
+
+const server = new ApolloServer({ typeDefs, resolvers });
+```
+
+## Data Loader (Batching)
+
+```javascript
+const DataLoader = require('dataloader');
+
+// Batch load products
+const productLoader = new DataLoader(async (productIds) => {
+  const response = await axios.post('http://product-service/products/batch', {
+    ids: productIds
+  });
+  
+  return productIds.map(id =>
+    response.data.find(p => p.id === id)
+  );
+});
+
+// Use in resolver
+const resolvers = {
+  OrderItem: {
+    product: async (item) => {
+      return await productLoader.load(item.productId);
+    }
+  }
+};
+```
+
+## Timeout Handling
+
+```javascript
+async function fetchWithTimeout(url, timeout = 5000) {
+  return Promise.race([
+    axios.get(url),
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Timeout')), timeout)
+    )
+  ]);
+}
+
+app.get('/api/users/:id/profile', async (req, res) => {
+  const userId = req.params.id;
+  
+  const [user, orders, reviews] = await Promise.allSettled([
+    fetchWithTimeout(`http://user-service/users/${userId}`, 3000),
+    fetchWithTimeout(`http://order-service/orders?userId=${userId}`, 3000),
+    fetchWithTimeout(`http://review-service/reviews?userId=${userId}`, 3000)
+  ]);
+  
+  res.json({
+    user: user.status === 'fulfilled' ? user.value.data : null,
+    orders: orders.status === 'fulfilled' ? orders.value.data : [],
+    reviews: reviews.status === 'fulfilled' ? reviews.value.data : []
+  });
+});
+```
+
+## Benefits
+
+1. **Reduced Network Calls**: Single request from client
+2. **Better Performance**: Parallel fetching
+3. **Simplified Client**: No composition logic
+4. **Consistent Response**: Single format
+5. **Centralized Logic**: Easier to maintain
+
+## Challenges
+
+1. **Increased Complexity**: Gateway logic
+2. **Single Point of Failure**: Gateway down = all down
+3. **Performance Bottleneck**: All traffic through gateway
+4. **Tight Coupling**: Gateway knows all services
+
+## Best Practices
+
+1. **Use parallel fetching**: Promise.all
+2. **Handle partial failures**: Promise.allSettled
+3. **Implement caching**: Reduce backend calls
+4. **Set timeouts**: Prevent hanging
+5. **Use batching**: DataLoader for N+1 queries
+6. **Monitor performance**: Track composition time
+
+## Interview Tips
+
+- **Explain pattern**: Aggregate multiple services
+- **Show parallel fetching**: Promise.all
+- **Demonstrate error handling**: Partial responses
+- **Discuss GraphQL**: Declarative composition
+- **Mention batching**: DataLoader for efficiency
+- **Show caching**: Reduce backend load
+
+## Summary
+
+API Composition aggregates data from multiple microservices into single responses. Implement in API Gateway or BFF. Use parallel fetching with Promise.all. Handle partial failures gracefully. Cache composed responses. Use GraphQL for flexible composition. Implement batching with DataLoader. Essential for simplifying client interactions with microservices.

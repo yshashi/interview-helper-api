@@ -1,0 +1,281 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: EF Core Best Practices
+---
+
+# EF Core Best Practices
+
+## Query Best Practices
+
+### 1. Use AsNoTracking for Read-Only Queries
+
+```csharp
+// Good
+var products = await context.Products
+    .AsNoTracking()
+    .ToListAsync();
+```
+
+### 2. Project Only Required Data
+
+```csharp
+// Good
+var productNames = await context.Products
+    .Select(p => new { p.Id, p.Name })
+    .ToListAsync();
+
+// Avoid
+var products = await context.Products.ToListAsync();
+var names = products.Select(p => p.Name).ToList();
+```
+
+### 3. Use Eager Loading Appropriately
+
+```csharp
+// Good
+var orders = await context.Orders
+    .Include(o => o.OrderItems)
+    .ToListAsync();
+
+// Avoid N+1
+var orders = await context.Orders.ToListAsync();
+foreach (var order in orders)
+{
+    var items = order.OrderItems.ToList();
+}
+```
+
+### 4. Implement Pagination
+
+```csharp
+var products = await context.Products
+    .OrderBy(p => p.Name)
+    .Skip((page - 1) * pageSize)
+    .Take(pageSize)
+    .ToListAsync();
+```
+
+## Configuration Best Practices
+
+### 1. Use Fluent API for Complex Configurations
+
+```csharp
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    modelBuilder.ApplyConfigurationsFromAssembly(typeof(ApplicationDbContext).Assembly);
+}
+```
+
+### 2. Separate Configuration Classes
+
+```csharp
+public class ProductConfiguration : IEntityTypeConfiguration<Product>
+{
+    public void Configure(EntityTypeBuilder<Product> builder)
+    {
+        builder.HasKey(p => p.Id);
+        builder.Property(p => p.Name).IsRequired().HasMaxLength(200);
+    }
+}
+```
+
+### 3. Use Connection Resiliency
+
+```csharp
+services.AddDbContext<ApplicationDbContext>(options =>
+    options.UseSqlServer(connectionString, sqlOptions =>
+    {
+        sqlOptions.EnableRetryOnFailure(
+            maxRetryCount: 5,
+            maxRetryDelay: TimeSpan.FromSeconds(30),
+            errorNumbersToAdd: null);
+    }));
+```
+
+## DbContext Best Practices
+
+### 1. Use Scoped Lifetime
+
+```csharp
+services.AddDbContext<ApplicationDbContext>(
+    options => options.UseSqlServer(connectionString),
+    ServiceLifetime.Scoped);
+```
+
+### 2. Don't Share DbContext Across Threads
+
+```csharp
+// Bad
+private readonly ApplicationDbContext _context;
+
+// Good - Inject per request
+public ProductService(ApplicationDbContext context)
+{
+    _context = context;
+}
+```
+
+### 3. Dispose DbContext Properly
+
+```csharp
+// Good - using statement
+using (var context = new ApplicationDbContext())
+{
+    // Use context
+}
+
+// Good - DI handles disposal
+public class ProductService
+{
+    private readonly ApplicationDbContext _context;
+    
+    public ProductService(ApplicationDbContext context)
+    {
+        _context = context;
+    }
+}
+```
+
+## Migration Best Practices
+
+### 1. Review Generated Migrations
+
+```csharp
+// Always review before applying
+dotnet ef migrations add AddProductDescription
+// Review the generated migration file
+dotnet ef database update
+```
+
+### 2. Use Idempotent Scripts for Production
+
+```bash
+dotnet ef migrations script --idempotent --output deploy.sql
+```
+
+### 3. Test Migrations
+
+```csharp
+[Fact]
+public async Task Migration_ShouldAddColumn()
+{
+    using var context = CreateContext();
+    await context.Database.MigrateAsync();
+    // Verify migration
+}
+```
+
+## Security Best Practices
+
+### 1. Use Parameterized Queries
+
+```csharp
+// Good
+var products = await context.Products
+    .FromSqlInterpolated($"SELECT * FROM Products WHERE Name = {name}")
+    .ToListAsync();
+
+// Bad - SQL Injection risk
+var products = await context.Products
+    .FromSqlRaw($"SELECT * FROM Products WHERE Name = '{name}'")
+    .ToListAsync();
+```
+
+### 2. Implement Global Query Filters
+
+```csharp
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    modelBuilder.Entity<Product>()
+        .HasQueryFilter(p => !p.IsDeleted);
+}
+```
+
+### 3. Use Connection String Encryption
+
+```csharp
+// Store in user secrets or Azure Key Vault
+var connectionString = Configuration.GetConnectionString("DefaultConnection");
+```
+
+## Performance Best Practices
+
+### 1. Use Compiled Queries for Frequent Queries
+
+```csharp
+private static readonly Func<ApplicationDbContext, int, IEnumerable<Product>> _getProducts =
+    EF.CompileQuery((ApplicationDbContext context, int categoryId) =>
+        context.Products.Where(p => p.CategoryId == categoryId));
+```
+
+### 2. Batch Operations
+
+```csharp
+// Good
+context.Products.AddRange(products);
+await context.SaveChangesAsync();
+
+// Avoid
+foreach (var product in products)
+{
+    context.Products.Add(product);
+    await context.SaveChangesAsync();
+}
+```
+
+### 3. Use Appropriate Indexes
+
+```csharp
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    modelBuilder.Entity<Product>()
+        .HasIndex(p => p.Name);
+}
+```
+
+## Testing Best Practices
+
+### 1. Use In-Memory Database for Tests
+
+```csharp
+var options = new DbContextOptionsBuilder<ApplicationDbContext>()
+    .UseInMemoryDatabase(databaseName: "TestDb")
+    .Options;
+
+using var context = new ApplicationDbContext(options);
+```
+
+### 2. Separate Test Data Setup
+
+```csharp
+public class TestDataBuilder
+{
+    public static void SeedTestData(ApplicationDbContext context)
+    {
+        context.Products.AddRange(GetTestProducts());
+        context.SaveChanges();
+    }
+}
+```
+
+## Monitoring Best Practices
+
+### 1. Enable Logging in Development
+
+```csharp
+services.AddDbContext<ApplicationDbContext>(options =>
+    options.UseSqlServer(connectionString)
+           .LogTo(Console.WriteLine, LogLevel.Information)
+           .EnableSensitiveDataLogging()
+           .EnableDetailedErrors());
+```
+
+### 2. Use Application Insights
+
+```csharp
+services.AddApplicationInsightsTelemetry();
+```
+
+## Summary
+
+EF Core best practices include using AsNoTracking for read-only queries, implementing pagination, using Fluent API for configurations, proper DbContext lifetime management, reviewing migrations, parameterized queries for security, and enabling appropriate logging and monitoring.

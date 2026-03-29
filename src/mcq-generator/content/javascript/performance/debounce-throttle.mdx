@@ -1,0 +1,397 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Debouncing and Throttling in JavaScript
+---
+
+# Debouncing and Throttling in JavaScript
+
+## What are Debouncing and Throttling?
+
+Debouncing and throttling are techniques used to control the rate at which a function is executed. They are essential for optimizing performance, especially when dealing with events that fire frequently (like scroll, resize, or input events).
+
+## Debouncing
+
+**Debouncing** ensures that a function is only executed after a certain amount of time has passed since it was last invoked. If the function is called again before the delay expires, the timer resets.
+
+### Use Cases for Debouncing
+
+- **Search input**: Wait for the user to stop typing before making an API call
+- **Form validation**: Validate after the user finishes typing
+- **Window resize**: Execute layout calculations after resizing stops
+- **Auto-save**: Save content after the user stops editing
+
+### Debounce Implementation
+
+```javascript
+function debounce(func, delay) {
+  let timeoutId;
+  
+  return function(...args) {
+    // Clear the previous timeout
+    clearTimeout(timeoutId);
+    
+    // Set a new timeout
+    timeoutId = setTimeout(() => {
+      func.apply(this, args);
+    }, delay);
+  };
+}
+
+// Usage Example
+const searchInput = document.getElementById('search');
+
+const handleSearch = debounce((query) => {
+  console.log('Searching for:', query);
+  // Make API call
+  fetch(`/api/search?q=${query}`)
+    .then(response => response.json())
+    .then(data => console.log(data));
+}, 500);
+
+searchInput.addEventListener('input', (e) => {
+  handleSearch(e.target.value);
+});
+```
+
+### Advanced Debounce with Immediate Execution
+
+```javascript
+function debounce(func, delay, immediate = false) {
+  let timeoutId;
+  
+  return function(...args) {
+    const callNow = immediate && !timeoutId;
+    
+    clearTimeout(timeoutId);
+    
+    timeoutId = setTimeout(() => {
+      timeoutId = null;
+      if (!immediate) {
+        func.apply(this, args);
+      }
+    }, delay);
+    
+    if (callNow) {
+      func.apply(this, args);
+    }
+  };
+}
+
+// Execute immediately on first call, then debounce
+const saveData = debounce((data) => {
+  console.log('Saving:', data);
+}, 1000, true);
+```
+
+## Throttling
+
+**Throttling** ensures that a function is executed at most once in a specified time period. Unlike debouncing, throttling guarantees the function runs at regular intervals.
+
+### Use Cases for Throttling
+
+- **Scroll events**: Update UI elements while scrolling
+- **Mouse move tracking**: Track cursor position at intervals
+- **Button clicks**: Prevent multiple rapid submissions
+- **API rate limiting**: Ensure requests don't exceed limits
+- **Game loop updates**: Control frame rate
+
+### Throttle Implementation
+
+```javascript
+function throttle(func, limit) {
+  let inThrottle;
+  
+  return function(...args) {
+    if (!inThrottle) {
+      func.apply(this, args);
+      inThrottle = true;
+      
+      setTimeout(() => {
+        inThrottle = false;
+      }, limit);
+    }
+  };
+}
+
+// Usage Example
+const handleScroll = throttle(() => {
+  console.log('Scroll position:', window.scrollY);
+  // Update UI based on scroll position
+  updateProgressBar();
+}, 200);
+
+window.addEventListener('scroll', handleScroll);
+```
+
+### Advanced Throttle with Leading and Trailing Options
+
+```javascript
+function throttle(func, limit, options = {}) {
+  let timeout;
+  let previous = 0;
+  const { leading = true, trailing = true } = options;
+  
+  return function(...args) {
+    const now = Date.now();
+    
+    if (!previous && !leading) {
+      previous = now;
+    }
+    
+    const remaining = limit - (now - previous);
+    
+    if (remaining <= 0 || remaining > limit) {
+      if (timeout) {
+        clearTimeout(timeout);
+        timeout = null;
+      }
+      previous = now;
+      func.apply(this, args);
+    } else if (!timeout && trailing) {
+      timeout = setTimeout(() => {
+        previous = leading ? Date.now() : 0;
+        timeout = null;
+        func.apply(this, args);
+      }, remaining);
+    }
+  };
+}
+```
+
+## Key Differences
+
+| Aspect | Debouncing | Throttling |
+|--------|-----------|-----------|
+| **Execution** | After delay period of inactivity | At regular intervals |
+| **Frequency** | Once after events stop | Multiple times at fixed rate |
+| **Best For** | Events that should trigger after completion | Events that need regular updates |
+| **Example** | Search input | Scroll tracking |
+
+## Practical Examples
+
+### 1. Search with Debounce
+
+```javascript
+const searchBox = document.getElementById('searchBox');
+const resultsContainer = document.getElementById('results');
+
+const performSearch = debounce(async (query) => {
+  if (query.length < 3) return;
+  
+  try {
+    const response = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+    const results = await response.json();
+    displayResults(results);
+  } catch (error) {
+    console.error('Search failed:', error);
+  }
+}, 300);
+
+searchBox.addEventListener('input', (e) => {
+  performSearch(e.target.value);
+});
+```
+
+### 2. Infinite Scroll with Throttle
+
+```javascript
+const loadMoreContent = throttle(async () => {
+  const scrollPosition = window.innerHeight + window.scrollY;
+  const threshold = document.body.offsetHeight - 500;
+  
+  if (scrollPosition >= threshold) {
+    try {
+      const newContent = await fetchMoreContent();
+      appendContent(newContent);
+    } catch (error) {
+      console.error('Failed to load content:', error);
+    }
+  }
+}, 500);
+
+window.addEventListener('scroll', loadMoreContent);
+```
+
+### 3. Window Resize with Debounce
+
+```javascript
+const handleResize = debounce(() => {
+  const width = window.innerWidth;
+  const height = window.innerHeight;
+  
+  console.log(`Window resized to: ${width}x${height}`);
+  
+  // Recalculate layout
+  recalculateLayout();
+  
+  // Update responsive elements
+  updateResponsiveElements();
+}, 250);
+
+window.addEventListener('resize', handleResize);
+```
+
+### 4. Button Click Protection with Throttle
+
+```javascript
+const submitButton = document.getElementById('submit');
+
+const handleSubmit = throttle(async (event) => {
+  event.preventDefault();
+  
+  submitButton.disabled = true;
+  submitButton.textContent = 'Submitting...';
+  
+  try {
+    const formData = new FormData(event.target);
+    const response = await fetch('/api/submit', {
+      method: 'POST',
+      body: formData
+    });
+    
+    const result = await response.json();
+    console.log('Submission successful:', result);
+  } catch (error) {
+    console.error('Submission failed:', error);
+  } finally {
+    submitButton.disabled = false;
+    submitButton.textContent = 'Submit';
+  }
+}, 2000);
+
+submitButton.addEventListener('click', handleSubmit);
+```
+
+## Performance Benefits
+
+### Without Debounce/Throttle
+
+```javascript
+// This could fire hundreds of times per second!
+window.addEventListener('scroll', () => {
+  console.log('Scroll event fired');
+  // Expensive operation
+  updateUI();
+});
+```
+
+### With Throttle
+
+```javascript
+// This fires at most once every 200ms
+window.addEventListener('scroll', throttle(() => {
+  console.log('Scroll event fired');
+  updateUI();
+}, 200));
+```
+
+## Modern Alternatives
+
+### Using RequestAnimationFrame
+
+For visual updates, `requestAnimationFrame` is often better than throttling:
+
+```javascript
+let ticking = false;
+
+window.addEventListener('scroll', () => {
+  if (!ticking) {
+    window.requestAnimationFrame(() => {
+      updateScrollPosition();
+      ticking = false;
+    });
+    ticking = true;
+  }
+});
+```
+
+### Using Lodash/Underscore
+
+Popular libraries provide robust implementations:
+
+```javascript
+import { debounce, throttle } from 'lodash';
+
+const debouncedSearch = debounce(searchFunction, 300);
+const throttledScroll = throttle(scrollHandler, 200);
+```
+
+## Best Practices
+
+1. **Choose the right delay**: Too short defeats the purpose, too long feels unresponsive
+2. **Consider user experience**: Balance performance with responsiveness
+3. **Clean up**: Remove event listeners when components unmount
+4. **Test different scenarios**: Fast typing, rapid scrolling, etc.
+5. **Use appropriate technique**: Debounce for completion, throttle for continuous updates
+6. **Consider cancellation**: Provide a way to cancel pending operations
+
+## Common Pitfalls
+
+### 1. Losing Context
+
+```javascript
+// Wrong: 'this' context is lost
+class SearchComponent {
+  constructor() {
+    this.query = '';
+    this.search = debounce(this.performSearch, 300);
+  }
+  
+  performSearch() {
+    console.log(this.query); // 'this' is undefined!
+  }
+}
+
+// Correct: Bind the context
+class SearchComponent {
+  constructor() {
+    this.query = '';
+    this.search = debounce(this.performSearch.bind(this), 300);
+  }
+  
+  performSearch() {
+    console.log(this.query); // Works correctly
+  }
+}
+```
+
+### 2. Creating New Functions on Each Render
+
+```javascript
+// Wrong: Creates new debounced function on every render
+function SearchInput() {
+  const handleChange = (e) => {
+    const debouncedSearch = debounce(search, 300); // New function each time!
+    debouncedSearch(e.target.value);
+  };
+}
+
+// Correct: Create once and reuse
+function SearchInput() {
+  const debouncedSearch = useMemo(
+    () => debounce(search, 300),
+    []
+  );
+  
+  const handleChange = (e) => {
+    debouncedSearch(e.target.value);
+  };
+}
+```
+
+## Interview Tips
+
+- **Explain the difference** between debouncing and throttling clearly
+- **Provide real-world use cases** for each technique
+- **Discuss performance implications** of not using these techniques
+- **Show implementation knowledge** with code examples
+- **Mention edge cases** like context binding and cleanup
+- **Discuss modern alternatives** like requestAnimationFrame
+- **Explain when to use which** technique based on requirements
+
+## Summary
+
+- **Debouncing**: Delays execution until after a period of inactivity
+- **Throttling**: Limits execution to once per time period
+- Both techniques are essential for optimizing performance in event-heavy applications
+- Choose based on whether you need the last call (debounce) or regular intervals (throttle)

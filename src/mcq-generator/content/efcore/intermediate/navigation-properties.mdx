@@ -1,0 +1,190 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Navigation Properties in EF Core
+---
+
+# Navigation Properties in EF Core
+
+## What are Navigation Properties?
+
+**Navigation properties** are properties on entity classes that reference related entities. They represent relationships between entities and allow you to navigate from one entity to another.
+
+## Types of Navigation Properties
+
+### 1. Reference Navigation Properties
+
+Point to a single related entity (one side of relationship):
+
+```csharp
+public class Post
+{
+    public int Id { get; set; }
+    public string Title { get; set; }
+    public int BlogId { get; set; }
+    
+    // Reference navigation property
+    public Blog Blog { get; set; }
+}
+```
+
+### 2. Collection Navigation Properties
+
+Point to multiple related entities (many side of relationship):
+
+```csharp
+public class Blog
+{
+    public int Id { get; set; }
+    public string Name { get; set; }
+    
+    // Collection navigation property
+    public ICollection<Post> Posts { get; set; }
+}
+```
+
+## One-to-Many Relationship
+
+```csharp
+public class Category
+{
+    public int Id { get; set; }
+    public string Name { get; set; }
+    
+    // Collection navigation
+    public ICollection<Product> Products { get; set; }
+}
+
+public class Product
+{
+    public int Id { get; set; }
+    public string Name { get; set; }
+    public int CategoryId { get; set; }
+    
+    // Reference navigation
+    public Category Category { get; set; }
+}
+```
+
+## One-to-One Relationship
+
+```csharp
+public class User
+{
+    public int Id { get; set; }
+    public string Username { get; set; }
+    
+    // Reference navigation
+    public UserProfile Profile { get; set; }
+}
+
+public class UserProfile
+{
+    public int Id { get; set; }
+    public string Bio { get; set; }
+    public int UserId { get; set; }
+    
+    // Reference navigation
+    public User User { get; set; }
+}
+```
+
+## Many-to-Many Relationship
+
+```csharp
+public class Student
+{
+    public int Id { get; set; }
+    public string Name { get; set; }
+    
+    // Collection navigation
+    public ICollection<Course> Courses { get; set; }
+}
+
+public class Course
+{
+    public int Id { get; set; }
+    public string Title { get; set; }
+    
+    // Collection navigation
+    public ICollection<Student> Students { get; set; }
+}
+```
+
+## Inverse Navigation Properties
+
+```csharp
+public class Order
+{
+    public int Id { get; set; }
+    public DateTime OrderDate { get; set; }
+    
+    // Navigation to OrderItems
+    public ICollection<OrderItem> OrderItems { get; set; }
+}
+
+public class OrderItem
+{
+    public int Id { get; set; }
+    public int Quantity { get; set; }
+    public int OrderId { get; set; }
+    
+    // Inverse navigation back to Order
+    public Order Order { get; set; }
+}
+```
+
+## Using Navigation Properties
+
+```csharp
+// Access related entities
+var blog = context.Blogs.Include(b => b.Posts).First();
+foreach (var post in blog.Posts)
+{
+    Console.WriteLine(post.Title);
+}
+
+// Navigate from child to parent
+var post = context.Posts.Include(p => p.Blog).First();
+Console.WriteLine(post.Blog.Name);
+
+// Add related entities
+var newBlog = new Blog { Name = "My Blog" };
+newBlog.Posts = new List<Post>
+{
+    new Post { Title = "First Post" },
+    new Post { Title = "Second Post" }
+};
+context.Blogs.Add(newBlog);
+context.SaveChanges();
+```
+
+## Configuration
+
+```csharp
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    modelBuilder.Entity<Post>()
+        .HasOne(p => p.Blog)
+        .WithMany(b => b.Posts)
+        .HasForeignKey(p => p.BlogId);
+}
+```
+
+## Best Practices
+
+1. **Initialize collections in constructor**
+2. **Use ICollection&lt;T&gt; for collections**
+3. **Make navigation properties virtual for lazy loading**
+4. **Configure relationships explicitly**
+
+## Interview Tips
+
+- **Explain navigation properties**: Properties that reference related entities
+- **Show types**: Reference vs collection
+- **Demonstrate relationships**: One-to-many, one-to-one, many-to-many
+- **Show usage**: Include, accessing related data
+- **Mention configuration**: Fluent API setup
+
+## Summary
+
+Navigation properties in EF Core represent relationships between entities. Reference properties point to single entities, while collection properties point to multiple entities. They enable navigating between related entities and are essential for defining and working with relationships in EF Core.

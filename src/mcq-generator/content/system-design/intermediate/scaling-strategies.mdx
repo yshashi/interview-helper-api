@@ -1,0 +1,485 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Horizontal vs Vertical Scaling
+---
+
+# Horizontal vs Vertical Scaling
+
+## Vertical Scaling (Scale Up)
+
+**Definition:** Adding more resources (CPU, RAM, disk, bandwidth) to an existing server to increase its capacity.
+
+**Example Implementation:**
+- **Before:** 4 CPU cores, 16GB RAM, 500GB disk
+- **After:** 16 CPU cores, 128GB RAM, 2TB disk
+
+**Advantages:**
+- Simple to implement - just upgrade hardware
+- No application code changes required
+- No distributed system complexity
+- Strong data consistency maintained
+- Lower software licensing costs (single server)
+
+**Disadvantages:**
+- Hardware limits exist (typically max 256 cores, 24TB RAM)
+- Single point of failure
+- Requires downtime during upgrades
+- Very expensive at high end
+- Cannot scale infinitely
+
+**Best Use Cases:**
+- Legacy applications not designed for distribution
+- Databases requiring strict ACID compliance
+- Small to medium workloads
+- Quick performance fixes without architecture changes
+
+## Horizontal Scaling (Scale Out)
+
+**Definition:** Adding more servers to the system to distribute the load across multiple machines.
+
+**Example Implementation:**
+- **Before:** 1 server handling 1,000 requests/second
+- **After:** 10 servers handling 10,000 requests/second total
+
+**Advantages:**
+- No hardware limits - add as many servers as needed
+- High availability - no single point of failure
+- Cost effective using commodity hardware
+- Gradual scaling - add servers incrementally
+- Better fault tolerance - system continues if one server fails
+- Geographic distribution possible
+
+**Disadvantages:**
+- Complex architecture to manage
+- Data consistency challenges across servers
+- Network overhead between servers
+- Load balancing required
+- More operational complexity
+
+**Best Use Cases:**
+- Web applications with high traffic
+- Microservices architectures
+- Cloud-native applications
+- Systems requiring high availability
+
+## Scaling Decision Matrix
+
+```javascript
+class ScalingDecision {
+  shouldScaleHorizontally(requirements) {
+    const factors = {
+      traffic: requirements.requestsPerSecond > 10000,
+      growth: requirements.growthRate > 0.5,
+      availability: requirements.uptimeRequired > 99.9,
+      budget: requirements.budget === 'moderate',
+      stateless: requirements.isStateless,
+      distributed: requirements.needsDistribution
+    };
+    
+    const score = Object.values(factors).filter(Boolean).length;
+    
+    return {
+      recommendation: score >= 4 ? 'horizontal' : 'vertical',
+      score: score / Object.keys(factors).length,
+      factors
+    };
+  }
+}
+
+// Example
+const decision = new ScalingDecision();
+console.log(decision.shouldScaleHorizontally({
+  requestsPerSecond: 50000,
+  growthRate: 0.8,
+  uptimeRequired: 99.99,
+  budget: 'moderate',
+  isStateless: true,
+  needsDistribution: true
+}));
+// Recommendation: horizontal
+```
+
+## Auto Scaling
+
+```javascript
+// AWS Auto Scaling configuration
+const autoScalingConfig = {
+  minSize: 2,
+  maxSize: 20,
+  desiredCapacity: 5,
+  
+  scalingPolicies: {
+    scaleUp: {
+      metric: 'CPUUtilization',
+      threshold: 70,
+      action: 'Add 2 instances',
+      cooldown: 300
+    },
+    scaleDown: {
+      metric: 'CPUUtilization',
+      threshold: 30,
+      action: 'Remove 1 instance',
+      cooldown: 600
+    }
+  },
+  
+  healthCheck: {
+    type: 'ELB',
+    gracePeriod: 300,
+    unhealthyThreshold: 2
+  }
+};
+
+// Kubernetes Horizontal Pod Autoscaler
+const hpaConfig = `
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: myapp-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: myapp
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+`;
+```
+
+## Load Balancing for Horizontal Scaling
+
+```javascript
+class LoadBalancedScaling {
+  constructor() {
+    this.servers = [];
+    this.loadBalancer = new LoadBalancer();
+  }
+  
+  // Add server to pool
+  addServer(server) {
+    this.servers.push({
+      host: server,
+      healthy: true,
+      connections: 0,
+      addedAt: Date.now()
+    });
+    
+    this.loadBalancer.registerServer(server);
+    console.log(`Added server: ${server}`);
+  }
+  
+  // Remove server gracefully
+  async removeServer(server) {
+    // Stop sending new requests
+    this.loadBalancer.deregisterServer(server);
+    
+    // Wait for existing connections to drain
+    await this.drainConnections(server);
+    
+    // Remove from pool
+    this.servers = this.servers.filter(s => s.host !== server);
+    console.log(`Removed server: ${server}`);
+  }
+  
+  async drainConnections(server) {
+    const serverInfo = this.servers.find(s => s.host === server);
+    
+    while (serverInfo.connections > 0) {
+      console.log(`Waiting for ${serverInfo.connections} connections to drain...`);
+      await new Promise(resolve => setTimeout(resolve, 5000));
+    }
+  }
+}
+```
+
+## Database Scaling Strategies
+
+```javascript
+const databaseScaling = {
+  vertical: {
+    approach: 'Upgrade database server',
+    steps: [
+      'Take snapshot/backup',
+      'Stop application',
+      'Upgrade hardware',
+      'Restore data',
+      'Start application'
+    ],
+    downtime: 'Hours'
+  },
+  
+  readReplicas: {
+    approach: 'Add read-only replicas',
+    implementation: `
+      Primary (writes) → Replica 1 (reads)
+                      → Replica 2 (reads)
+                      → Replica 3 (reads)
+    `,
+    downtime: 'None'
+  },
+  
+  sharding: {
+    approach: 'Partition data across servers',
+    strategies: ['Hash-based', 'Range-based', 'Geographic'],
+    downtime: 'Minimal with proper planning'
+  }
+};
+
+// Read replica implementation
+class DatabaseWithReplicas {
+  constructor() {
+    this.primary = 'db-primary:5432';
+    this.replicas = [
+      'db-replica-1:5432',
+      'db-replica-2:5432',
+      'db-replica-3:5432'
+    ];
+    this.currentReplica = 0;
+  }
+  
+  async write(query) {
+    return await this.execute(this.primary, query);
+  }
+  
+  async read(query) {
+    const replica = this.replicas[this.currentReplica];
+    this.currentReplica = (this.currentReplica + 1) % this.replicas.length;
+    return await this.execute(replica, query);
+  }
+}
+```
+
+## Stateless Architecture for Horizontal Scaling
+
+```javascript
+// ❌ Stateful (doesn't scale horizontally)
+class StatefulServer {
+  constructor() {
+    this.sessions = new Map();
+  }
+  
+  login(userId, sessionId) {
+    this.sessions.set(sessionId, { userId, loginTime: Date.now() });
+  }
+  
+  getSession(sessionId) {
+    return this.sessions.get(sessionId);
+  }
+  
+  // Problem: Session lost if server restarts or user hits different server
+}
+
+// ✅ Stateless (scales horizontally)
+class StatelessServer {
+  constructor(redis) {
+    this.redis = redis;
+  }
+  
+  async login(userId, sessionId) {
+    await this.redis.setEx(
+      `session:${sessionId}`,
+      3600,
+      JSON.stringify({ userId, loginTime: Date.now() })
+    );
+  }
+  
+  async getSession(sessionId) {
+    const session = await this.redis.get(`session:${sessionId}`);
+    return session ? JSON.parse(session) : null;
+  }
+  
+  // Benefit: Any server can handle any request
+}
+```
+
+## Scaling Metrics
+
+```javascript
+class ScalingMetrics {
+  calculateScalingEfficiency(baseline, scaled) {
+    return {
+      // Linear scaling = 1.0
+      efficiency: scaled.throughput / (baseline.throughput * scaled.instances),
+      
+      // Cost per request
+      costEfficiency: (scaled.cost / scaled.throughput) / (baseline.cost / baseline.throughput),
+      
+      // Latency impact
+      latencyImpact: scaled.latency / baseline.latency,
+      
+      // Resource utilization
+      utilization: {
+        cpu: scaled.cpuUsage / scaled.instances,
+        memory: scaled.memoryUsage / scaled.instances
+      }
+    };
+  }
+}
+
+// Example
+const metrics = new ScalingMetrics();
+console.log(metrics.calculateScalingEfficiency(
+  { instances: 1, throughput: 1000, cost: 100, latency: 50 },
+  { instances: 10, throughput: 9000, cost: 1000, latency: 55, cpuUsage: 600, memoryUsage: 800 }
+));
+```
+
+## Hybrid Scaling
+
+```javascript
+const hybridScaling = {
+  approach: 'Combine vertical and horizontal scaling',
+  
+  strategy: {
+    phase1: {
+      action: 'Vertical scaling',
+      reason: 'Quick wins, simple implementation',
+      limit: 'Until cost/performance ratio deteriorates'
+    },
+    
+    phase2: {
+      action: 'Horizontal scaling',
+      reason: 'Better cost efficiency, higher availability',
+      implementation: 'Add more medium-sized servers'
+    }
+  },
+  
+  example: {
+    initial: { servers: 1, size: 'small', capacity: 1000 },
+    phase1: { servers: 1, size: 'large', capacity: 4000 },
+    phase2: { servers: 4, size: 'large', capacity: 16000 }
+  }
+};
+```
+
+## .NET Auto Scaling
+
+```csharp
+using Microsoft.Azure.Management.Monitor;
+using Microsoft.Azure.Management.Compute;
+
+public class AutoScalingService
+{
+    private readonly ComputeManagementClient _computeClient;
+    private readonly MonitorManagementClient _monitorClient;
+    
+    public async Task ConfigureAutoScaling(
+        string resourceGroup,
+        string vmScaleSetName)
+    {
+        // Create autoscale setting
+        var autoscaleSetting = new AutoscaleSettingResource
+        {
+            Location = "eastus",
+            Enabled = true,
+            TargetResourceUri = $"/subscriptions/{subscriptionId}/resourceGroups/{resourceGroup}/providers/Microsoft.Compute/virtualMachineScaleSets/{vmScaleSetName}",
+            
+            Profiles = new List<AutoscaleProfile>
+            {
+                new AutoscaleProfile
+                {
+                    Name = "Auto scale profile",
+                    Capacity = new ScaleCapacity
+                    {
+                        Minimum = "2",
+                        Maximum = "10",
+                        Default = "2"
+                    },
+                    Rules = new List<ScaleRule>
+                    {
+                        // Scale up rule
+                        new ScaleRule
+                        {
+                            MetricTrigger = new MetricTrigger
+                            {
+                                MetricName = "Percentage CPU",
+                                Threshold = 70,
+                                Operator = ComparisonOperationType.GreaterThan,
+                                TimeAggregation = TimeAggregationType.Average,
+                                TimeWindow = TimeSpan.FromMinutes(5)
+                            },
+                            ScaleAction = new ScaleAction
+                            {
+                                Direction = ScaleDirection.Increase,
+                                Type = ScaleType.ChangeCount,
+                                Value = "1",
+                                Cooldown = TimeSpan.FromMinutes(5)
+                            }
+                        },
+                        // Scale down rule
+                        new ScaleRule
+                        {
+                            MetricTrigger = new MetricTrigger
+                            {
+                                MetricName = "Percentage CPU",
+                                Threshold = 30,
+                                Operator = ComparisonOperationType.LessThan,
+                                TimeAggregation = TimeAggregationType.Average,
+                                TimeWindow = TimeSpan.FromMinutes(10)
+                            },
+                            ScaleAction = new ScaleAction
+                            {
+                                Direction = ScaleDirection.Decrease,
+                                Type = ScaleType.ChangeCount,
+                                Value = "1",
+                                Cooldown = TimeSpan.FromMinutes(10)
+                            }
+                        }
+                    }
+                }
+            }
+        };
+        
+        await _monitorClient.AutoscaleSettings.CreateOrUpdateAsync(
+            resourceGroup,
+            "autoscale-setting",
+            autoscaleSetting
+        );
+    }
+}
+```
+
+## Scaling Best Practices
+
+```javascript
+const scalingBestPractices = [
+  'Design for horizontal scaling from the start',
+  'Make services stateless',
+  'Use external session storage (Redis)',
+  'Implement health checks',
+  'Use connection draining for graceful shutdowns',
+  'Monitor scaling metrics',
+  'Set appropriate auto-scaling thresholds',
+  'Test scaling under load',
+  'Plan for database scaling separately',
+  'Use load balancers',
+  'Implement circuit breakers',
+  'Cache aggressively'
+];
+```
+
+## Interview Tips
+
+- **Explain both approaches**: Vertical vs horizontal
+- **Show trade-offs**: Simplicity vs scalability
+- **Demonstrate auto-scaling**: Metrics and thresholds
+- **Discuss stateless design**: Essential for horizontal scaling
+- **Mention database scaling**: Read replicas, sharding
+- **Show real examples**: AWS, Kubernetes
+
+## Summary
+
+Vertical scaling adds resources to existing servers (simple but limited). Horizontal scaling adds more servers (complex but unlimited). Design stateless services for horizontal scaling. Use auto-scaling based on metrics (CPU, memory, requests). Implement load balancing to distribute traffic. Use read replicas for database read scaling. Consider hybrid approach: vertical first, then horizontal. Monitor scaling efficiency and cost. Essential for building systems that handle growth.

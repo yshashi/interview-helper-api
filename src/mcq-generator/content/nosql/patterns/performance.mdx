@@ -1,0 +1,515 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Performance Optimization
+---
+
+# Performance Optimization
+
+## Indexing Strategy
+
+```javascript
+// Create indexes for frequently queried fields
+db.users.createIndex({ email: 1 }, { unique: true });
+db.users.createIndex({ status: 1, createdAt: -1 });
+db.orders.createIndex({ userId: 1, orderDate: -1 });
+
+// Compound index for multiple fields
+db.products.createIndex({ category: 1, price: -1, name: 1 });
+
+// Text index for search
+db.articles.createIndex({ title: "text", content: "text" });
+
+// Geospatial index
+db.locations.createIndex({ coordinates: "2dsphere" });
+
+// Drop unused indexes
+db.users.dropIndex("oldIndex_1");
+```
+
+## Query Optimization
+
+### Use Projection
+
+```javascript
+// ❌ Bad: Return all fields
+db.users.find({ status: "active" });
+
+// ✅ Good: Return only needed fields
+db.users.find(
+  { status: "active" },
+  { name: 1, email: 1, _id: 0 }
+);
+```
+
+### Limit Results
+
+```javascript
+// ❌ Bad: Return all documents
+db.users.find({ status: "active" });
+
+// ✅ Good: Limit results
+db.users.find({ status: "active" }).limit(100);
+```
+
+### Use Covered Queries
+
+```javascript
+// Create compound index
+db.users.createIndex({ email: 1, name: 1 });
+
+// Covered query (no document fetch)
+db.users.find(
+  { email: "john@example.com" },
+  { _id: 0, email: 1, name: 1 }
+);
+
+// Verify covered
+const explain = db.users.find(
+  { email: "john@example.com" },
+  { _id: 0, email: 1, name: 1 }
+).explain("executionStats");
+
+console.log(explain.executionStats.totalDocsExamined);  // Should be 0
+```
+
+## Aggregation Optimization
+
+```javascript
+// ❌ Bad: Filter after grouping
+db.orders.aggregate([
+  { $group: { _id: "$userId", total: { $sum: "$amount" } } },
+  { $match: { total: { $gte: 1000 } } }
+]);
+
+// ✅ Good: Filter early
+db.orders.aggregate([
+  { $match: { status: "completed" } },  // Filter first
+  { $project: { userId: 1, amount: 1 } },  // Limit fields
+  { $group: { _id: "$userId", total: { $sum: "$amount" } } },
+  { $match: { total: { $gte: 1000 } } },
+  { $sort: { total: -1 } },
+  { $limit: 10 }
+]);
+
+// Use allowDiskUse for large datasets
+db.orders.aggregate(pipeline, { allowDiskUse: true });
+```
+
+## Connection Pooling
+
+```javascript
+// MongoDB connection pool
+const { MongoClient } = require('mongodb');
+
+const client = new MongoClient(uri, {
+  maxPoolSize: 50,
+  minPoolSize: 10,
+  maxIdleTimeMS: 30000,
+  waitQueueTimeoutMS: 5000
+});
+
+// Reuse connections
+await client.connect();
+const db = client.db('myapp');
+
+// Don't create new client for each request
+// ❌ Bad
+app.get('/users', async (req, res) => {
+  const client = new MongoClient(uri);
+  await client.connect();
+  // ...
+  await client.close();
+});
+
+// ✅ Good
+app.get('/users', async (req, res) => {
+  const users = await db.collection('users').find().toArray();
+  res.json(users);
+});
+```
+
+## Caching Strategy
+
+```javascript
+const redis = require('redis');
+const redisClient = redis.createClient();
+await redisClient.connect();
+
+class CachedUserService {
+  async getUser(userId) {
+    const cacheKey = `user:${userId}`;
+    
+    // Try cache first
+    const cached = await redisClient.get(cacheKey);
+    if (cached) {
+      return JSON.parse(cached);
+    }
+    
+    // Load from database
+    const user = await db.collection('users').findOne({ _id: userId });
+    
+    // Cache for 5 minutes
+    await redisClient.setEx(cacheKey, 300, JSON.stringify(user));
+    
+    return user;
+  }
+  
+  async updateUser(userId, updates) {
+    // Update database
+    await db.collection('users').updateOne(
+      { _id: userId },
+      { $set: updates }
+    );
+    
+    // Invalidate cache
+    await redisClient.del(`user:${userId}`);
+  }
+}
+```
+
+## Batch Operations
+
+```javascript
+// ❌ Bad: Multiple single operations
+for (const user of users) {
+  await db.collection('users').insertOne(user);
+}
+
+// ✅ Good: Batch insert
+await db.collection('users').insertMany(users, { ordered: false });
+
+// ❌ Bad: Multiple updates
+for (const userId of userIds) {
+  await db.collection('users').updateOne(
+    { _id: userId },
+    { $set: { status: 'active' } }
+  );
+}
+
+// ✅ Good: Bulk write
+const bulkOps = userIds.map(userId => ({
+  updateOne: {
+    filter: { _id: userId },
+    update: { $set: { status: 'active' } }
+  }
+}));
+
+await db.collection('users').bulkWrite(bulkOps, { ordered: false });
+```
+
+## Denormalization
+
+```javascript
+// ❌ Bad: Multiple queries
+const user = await db.users.findOne({ _id: userId });
+const orders = await db.orders.find({ userId }).toArray();
+const address = await db.addresses.findOne({ userId });
+
+// ✅ Good: Embedded data (single query)
+const user = await db.users.findOne({ _id: userId });
+// user.recentOrders and user.address already embedded
+```
+
+## Read Preference
+
+```javascript
+// Read from secondary for analytics
+const analytics = await db.collection('events')
+  .find({ date: { $gte: startDate } })
+  .toArray({
+    readPreference: 'secondaryPreferred'
+  });
+
+// Read from primary for critical data
+const balance = await db.collection('accounts')
+  .findOne({ _id: accountId }, {
+    readPreference: 'primary',
+    readConcern: { level: 'majority' }
+  });
+```
+
+## Pagination
+
+```javascript
+// ❌ Bad: Skip for large offsets
+const page = 1000;
+const limit = 10;
+const users = await db.users.find()
+  .skip(page * limit)
+  .limit(limit)
+  .toArray();
+
+// ✅ Good: Range-based pagination
+const lastId = req.query.lastId;
+const users = await db.users.find({
+  _id: { $gt: ObjectId(lastId) }
+})
+  .limit(10)
+  .toArray();
+```
+
+## Monitoring and Profiling
+
+```javascript
+// Enable profiler
+db.setProfilingLevel(2);  // Log all operations
+db.setProfilingLevel(1, { slowms: 100 });  // Log slow queries
+
+// View slow queries
+db.system.profile.find().sort({ ts: -1 }).limit(10);
+
+// Analyze query performance
+const explain = db.users.find({ email: "john@example.com" })
+  .explain("executionStats");
+
+console.log({
+  executionTimeMillis: explain.executionStats.executionTimeMillis,
+  totalDocsExamined: explain.executionStats.totalDocsExamined,
+  totalKeysExamined: explain.executionStats.totalKeysExamined,
+  indexUsed: explain.executionStats.executionStages.indexName
+});
+
+// Current operations
+db.currentOp({ "secs_running": { $gte: 5 } });
+
+// Kill slow operation
+db.killOp(opId);
+```
+
+## Write Optimization
+
+```javascript
+// Batch writes with unordered
+await db.collection('logs').insertMany(
+  logs,
+  { ordered: false }  // Continue on error
+);
+
+// Use appropriate write concern
+await db.collection('logs').insertOne(
+  logEntry,
+  { writeConcern: { w: 1, j: false } }  // Fast, less durable
+);
+
+await db.collection('transactions').insertOne(
+  transaction,
+  { writeConcern: { w: 'majority', j: true } }  // Slow, more durable
+);
+```
+
+## Schema Optimization
+
+```javascript
+// ❌ Bad: Large embedded arrays
+{
+  userId: "123",
+  actions: [
+    // Thousands of actions
+  ]
+}
+
+// ✅ Good: Reference or bucket pattern
+{
+  userId: "123",
+  recentActions: [
+    // Last 10 actions
+  ],
+  totalActions: 5000
+}
+
+// Actions in separate collection
+{
+  userId: "123",
+  action: "login",
+  timestamp: ISODate("2024-01-01")
+}
+```
+
+## Cassandra Performance
+
+```javascript
+// ✅ Good: Query by partition key
+await client.execute(
+  'SELECT * FROM users WHERE user_id = ?',
+  [userId],
+  { prepare: true }
+);
+
+// ❌ Bad: Query without partition key
+await client.execute(
+  'SELECT * FROM users WHERE email = ? ALLOW FILTERING',
+  [email],
+  { prepare: true }
+);
+
+// ✅ Good: Use materialized view
+CREATE MATERIALIZED VIEW users_by_email AS
+  SELECT * FROM users
+  WHERE email IS NOT NULL
+  PRIMARY KEY (email, user_id);
+
+SELECT * FROM users_by_email WHERE email = 'john@example.com';
+```
+
+## Redis Performance
+
+```javascript
+// ✅ Good: Pipeline commands
+const pipeline = redisClient.multi();
+for (let i = 0; i < 1000; i++) {
+  pipeline.get(`key:${i}`);
+}
+const results = await pipeline.exec();
+
+// ✅ Good: Use appropriate data structures
+// Don't store JSON strings
+await redisClient.set('user:1', JSON.stringify(user));  // ❌
+
+// Use hashes
+await redisClient.hSet('user:1', user);  // ✅
+
+// ✅ Good: Use Lua scripts for atomic operations
+const script = `
+  local value = redis.call('GET', KEYS[1])
+  if tonumber(value) > tonumber(ARGV[1]) then
+    redis.call('DECRBY', KEYS[1], ARGV[1])
+    return 1
+  else
+    return 0
+  end
+`;
+
+await redisClient.eval(script, {
+  keys: ['balance:123'],
+  arguments: ['100']
+});
+```
+
+## DynamoDB Performance
+
+```javascript
+// ✅ Good: Use Query instead of Scan
+const command = new QueryCommand({
+  TableName: 'Users',
+  IndexName: 'EmailIndex',
+  KeyConditionExpression: 'email = :email',
+  ExpressionAttributeValues: {
+    ':email': 'john@example.com'
+  }
+});
+
+// ❌ Bad: Scan entire table
+const scanCommand = new ScanCommand({
+  TableName: 'Users',
+  FilterExpression: 'email = :email',
+  ExpressionAttributeValues: {
+    ':email': 'john@example.com'
+  }
+});
+
+// ✅ Good: Batch operations
+const batchCommand = new BatchGetCommand({
+  RequestItems: {
+    Users: {
+      Keys: userIds.map(id => ({ userId: id }))
+    }
+  }
+});
+
+// ✅ Good: Use projection
+const command = new GetCommand({
+  TableName: 'Users',
+  Key: { userId: '123' },
+  ProjectionExpression: 'userId, #n, email',
+  ExpressionAttributeNames: {
+    '#n': 'name'
+  }
+});
+```
+
+## .NET Performance
+
+```csharp
+using MongoDB.Driver;
+
+public class PerformanceService
+{
+    private readonly IMongoCollection<User> _users;
+    
+    // Use projection
+    public async Task<List<UserSummary>> GetUserSummaries()
+    {
+        return await _users
+            .Find(_ => true)
+            .Project(u => new UserSummary
+            {
+                Id = u.Id,
+                Name = u.Name,
+                Email = u.Email
+            })
+            .Limit(100)
+            .ToListAsync();
+    }
+    
+    // Batch operations
+    public async Task BulkUpdateStatus(List<string> userIds, string status)
+    {
+        var bulkOps = userIds.Select(id => 
+            new UpdateOneModel<User>(
+                Builders<User>.Filter.Eq(u => u.Id, id),
+                Builders<User>.Update.Set(u => u.Status, status)
+            )
+        );
+        
+        await _users.BulkWriteAsync(bulkOps, new BulkWriteOptions
+        {
+            IsOrdered = false
+        });
+    }
+    
+    // Use indexes
+    public async Task CreateIndexes()
+    {
+        await _users.Indexes.CreateOneAsync(
+            new CreateIndexModel<User>(
+                Builders<User>.IndexKeys.Ascending(u => u.Email),
+                new CreateIndexOptions { Unique = true }
+            )
+        );
+    }
+}
+```
+
+## Performance Checklist
+
+```javascript
+const performanceChecklist = [
+  'Create indexes on frequently queried fields',
+  'Use projection to limit returned fields',
+  'Limit result sets with .limit()',
+  'Use covered queries when possible',
+  'Filter early in aggregation pipelines',
+  'Use connection pooling',
+  'Implement caching layer',
+  'Batch operations when possible',
+  'Denormalize for read-heavy workloads',
+  'Use appropriate read preferences',
+  'Monitor slow queries',
+  'Optimize schema design',
+  'Use range-based pagination',
+  'Profile and analyze queries'
+];
+```
+
+## Interview Tips
+
+- **Explain indexing**: Critical for query performance
+- **Show optimization**: Projection, limits, covered queries
+- **Demonstrate caching**: Redis for frequently accessed data
+- **Discuss batching**: Bulk operations vs single
+- **Mention monitoring**: Profiling, explain()
+- **Show examples**: MongoDB, Cassandra, Redis, DynamoDB
+
+## Summary
+
+Optimize NoSQL performance with proper indexing, query optimization, connection pooling, and caching. Use projection to limit fields, covered queries to avoid document fetch, and early filtering in aggregations. Implement batch operations instead of loops. Denormalize for read-heavy workloads. Use appropriate read preferences and write concerns. Monitor with profiling and explain(). Cache frequently accessed data with Redis. Use range-based pagination. Essential for production NoSQL performance.

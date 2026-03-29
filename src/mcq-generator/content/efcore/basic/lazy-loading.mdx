@@ -1,0 +1,369 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Lazy Loading in EF Core
+---
+
+# Lazy Loading in EF Core
+
+## What is Lazy Loading?
+
+**Lazy loading** is a pattern where related data is automatically loaded from the database when a navigation property is accessed. The data is loaded "lazily" - only when needed, rather than being loaded upfront.
+
+## Enabling Lazy Loading
+
+### 1. Install Package
+
+```bash
+dotnet add package Microsoft.EntityFrameworkCore.Proxies
+```
+
+### 2. Configure in DbContext
+
+```csharp
+protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+{
+    optionsBuilder
+        .UseLazyLoadingProxies()
+        .UseSqlServer(connectionString);
+}
+
+// Or in Startup/Program.cs
+services.AddDbContext<ApplicationDbContext>(options =>
+    options.UseLazyLoadingProxies()
+           .UseSqlServer(connectionString));
+```
+
+### 3. Make Navigation Properties Virtual
+
+```csharp
+public class Blog
+{
+    public int Id { get; set; }
+    public string Name { get; set; }
+    
+    // Must be virtual for lazy loading
+    public virtual ICollection<Post> Posts { get; set; }
+}
+
+public class Post
+{
+    public int Id { get; set; }
+    public string Title { get; set; }
+    public int BlogId { get; set; }
+    
+    // Must be virtual for lazy loading
+    public virtual Blog Blog { get; set; }
+}
+```
+
+## How Lazy Loading Works
+
+```csharp
+using (var context = new ApplicationDbContext())
+{
+    // Only Blog is loaded
+    var blog = context.Blogs.First();
+    
+    // Posts are loaded automatically when accessed
+    foreach (var post in blog.Posts) // Database query happens here
+    {
+        Console.WriteLine(post.Title);
+    }
+}
+```
+
+## Lazy Loading Without Proxies
+
+### Using ILazyLoader
+
+```csharp
+public class Blog
+{
+    private ICollection<Post> _posts;
+    
+    public Blog()
+    {
+    }
+    
+    private Blog(ILazyLoader lazyLoader)
+    {
+        LazyLoader = lazyLoader;
+    }
+    
+    private ILazyLoader LazyLoader { get; set; }
+    
+    public int Id { get; set; }
+    public string Name { get; set; }
+    
+    public ICollection<Post> Posts
+    {
+        get => LazyLoader.Load(this, ref _posts);
+        set => _posts = value;
+    }
+}
+```
+
+### Using Delegate
+
+```csharp
+public class Blog
+{
+    private ICollection<Post> _posts;
+    
+    public Blog()
+    {
+    }
+    
+    private Blog(Action<object, string> lazyLoader)
+    {
+        LazyLoader = lazyLoader;
+    }
+    
+    private Action<object, string> LazyLoader { get; set; }
+    
+    public int Id { get; set; }
+    public string Name { get; set; }
+    
+    public ICollection<Post> Posts
+    {
+        get => LazyLoader.Load(this, ref _posts);
+        set => _posts = value;
+    }
+}
+
+public static class PocoLoadingExtensions
+{
+    public static TRelated Load<TRelated>(
+        this Action<object, string> loader,
+        object entity,
+        ref TRelated navigationField,
+        [CallerMemberName] string navigationName = null)
+        where TRelated : class
+    {
+        loader?.Invoke(entity, navigationName);
+        return navigationField;
+    }
+}
+```
+
+## Advantages of Lazy Loading
+
+1. **Simple to use**: No explicit loading code needed
+2. **Automatic**: Related data loaded when accessed
+3. **Convenient**: Good for prototyping
+4. **Memory efficient**: Only loads what's needed
+
+## Disadvantages of Lazy Loading
+
+### 1. N+1 Query Problem
+
+```csharp
+// BAD: Causes N+1 queries
+var blogs = context.Blogs.ToList(); // 1 query
+
+foreach (var blog in blogs) // N queries (one per blog)
+{
+    Console.WriteLine($"{blog.Name}: {blog.Posts.Count} posts");
+}
+
+// GOOD: Use eager loading instead
+var blogs = context.Blogs
+    .Include(b => b.Posts)
+    .ToList(); // Single query with JOIN
+```
+
+### 2. Performance Issues
+
+```csharp
+// Multiple database roundtrips
+var blog = context.Blogs.First();
+var postCount = blog.Posts.Count; // Query 1
+var firstPost = blog.Posts.First(); // Query 2
+var author = firstPost.Author; // Query 3
+```
+
+### 3. Serialization Problems
+
+```csharp
+// Can cause issues with JSON serialization
+public IActionResult GetBlog(int id)
+{
+    var blog = context.Blogs.Find(id);
+    return Json(blog); // May trigger lazy loading during serialization
+}
+```
+
+### 4. Disposed Context Issues
+
+```csharp
+Blog blog;
+using (var context = new ApplicationDbContext())
+{
+    blog = context.Blogs.First();
+} // Context disposed
+
+// This will throw an exception
+var posts = blog.Posts; // Context is already disposed
+```
+
+## When to Use Lazy Loading
+
+### Good Use Cases
+
+```csharp
+// 1. Interactive applications where you don't know what data will be needed
+public void DisplayBlogDetails(int blogId)
+{
+    var blog = context.Blogs.Find(blogId);
+    Console.WriteLine(blog.Name);
+    
+    // Only load posts if user requests them
+    if (userWantsToSeePosts)
+    {
+        foreach (var post in blog.Posts)
+        {
+            Console.WriteLine(post.Title);
+        }
+    }
+}
+
+// 2. Conditional loading based on business logic
+public void ProcessOrder(Order order)
+{
+    if (order.RequiresShipping)
+    {
+        var address = order.ShippingAddress; // Lazy loaded only if needed
+    }
+}
+```
+
+### Bad Use Cases
+
+```csharp
+// 1. Loading collections in loops
+foreach (var blog in context.Blogs.ToList())
+{
+    // N+1 problem
+    Console.WriteLine($"{blog.Name}: {blog.Posts.Count}");
+}
+
+// 2. API responses
+public IActionResult GetBlogs()
+{
+    // Lazy loading during serialization
+    return Ok(context.Blogs.ToList());
+}
+```
+
+## Alternatives to Lazy Loading
+
+### 1. Eager Loading
+
+```csharp
+// Load related data upfront
+var blogs = context.Blogs
+    .Include(b => b.Posts)
+    .ThenInclude(p => p.Author)
+    .ToList();
+```
+
+### 2. Explicit Loading
+
+```csharp
+var blog = context.Blogs.First();
+
+// Explicitly load related data
+context.Entry(blog)
+    .Collection(b => b.Posts)
+    .Load();
+```
+
+### 3. Select Loading
+
+```csharp
+var blogData = context.Blogs
+    .Select(b => new
+    {
+        b.Name,
+        PostCount = b.Posts.Count,
+        Posts = b.Posts.Select(p => new { p.Title, p.Content })
+    })
+    .ToList();
+```
+
+## Disabling Lazy Loading Temporarily
+
+```csharp
+// Disable for specific context instance
+context.ChangeTracker.LazyLoadingEnabled = false;
+
+var blog = context.Blogs.First();
+var posts = blog.Posts; // Returns null, doesn't load
+```
+
+## Best Practices
+
+### 1. Prefer Eager Loading
+
+```csharp
+// Instead of lazy loading
+var blogs = context.Blogs.ToList();
+foreach (var blog in blogs)
+{
+    Console.WriteLine(blog.Posts.Count); // Lazy load
+}
+
+// Use eager loading
+var blogs = context.Blogs
+    .Include(b => b.Posts)
+    .ToList();
+```
+
+### 2. Use Projection for APIs
+
+```csharp
+// Instead of returning entities with lazy loading
+public IActionResult GetBlogs()
+{
+    return Ok(context.Blogs.ToList()); // Bad
+}
+
+// Use DTOs or projections
+public IActionResult GetBlogs()
+{
+    var blogs = context.Blogs
+        .Select(b => new BlogDto
+        {
+            Id = b.Id,
+            Name = b.Name,
+            PostCount = b.Posts.Count
+        })
+        .ToList();
+    
+    return Ok(blogs);
+}
+```
+
+### 3. Be Explicit About Loading
+
+```csharp
+// Make it clear what data is loaded
+var blog = context.Blogs
+    .Include(b => b.Posts)
+    .ThenInclude(p => p.Comments)
+    .FirstOrDefault(b => b.Id == id);
+```
+
+## Interview Tips
+
+- **Explain lazy loading**: Automatic loading when navigation property accessed
+- **Show configuration**: UseLazyLoadingProxies, virtual properties
+- **Discuss N+1 problem**: Multiple queries in loops
+- **Mention alternatives**: Eager loading, explicit loading
+- **Explain when to use**: Interactive apps, conditional loading
+- **Discuss disadvantages**: Performance, serialization issues
+- **Show best practices**: Prefer eager loading, use projections
+
+## Summary
+
+Lazy loading in EF Core automatically loads related data when navigation properties are accessed. While convenient, it can cause N+1 query problems and performance issues. Enable it using `UseLazyLoadingProxies()` and virtual properties. For most scenarios, prefer eager loading with `Include()` or projections for better performance and predictability.

@@ -1,0 +1,258 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: What is REST?
+---
+
+# What is REST?
+
+## Definition
+
+**REST (Representational State Transfer)** is an architectural style for designing networked applications. It relies on stateless, client-server communication using HTTP.
+
+## Key Principles
+
+1. **Client-Server Architecture**: Separation of concerns
+2. **Stateless**: Each request contains all information needed
+3. **Cacheable**: Responses can be cached
+4. **Uniform Interface**: Consistent way to interact with resources
+5. **Layered System**: Client doesn't know if connected directly to server
+6. **Code on Demand** (optional): Server can send executable code
+
+## REST vs SOAP
+
+| Aspect | REST | SOAP |
+|--------|------|------|
+| **Protocol** | Architectural style | Protocol |
+| **Format** | JSON, XML, HTML | XML only |
+| **Transport** | HTTP | HTTP, SMTP, TCP |
+| **State** | Stateless | Can be stateful |
+| **Performance** | Faster, lightweight | Slower, heavyweight |
+
+## Basic REST API Example
+
+### Node.js/Express
+
+```javascript
+const express = require('express');
+const app = express();
+
+app.use(express.json());
+
+// GET - Retrieve all users
+app.get('/api/users', async (req, res) => {
+  const users = await User.find();
+  res.json(users);
+});
+
+// GET - Retrieve single user
+app.get('/api/users/:id', async (req, res) => {
+  const user = await User.findById(req.params.id);
+  if (!user) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+  res.json(user);
+});
+
+// POST - Create user
+app.post('/api/users', async (req, res) => {
+  const user = await User.create(req.body);
+  res.status(201).json(user);
+});
+
+// PUT - Update user
+app.put('/api/users/:id', async (req, res) => {
+  const user = await User.findByIdAndUpdate(
+    req.params.id,
+    req.body,
+    { new: true }
+  );
+  res.json(user);
+});
+
+// DELETE - Remove user
+app.delete('/api/users/:id', async (req, res) => {
+  await User.findByIdAndDelete(req.params.id);
+  res.status(204).send();
+});
+
+app.listen(3000);
+```
+
+### .NET/ASP.NET Core
+
+```csharp
+[ApiController]
+[Route("api/[controller]")]
+public class UsersController : ControllerBase
+{
+    private readonly IUserService _userService;
+
+    public UsersController(IUserService userService)
+    {
+        _userService = userService;
+    }
+
+    // GET api/users
+    [HttpGet]
+    public async Task<ActionResult<IEnumerable<User>>> GetUsers()
+    {
+        var users = await _userService.GetAllAsync();
+        return Ok(users);
+    }
+
+    // GET api/users/5
+    [HttpGet("{id}")]
+    public async Task<ActionResult<User>> GetUser(int id)
+    {
+        var user = await _userService.GetByIdAsync(id);
+        if (user == null)
+        {
+            return NotFound();
+        }
+        return Ok(user);
+    }
+
+    // POST api/users
+    [HttpPost]
+    public async Task<ActionResult<User>> CreateUser(CreateUserDto dto)
+    {
+        var user = await _userService.CreateAsync(dto);
+        return CreatedAtAction(nameof(GetUser), new { id = user.Id }, user);
+    }
+
+    // PUT api/users/5
+    [HttpPut("{id}")]
+    public async Task<IActionResult> UpdateUser(int id, UpdateUserDto dto)
+    {
+        var user = await _userService.UpdateAsync(id, dto);
+        return Ok(user);
+    }
+
+    // DELETE api/users/5
+    [HttpDelete("{id}")]
+    public async Task<IActionResult> DeleteUser(int id)
+    {
+        await _userService.DeleteAsync(id);
+        return NoContent();
+    }
+}
+```
+
+### Angular Service
+
+```typescript
+import { Injectable } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
+import { Observable } from 'rxjs';
+
+@Injectable({
+  providedIn: 'root'
+})
+export class UserService {
+  private apiUrl = 'http://localhost:3000/api/users';
+
+  constructor(private http: HttpClient) {}
+
+  getUsers(): Observable<User[]> {
+    return this.http.get<User[]>(this.apiUrl);
+  }
+
+  getUser(id: string): Observable<User> {
+    return this.http.get<User>(`${this.apiUrl}/${id}`);
+  }
+
+  createUser(user: CreateUserDto): Observable<User> {
+    return this.http.post<User>(this.apiUrl, user);
+  }
+
+  updateUser(id: string, user: UpdateUserDto): Observable<User> {
+    return this.http.put<User>(`${this.apiUrl}/${id}`, user);
+  }
+
+  deleteUser(id: string): Observable<void> {
+    return this.http.delete<void>(`${this.apiUrl}/${id}`);
+  }
+}
+```
+
+## Resource Representation
+
+```json
+{
+  "id": "123",
+  "name": "John Doe",
+  "email": "john@example.com",
+  "createdAt": "2024-01-01T00:00:00Z",
+  "updatedAt": "2024-01-15T10:30:00Z"
+}
+```
+
+## REST Constraints
+
+### 1. Client-Server
+
+```
+┌────────┐         ┌────────┐
+│ Client │ ←────→  │ Server │
+└────────┘         └────────┘
+```
+
+### 2. Stateless
+
+```javascript
+// Each request is independent
+GET /api/users/123
+Headers: {
+  "Authorization": "Bearer token123",
+  "Content-Type": "application/json"
+}
+```
+
+### 3. Cacheable
+
+```javascript
+app.get('/api/users/:id', (req, res) => {
+  res.set('Cache-Control', 'public, max-age=300');
+  res.json(user);
+});
+```
+
+### 4. Uniform Interface
+
+```
+GET    /api/users      - List all users
+GET    /api/users/123  - Get specific user
+POST   /api/users      - Create user
+PUT    /api/users/123  - Update user
+DELETE /api/users/123  - Delete user
+```
+
+## Benefits
+
+1. **Scalability**: Stateless nature allows easy scaling
+2. **Simplicity**: Uses standard HTTP methods
+3. **Flexibility**: Multiple data formats (JSON, XML)
+4. **Performance**: Caching support
+5. **Platform Independent**: Works across different platforms
+
+## Best Practices
+
+1. **Use nouns for resources**: `/users` not `/getUsers`
+2. **Use HTTP methods correctly**: GET for retrieval, POST for creation
+3. **Use proper status codes**: 200, 201, 404, 500
+4. **Version your API**: `/api/v1/users`
+5. **Use pagination**: Limit large result sets
+6. **Implement filtering**: `/users?role=admin`
+
+## Interview Tips
+
+- **Explain REST**: Architectural style using HTTP
+- **Show examples**: Node.js, .NET, Angular
+- **Discuss constraints**: Stateless, cacheable, uniform interface
+- **Mention benefits**: Scalability, simplicity
+- **Compare with SOAP**: Lighter, more flexible
+- **Demonstrate CRUD**: Complete resource operations
+
+## Summary
+
+REST is an architectural style for building web services using HTTP. It emphasizes stateless communication, resource-based URLs, and standard HTTP methods. Supports multiple formats with JSON being most common. Works across all tech stacks including Node.js, .NET, and Angular. Essential for modern web API development.

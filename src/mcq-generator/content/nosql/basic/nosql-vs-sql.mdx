@@ -1,0 +1,444 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: NoSQL vs SQL
+---
+
+# NoSQL vs SQL
+
+## Comparison Table
+
+| Aspect | SQL | NoSQL |
+|--------|-----|-------|
+| **Schema** | Fixed, predefined | Flexible, dynamic |
+| **Scalability** | Vertical (scale-up) | Horizontal (scale-out) |
+| **Data Model** | Tables, rows, columns | Document, key-value, graph, column |
+| **Transactions** | ACID guaranteed | BASE (eventual consistency) |
+| **Joins** | Complex joins supported | Limited or no joins |
+| **Query Language** | SQL (standardized) | Varies by database |
+| **Use Case** | Complex queries, relationships | Large-scale, flexible data |
+
+## Data Structure
+
+### SQL (Relational)
+
+```sql
+-- Users table
+CREATE TABLE users (
+    id INT PRIMARY KEY,
+    name VARCHAR(100),
+    email VARCHAR(100) UNIQUE,
+    created_at TIMESTAMP
+);
+
+-- Orders table
+CREATE TABLE orders (
+    id INT PRIMARY KEY,
+    user_id INT,
+    total DECIMAL(10,2),
+    status VARCHAR(20),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+-- Query with JOIN
+SELECT u.name, o.total, o.status
+FROM users u
+JOIN orders o ON u.id = o.user_id
+WHERE u.email = 'john@example.com';
+```
+
+### NoSQL (Document)
+
+```javascript
+// MongoDB - Embedded documents
+{
+  _id: ObjectId("507f1f77bcf86cd799439011"),
+  name: "John Doe",
+  email: "john@example.com",
+  createdAt: ISODate("2024-01-01T00:00:00Z"),
+  orders: [
+    {
+      id: "789",
+      total: 99.99,
+      status: "completed"
+    },
+    {
+      id: "790",
+      total: 149.99,
+      status: "pending"
+    }
+  ]
+}
+
+// Query
+db.users.findOne({ email: "john@example.com" });
+```
+
+## Scaling Approaches
+
+### SQL - Vertical Scaling (Scale Up)
+
+**Approach:** Upgrade existing server with more powerful hardware
+
+**Process:**
+- Add more CPU cores (4 → 8 → 16)
+- Increase RAM (8GB → 16GB → 64GB)
+- Upgrade storage (100GB → 500GB → 2TB)
+
+**Limitations:**
+- Hardware ceiling (can't scale infinitely)
+- Expensive at high end
+- Requires downtime for upgrades
+- Single point of failure
+
+**Best For:** Applications with complex queries and strong consistency requirements
+
+### NoSQL - Horizontal Scaling (Scale Out)
+
+**Approach:** Add more servers to distribute load
+
+**Process:**
+- Start with 1 node
+- Add nodes as needed (2, 3, 4... N nodes)
+- Data automatically distributed (sharding)
+- No downtime when adding nodes
+
+**Advantages:**
+- Nearly unlimited scaling
+- Cost-effective with commodity hardware
+- High availability (no single point of failure)
+- Linear performance improvement
+
+**Best For:** Large-scale applications with massive data volumes
+
+## ACID vs BASE
+
+### ACID (SQL)
+
+**ACID Properties:**
+- **Atomicity:** All operations succeed or all fail (no partial updates)
+- **Consistency:** Database remains in valid state
+- **Isolation:** Concurrent transactions don't interfere
+- **Durability:** Committed data persists even after crashes
+
+**Example:** Bank transfer - either both accounts update or neither does
+
+```javascript
+// SQL Transaction - All or nothing
+BEGIN TRANSACTION;
+UPDATE accounts SET balance = balance - 100 WHERE id = 1;
+UPDATE accounts SET balance = balance + 100 WHERE id = 2;
+COMMIT;
+// Both succeed or both fail - no partial state
+```
+
+```csharp
+// .NET with SQL Server
+using (var transaction = await context.Database.BeginTransactionAsync())
+{
+    try
+    {
+        var account1 = await context.Accounts.FindAsync(1);
+        var account2 = await context.Accounts.FindAsync(2);
+        
+        account1.Balance -= 100;
+        account2.Balance += 100;
+        
+        await context.SaveChangesAsync();
+        await transaction.CommitAsync();
+    }
+    catch
+    {
+        await transaction.RollbackAsync();
+        throw;
+    }
+}
+```
+
+### BASE (NoSQL)
+
+**BASE Properties:**
+- **Basically Available:** System remains operational despite failures
+- **Soft State:** State may change over time without input
+- **Eventual Consistency:** Data becomes consistent eventually, not immediately
+
+**Trade-off:** Sacrifice immediate consistency for availability and partition tolerance (CAP theorem)
+
+**Example:** Social media post - may take seconds to appear on all servers
+
+```javascript
+// MongoDB - Eventual consistency
+await db.users.updateOne(
+  { _id: userId },
+  { $set: { status: 'active' } }
+);
+// Update propagates to replicas over time
+// Eventually consistent across all nodes
+```
+
+## Performance Comparison
+
+### SQL - Complex Queries
+
+**Strengths:**
+- Complex joins across multiple tables
+- Aggregations and analytics
+- Ad-hoc queries
+- Strong consistency guarantees
+
+**Use When:** Need complex relationships and analytical queries
+
+```sql
+-- SQL excels at complex joins and aggregations
+SELECT 
+    u.name,
+    COUNT(o.id) as order_count,
+    SUM(o.total) as total_spent
+FROM users u
+LEFT JOIN orders o ON u.id = o.user_id
+WHERE u.created_at > '2024-01-01'
+GROUP BY u.id, u.name
+ORDER BY total_spent DESC;
+```
+
+### NoSQL - Simple Lookups
+
+**Strengths:**
+- Fast key-based lookups
+- High write throughput
+- Horizontal scalability
+- Flexible schema
+
+**Use When:** Need speed, scale, and flexibility over complex queries
+
+```javascript
+// MongoDB - Fast document retrieval by ID
+const user = await db.users.findOne({ _id: userId });
+
+// Redis - Sub-millisecond cache lookups
+const cached = await redis.get(`user:${userId}`);
+
+// Cassandra - Optimized for high write throughput
+await session.execute(
+  'INSERT INTO events (id, timestamp, data) VALUES (?, ?, ?)',
+  [id, Date.now(), data]
+);
+```
+
+## Data Modeling
+
+### SQL - Normalized
+
+**Approach:** Split data into separate tables to reduce redundancy
+
+**Benefits:**
+- No data duplication
+- Easy to update (single source of truth)
+- Data integrity with foreign keys
+- Efficient storage
+
+**Trade-off:** Requires joins for related data (slower reads)
+
+```sql
+-- Normalized: Separate tables for each entity
+CREATE TABLE users (
+    id INT PRIMARY KEY,
+    name VARCHAR(100)
+);
+
+CREATE TABLE addresses (
+    id INT PRIMARY KEY,
+    user_id INT,
+    street VARCHAR(200),
+    city VARCHAR(100),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
+```
+
+### NoSQL - Denormalized
+
+**Approach:** Embed related data together in single document
+
+**Benefits:**
+- Fast reads (single query)
+- No joins needed
+- Data locality
+- Scales horizontally
+
+**Trade-off:** Data duplication, updates require multiple document changes
+
+```javascript
+// MongoDB - Embedded: All related data in one document
+{
+  _id: ObjectId("..."),
+  name: "John Doe",
+  addresses: [
+    { street: "123 Main St", city: "New York" }
+  ],
+  phones: [
+    { number: "555-1234" },
+    { number: "555-5678" }
+  ]
+}
+// Single query retrieves everything
+```
+
+## Use Case Examples
+
+### SQL Best For
+
+**Banking Systems:** Require ACID transactions for financial accuracy
+
+**ERP Systems:** Complex business logic with many relationships
+
+**Complex Reporting:** Analytical queries with joins and aggregations
+
+**Data Warehousing:** Historical data analysis and business intelligence
+
+**Financial Transactions:** Money transfers, payments requiring atomicity
+
+**Inventory Management:** Stock tracking with referential integrity
+
+```sql
+-- Banking transaction example
+BEGIN TRANSACTION;
+UPDATE accounts SET balance = balance - 100 WHERE id = 1;
+UPDATE accounts SET balance = balance + 100 WHERE id = 2;
+INSERT INTO transactions (from_id, to_id, amount) VALUES (1, 2, 100);
+COMMIT;
+```
+
+### NoSQL Best For
+
+**Social Media Feeds:** High-volume reads/writes, flexible content
+
+**Real-Time Analytics:** Fast writes for clickstream, user behavior
+
+**IoT Sensor Data:** Massive write throughput, time-series data
+
+**Content Management:** Flexible schemas for varied content types
+
+**Session Storage:** Fast access with automatic expiration
+
+**Caching Layer:** Sub-millisecond reads, distributed caching
+
+**User Profiles:** Flexible schemas, fast lookups by ID
+
+```javascript
+// Social media post example
+await db.posts.insertOne({
+  userId: "123",
+  content: "Hello world!",
+  likes: [],
+  comments: [],
+  timestamp: new Date()
+});
+```
+
+## Migration Example
+
+### From SQL to NoSQL
+
+```javascript
+// SQL data
+// users table: id, name, email
+// orders table: id, user_id, total, status
+
+// MongoDB equivalent
+{
+  _id: ObjectId("..."),
+  name: "John Doe",
+  email: "john@example.com",
+  orders: [
+    { id: "789", total: 99.99, status: "completed" },
+    { id: "790", total: 149.99, status: "pending" }
+  ]
+}
+
+// Migration script
+async function migrateToMongo() {
+  const users = await sqlDb.query('SELECT * FROM users');
+  
+  for (const user of users) {
+    const orders = await sqlDb.query(
+      'SELECT * FROM orders WHERE user_id = ?',
+      [user.id]
+    );
+    
+    await mongoDb.collection('users').insertOne({
+      _id: user.id,
+      name: user.name,
+      email: user.email,
+      orders: orders
+    });
+  }
+}
+```
+
+## Hybrid Approach
+
+Many modern applications use both SQL and NoSQL databases together, leveraging the strengths of each.
+
+**SQL Database (PostgreSQL):**
+- **Use For:** Transactional data, user accounts, orders, payments
+- **Why:** ACID guarantees, complex queries, data integrity
+
+**NoSQL Database (MongoDB):**
+- **Use For:** Product catalog, user activity, session data
+- **Why:** Flexible schema, fast reads, horizontal scaling
+
+**Cache Layer (Redis):**
+- **Use For:** Session storage, API caching, rate limiting
+- **Why:** Sub-millisecond latency, automatic expiration
+
+```javascript
+// Hybrid architecture example
+const architecture = {
+  sql: {
+    database: 'PostgreSQL',
+    use: 'Product catalog, user preferences',
+    reason: 'Flexible schema, fast reads'
+  },
+  
+  cache: {
+    database: 'Redis',
+    use: 'Session storage, API responses',
+    reason: 'Sub-millisecond performance'
+  }
+};
+
+// Example implementation
+class UserService {
+  async getUser(id) {
+    // Try cache first
+    let user = await redis.get(`user:${id}`);
+    if (user) return JSON.parse(user);
+    
+    // Load from SQL (core data)
+    user = await sqlDb.query('SELECT * FROM users WHERE id = ?', [id]);
+    
+    // Load preferences from MongoDB
+    const preferences = await mongoDb.collection('preferences')
+      .findOne({ userId: id });
+    
+    const result = { ...user, preferences };
+    
+    // Cache for 5 minutes
+    await redis.setex(`user:${id}`, 300, JSON.stringify(result));
+    
+    return result;
+  }
+}
+```
+
+## Interview Tips
+
+- **Explain differences**: Schema, scaling, consistency
+- **Show examples**: SQL vs NoSQL queries
+- **Discuss ACID vs BASE**: Consistency models
+- **Mention use cases**: When to use each
+- **Demonstrate hybrid**: Using both together
+- **Show migration**: SQL to NoSQL conversion
+
+## Summary
+
+SQL databases use fixed schemas, vertical scaling, and ACID transactions. NoSQL databases offer flexible schemas, horizontal scaling, and eventual consistency. SQL excels at complex queries and relationships. NoSQL excels at scalability and flexible data models. Choose SQL for complex transactions and relationships. Choose NoSQL for large-scale, distributed systems. Consider hybrid approach for best of both worlds.

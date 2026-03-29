@@ -1,0 +1,530 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: API Documentation
+---
+
+# API Documentation
+
+## Why Documentation Matters
+
+- **Developer experience**: Easy to understand and use
+- **Onboarding**: Quick start for new developers
+- **Maintenance**: Clear reference for updates
+- **Integration**: Third-party developers can integrate
+- **Support**: Reduce support requests
+
+## OpenAPI/Swagger
+
+```yaml
+# openapi.yaml
+openapi: 3.0.0
+info:
+  title: User API
+  version: 1.0.0
+  description: API for managing users
+
+servers:
+  - url: https://api.example.com/v1
+
+paths:
+  /users:
+    get:
+      summary: List all users
+      tags:
+        - Users
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 10
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/User'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+    
+    post:
+      summary: Create a user
+      tags:
+        - Users
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserDto'
+      responses:
+        '201':
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '422':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /users/{id}:
+    get:
+      summary: Get user by ID
+      tags:
+        - Users
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '404':
+          description: User not found
+
+components:
+  schemas:
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        createdAt:
+          type: string
+          format: date-time
+    
+    CreateUserDto:
+      type: object
+      required:
+        - name
+        - email
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 100
+        email:
+          type: string
+          format: email
+    
+    Pagination:
+      type: object
+      properties:
+        page:
+          type: integer
+        limit:
+          type: integer
+        total:
+          type: integer
+        totalPages:
+          type: integer
+    
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: array
+              items:
+                type: object
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+security:
+  - bearerAuth: []
+```
+
+## Swagger in Node.js
+
+```javascript
+const swaggerJsdoc = require('swagger-jsdoc');
+const swaggerUi = require('swagger-ui-express');
+
+const options = {
+  definition: {
+    openapi: '3.0.0',
+    info: {
+      title: 'User API',
+      version: '1.0.0',
+      description: 'API for managing users'
+    },
+    servers: [
+      {
+        url: 'http://localhost:3000/api',
+        description: 'Development server'
+      }
+    ],
+    components: {
+      securitySchemes: {
+        bearerAuth: {
+          type: 'http',
+          scheme: 'bearer',
+          bearerFormat: 'JWT'
+        }
+      }
+    },
+    security: [{
+      bearerAuth: []
+    }]
+  },
+  apis: ['./routes/*.js']
+};
+
+const specs = swaggerJsdoc(options);
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(specs));
+
+/**
+ * @swagger
+ * /users:
+ *   get:
+ *     summary: Get all users
+ *     tags: [Users]
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *         description: Page number
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *         description: Items per page
+ *     responses:
+ *       200:
+ *         description: List of users
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     $ref: '#/components/schemas/User'
+ */
+app.get('/users', getUsers);
+
+/**
+ * @swagger
+ * components:
+ *   schemas:
+ *     User:
+ *       type: object
+ *       required:
+ *         - name
+ *         - email
+ *       properties:
+ *         id:
+ *           type: string
+ *           description: User ID
+ *         name:
+ *           type: string
+ *           description: User name
+ *         email:
+ *           type: string
+ *           format: email
+ *           description: User email
+ */
+```
+
+## .NET with Swashbuckle
+
+```csharp
+// Startup.cs
+services.AddSwaggerGen(c =>
+{
+    c.SwaggerDoc("v1", new OpenApiInfo
+    {
+        Title = "User API",
+        Version = "v1",
+        Description = "API for managing users",
+        Contact = new OpenApiContact
+        {
+            Name = "API Support",
+            Email = "support@example.com"
+        }
+    });
+    
+    // Include XML comments
+    var xmlFile = $"{Assembly.GetExecutingAssembly().GetName().Name}.xml";
+    var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
+    c.IncludeXmlComments(xmlPath);
+    
+    // JWT authentication
+    c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Description = "JWT Authorization header using the Bearer scheme",
+        Name = "Authorization",
+        In = ParameterLocation.Header,
+        Type = SecuritySchemeType.Http,
+        Scheme = "bearer"
+    });
+});
+
+app.UseSwagger();
+app.UseSwaggerUI(c =>
+{
+    c.SwaggerEndpoint("/swagger/v1/swagger.json", "User API V1");
+});
+
+// Controller with XML comments
+/// <summary>
+/// Gets all users
+/// </summary>
+/// <param name="page">Page number</param>
+/// <param name="limit">Items per page</param>
+/// <returns>List of users</returns>
+/// <response code="200">Returns the list of users</response>
+[HttpGet]
+[ProducesResponseType(typeof(PaginatedResponse<User>), 200)]
+public async Task<ActionResult<PaginatedResponse<User>>> GetUsers(
+    [FromQuery] int page = 1,
+    [FromQuery] int limit = 10)
+{
+    var users = await _userService.GetUsersAsync(page, limit);
+    return Ok(users);
+}
+```
+
+## README Documentation
+
+```markdown
+# User API
+
+## Base URL
+```
+https://api.example.com/v1
+```
+
+## Authentication
+All endpoints require JWT authentication. Include the token in the Authorization header:
+```
+Authorization: Bearer YOUR_JWT_TOKEN
+```
+
+## Endpoints
+
+### Get All Users
+```http
+GET /users?page=1&limit=10
+```
+
+**Query Parameters:**
+- `page` (optional): Page number (default: 1)
+- `limit` (optional): Items per page (default: 10)
+- `role` (optional): Filter by role
+- `status` (optional): Filter by status
+
+**Response:**
+```json
+{
+  "data": [
+    {
+      "id": "123",
+      "name": "John Doe",
+      "email": "john@example.com"
+    }
+  ],
+  "pagination": {
+    "page": 1,
+    "limit": 10,
+    "total": 100,
+    "totalPages": 10
+  }
+}
+```
+
+### Create User
+```http
+POST /users
+```
+
+**Request Body:**
+```json
+{
+  "name": "John Doe",
+  "email": "john@example.com",
+  "password": "securePassword123"
+}
+```
+
+**Response:** `201 Created`
+```json
+{
+  "id": "123",
+  "name": "John Doe",
+  "email": "john@example.com",
+  "createdAt": "2024-01-01T00:00:00Z"
+}
+```
+
+## Error Responses
+
+All error responses follow this format:
+```json
+{
+  "error": {
+    "code": "ERROR_CODE",
+    "message": "Human-readable message",
+    "details": []
+  }
+}
+```
+
+### Common Error Codes
+- `400` - Bad Request
+- `401` - Unauthorized
+- `403` - Forbidden
+- `404` - Not Found
+- `422` - Validation Error
+- `500` - Internal Server Error
+
+## Rate Limiting
+- 100 requests per 15 minutes per IP
+- Headers: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`
+
+## Examples
+
+### cURL
+```bash
+curl -X GET "https://api.example.com/v1/users?page=1&limit=10" \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+### JavaScript
+```javascript
+const response = await fetch('https://api.example.com/v1/users', {
+  headers: {
+    'Authorization': 'Bearer YOUR_TOKEN'
+  }
+});
+const data = await response.json();
+```
+
+### Python
+```python
+import requests
+
+headers = {'Authorization': 'Bearer YOUR_TOKEN'}
+response = requests.get('https://api.example.com/v1/users', headers=headers)
+data = response.json()
+```
+```
+
+## Postman Collection
+
+```json
+{
+  "info": {
+    "name": "User API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Get Users",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/users?page=1&limit=10",
+          "host": ["{{baseUrl}}"],
+          "path": ["users"],
+          "query": [
+            {"key": "page", "value": "1"},
+            {"key": "limit", "value": "10"}
+          ]
+        }
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://api.example.com/v1"
+    }
+  ]
+}
+```
+
+## Interactive Documentation Tools
+
+```javascript
+// Redoc
+const redoc = require('redoc-express');
+
+app.get('/docs', redoc({
+  title: 'User API Documentation',
+  specUrl: '/swagger.json'
+}));
+
+// Stoplight Elements
+app.get('/elements', (req, res) => {
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <script src="https://unpkg.com/@stoplight/elements/web-components.min.js"></script>
+        <link rel="stylesheet" href="https://unpkg.com/@stoplight/elements/styles.min.css">
+      </head>
+      <body>
+        <elements-api apiDescriptionUrl="/swagger.json" router="hash" />
+      </body>
+    </html>
+  `);
+});
+```
+
+## Interview Tips
+
+- **Explain importance**: Developer experience, onboarding
+- **Show OpenAPI**: Standard specification format
+- **Demonstrate tools**: Swagger, Redoc, Postman
+- **Discuss examples**: Code samples in multiple languages
+- **Mention versioning**: Document API versions
+- **Show authentication**: Security documentation
+
+## Summary
+
+API documentation is essential for developer experience. Use OpenAPI/Swagger specification for standardized documentation. Include request/response examples, error codes, authentication details, and rate limits. Provide interactive documentation with Swagger UI or Redoc. Create README with quick start guide. Generate Postman collections. Document all endpoints, parameters, and responses. Essential for API adoption and maintenance.

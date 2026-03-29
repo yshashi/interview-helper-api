@@ -1,0 +1,449 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Rate Limiting
+---
+
+# Rate Limiting
+
+## What is Rate Limiting?
+
+Rate limiting controls the number of requests a user or service can make to an API within a specific time window. It protects systems from abuse, ensures fair resource distribution, and prevents overload.
+
+## Why Rate Limiting?
+
+**Prevent Abuse:** Stop malicious users from overwhelming your system with requests
+
+**Fair Usage:** Ensure all users get fair access to resources
+
+**Cost Control:** Limit expensive operations (API calls to third-party services)
+
+**System Stability:** Prevent overload and maintain performance
+
+**Business Model:** Enable tiered pricing (free tier: 100 req/hour, paid: 10,000 req/hour)
+
+## Common Rate Limiting Strategies
+
+### 1. Fixed Window
+
+**How it works:** Count requests in fixed time windows (e.g., 100 requests per hour starting at :00)
+
+**Example:**
+- Window 1: 10:00-11:00 → 100 requests allowed
+- Window 2: 11:00-12:00 → 100 requests allowed (counter resets)
+
+**Advantages:**
+- Simple to implement
+- Easy to understand
+- Low memory usage
+
+**Disadvantages:**
+- Burst at window boundaries (99 requests at 10:59, 100 at 11:00 = 199 in 1 minute)
+- Unfair if user hits limit early in window
+
+### 2. Sliding Window Log
+
+**How it works:** Store timestamp of each request, count requests in last N seconds
+
+**Example:** For 100 requests per hour:
+- Current time: 11:30
+- Count requests from 10:30 to 11:30
+- Remove requests older than 1 hour
+
+**Advantages:**
+- Accurate rate limiting
+- No boundary burst issues
+- Fair distribution
+
+**Disadvantages:**
+- High memory usage (store all timestamps)
+- Expensive to calculate (scan all timestamps)
+
+### 3. Sliding Window Counter
+
+**How it works:** Hybrid approach using weighted counts from current and previous windows
+
+**Example:** 100 requests per hour, current time 10:30 (50% through window):
+- Previous window (9:00-10:00): 80 requests
+- Current window (10:00-11:00): 30 requests
+- Weighted count: (80 × 50%) + 30 = 70 requests
+- Allow if < 100
+
+**Advantages:**
+- More accurate than fixed window
+- Less memory than sliding log
+- Prevents boundary bursts
+
+**Disadvantages:**
+- Slightly complex calculation
+- Approximation, not exact
+
+### 4. Token Bucket
+
+**How it works:** Bucket holds tokens, each request consumes a token, tokens refill at fixed rate
+
+**Example:**
+- Bucket capacity: 100 tokens
+- Refill rate: 10 tokens per minute
+- Request arrives: Check if token available, consume if yes
+
+**Advantages:**
+- Allows bursts up to bucket size
+- Smooth rate limiting
+- Flexible (different costs per operation)
+
+**Disadvantages:**
+- More complex to implement
+- Requires tracking bucket state
+
+### 5. Leaky Bucket
+
+**How it works:** Requests enter bucket, processed at fixed rate, excess requests overflow (rejected)
+
+**Example:**
+- Process 10 requests per second
+- Queue can hold 50 requests
+- New request: Add to queue if space, reject if full
+
+**Advantages:**
+- Smooth output rate
+- Handles bursts with queue
+- Predictable processing
+
+**Disadvantages:**
+- Can delay requests
+- Queue management overhead
+
+## Rate Limiting Implementation
+
+### Redis-Based Rate Limiter (Fixed Window)
+
+```javascript
+const redis = require('redis');
+const client = redis.createClient();
+
+async function checkRateLimit(userId, limit = 100, windowSeconds = 3600) {
+  const key = `rate_limit:${userId}:${Math.floor(Date.now() / (windowSeconds * 1000))}`;
+  
+  const current = await client.incr(key);
+  
+  if (current === 1) {
+    await client.expire(key, windowSeconds);
+  }
+  
+  return {
+    allowed: current <= limit,
+    current,
+    limit,
+    remaining: Math.max(0, limit - current),
+    resetAt: Math.ceil(Date.now() / (windowSeconds * 1000)) * windowSeconds * 1000
+  };
+}
+
+// Middleware
+app.use(async (req, res, next) => {
+  const userId = req.user?.id || req.ip;
+  const result = await checkRateLimit(userId);
+  
+  res.set({
+    'X-RateLimit-Limit': result.limit,
+    'X-RateLimit-Remaining': result.remaining,
+    'X-RateLimit-Reset': result.resetAt
+  });
+  
+  if (!result.allowed) {
+    return res.status(429).json({
+      error: 'Too many requests',
+      retryAfter: result.resetAt - Date.now()
+    });
+  }
+  
+  next();
+});
+```
+
+### Token Bucket Implementation
+
+```javascript
+class TokenBucket {
+  constructor(capacity, refillRate) {
+    this.capacity = capacity;
+    this.tokens = capacity;
+    this.refillRate = refillRate; // tokens per second
+    this.lastRefill = Date.now();
+  }
+  
+  refill() {
+    const now = Date.now();
+    const timePassed = (now - this.lastRefill) / 1000;
+    const tokensToAdd = timePassed * this.refillRate;
+    
+    this.tokens = Math.min(this.capacity, this.tokens + tokensToAdd);
+    this.lastRefill = now;
+  }
+  
+  consume(tokens = 1) {
+    this.refill();
+    
+    if (this.tokens >= tokens) {
+      this.tokens -= tokens;
+      return true;
+    }
+    
+    return false;
+  }
+  
+  getStatus() {
+    this.refill();
+    return {
+      tokens: Math.floor(this.tokens),
+      capacity: this.capacity
+    };
+  }
+}
+
+// Usage
+const bucket = new TokenBucket(100, 10); // 100 capacity, 10 tokens/sec
+
+app.use((req, res, next) => {
+  if (bucket.consume(1)) {
+    next();
+  } else {
+    res.status(429).json({ error: 'Rate limit exceeded' });
+  }
+});
+```
+
+## Distributed Rate Limiting
+
+**Challenge:** Multiple servers need to share rate limit state
+
+**Solution:** Use centralized store (Redis) for rate limit counters
+
+**Considerations:**
+- Race conditions (use Redis atomic operations)
+- Network latency to Redis
+- Redis availability (fallback strategy)
+
+```javascript
+// Distributed rate limiter with Redis
+async function distributedRateLimit(userId, limit, windowSeconds) {
+  const key = `rate:${userId}`;
+  const now = Date.now();
+  const windowStart = now - (windowSeconds * 1000);
+  
+  // Use Redis sorted set with timestamps as scores
+  const multi = client.multi();
+  
+  // Remove old entries
+  multi.zRemRangeByScore(key, 0, windowStart);
+  
+  // Count current entries
+  multi.zCard(key);
+  
+  // Add current request
+  multi.zAdd(key, now, `${now}-${Math.random()}`);
+  
+  // Set expiry
+  multi.expire(key, windowSeconds);
+  
+  const results = await multi.exec();
+  const count = results[1];
+  
+  return {
+    allowed: count < limit,
+    current: count,
+    limit,
+    remaining: Math.max(0, limit - count)
+  };
+}
+```
+
+## Rate Limiting by Different Dimensions
+
+### By User/API Key
+
+```javascript
+// Different limits for different user tiers
+const rateLimits = {
+  free: { limit: 100, window: 3600 },
+  basic: { limit: 1000, window: 3600 },
+  premium: { limit: 10000, window: 3600 }
+};
+
+app.use(async (req, res, next) => {
+  const userTier = req.user?.tier || 'free';
+  const config = rateLimits[userTier];
+  
+  const result = await checkRateLimit(req.user.id, config.limit, config.window);
+  
+  if (!result.allowed) {
+    return res.status(429).json({
+      error: 'Rate limit exceeded',
+      tier: userTier,
+      upgradeUrl: '/pricing'
+    });
+  }
+  
+  next();
+});
+```
+
+### By IP Address
+
+```javascript
+// Rate limit by IP for unauthenticated requests
+app.use(async (req, res, next) => {
+  const identifier = req.user?.id || req.ip;
+  const result = await checkRateLimit(identifier, 100, 3600);
+  
+  if (!result.allowed) {
+    return res.status(429).json({ error: 'Too many requests from this IP' });
+  }
+  
+  next();
+});
+```
+
+### By Endpoint
+
+```javascript
+// Different limits for different endpoints
+const endpointLimits = {
+  '/api/search': { limit: 10, window: 60 }, // 10 per minute
+  '/api/upload': { limit: 5, window: 3600 }, // 5 per hour
+  '/api/users': { limit: 100, window: 3600 } // 100 per hour
+};
+
+app.use(async (req, res, next) => {
+  const config = endpointLimits[req.path] || { limit: 1000, window: 3600 };
+  const key = `${req.user.id}:${req.path}`;
+  
+  const result = await checkRateLimit(key, config.limit, config.window);
+  
+  if (!result.allowed) {
+    return res.status(429).json({ error: 'Endpoint rate limit exceeded' });
+  }
+  
+  next();
+});
+```
+
+## HTTP Headers for Rate Limiting
+
+**Standard Headers:**
+- `X-RateLimit-Limit`: Maximum requests allowed
+- `X-RateLimit-Remaining`: Requests remaining in window
+- `X-RateLimit-Reset`: Unix timestamp when limit resets
+- `Retry-After`: Seconds to wait before retrying (on 429 response)
+
+```javascript
+res.set({
+  'X-RateLimit-Limit': '100',
+  'X-RateLimit-Remaining': '45',
+  'X-RateLimit-Reset': '1640000000'
+});
+
+// On rate limit exceeded
+res.status(429).set({
+  'Retry-After': '3600'
+}).json({ error: 'Rate limit exceeded' });
+```
+
+## .NET Rate Limiting
+
+```csharp
+using AspNetCoreRateLimit;
+
+// Startup.cs
+public void ConfigureServices(IServiceCollection services)
+{
+    // Add memory cache
+    services.AddMemoryCache();
+    
+    // Configure rate limiting
+    services.Configure<IpRateLimitOptions>(options =>
+    {
+        options.GeneralRules = new List<RateLimitRule>
+        {
+            new RateLimitRule
+            {
+                Endpoint = "*",
+                Limit = 100,
+                Period = "1h"
+            },
+            new RateLimitRule
+            {
+                Endpoint = "*/api/search",
+                Limit = 10,
+                Period = "1m"
+            }
+        };
+    });
+    
+    services.AddSingleton<IIpPolicyStore, MemoryCacheIpPolicyStore>();
+    services.AddSingleton<IRateLimitCounterStore, MemoryCacheRateLimitCounterStore>();
+    services.AddSingleton<IRateLimitConfiguration, RateLimitConfiguration>();
+}
+
+public void Configure(IApplicationBuilder app)
+{
+    app.UseIpRateLimiting();
+    app.UseRouting();
+    app.UseEndpoints(endpoints => endpoints.MapControllers());
+}
+
+// Custom rate limiter
+public class CustomRateLimiter
+{
+    private readonly IDistributedCache _cache;
+    
+    public async Task<bool> IsAllowed(string key, int limit, TimeSpan window)
+    {
+        var cacheKey = $"rate:{key}";
+        var current = await _cache.GetStringAsync(cacheKey);
+        var count = string.IsNullOrEmpty(current) ? 0 : int.Parse(current);
+        
+        if (count >= limit)
+        {
+            return false;
+        }
+        
+        await _cache.SetStringAsync(
+            cacheKey,
+            (count + 1).ToString(),
+            new DistributedCacheEntryOptions
+            {
+                AbsoluteExpirationRelativeToNow = window
+            }
+        );
+        
+        return true;
+    }
+}
+```
+
+## Best Practices
+
+- **Return clear error messages** - Tell users when they can retry
+- **Use appropriate status code** - 429 Too Many Requests
+- **Include rate limit headers** - Help clients manage their usage
+- **Different limits for different tiers** - Monetization strategy
+- **Monitor rate limit hits** - Identify potential issues or abuse
+- **Graceful degradation** - If rate limiter fails, allow requests (or deny based on risk)
+- **Whitelist critical services** - Internal services, health checks
+- **Log rate limit violations** - Detect abuse patterns
+- **Consider cost per operation** - Expensive operations get lower limits
+- **Implement retry with backoff** - Client-side best practice
+
+## Interview Tips
+
+- **Explain purpose**: Prevent abuse, ensure fair usage
+- **Show strategies**: Fixed window, sliding window, token bucket
+- **Demonstrate implementation**: Redis-based distributed limiter
+- **Discuss trade-offs**: Accuracy vs performance vs memory
+- **Mention headers**: Standard rate limit headers
+- **Show different dimensions**: By user, IP, endpoint
+
+## Summary
+
+Rate limiting controls request frequency to protect systems from abuse and ensure fair usage. Fixed window is simple but has boundary burst issues. Sliding window log is accurate but memory-intensive. Token bucket allows bursts and smooth rate limiting. Implement with Redis for distributed systems. Return 429 status with Retry-After header. Include rate limit headers (Limit, Remaining, Reset). Apply different limits by user tier, IP, or endpoint. Monitor violations to detect abuse. Essential for building robust, fair APIs.

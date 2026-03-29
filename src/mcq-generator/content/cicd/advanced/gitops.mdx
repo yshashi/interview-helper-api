@@ -1,0 +1,251 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: GitOps
+---
+
+# GitOps
+
+## What is GitOps?
+
+**GitOps** uses Git as the single source of truth for declarative infrastructure and applications. Changes are made via Git commits, and automated processes sync the desired state.
+
+## Core Principles
+
+1. **Declarative**: System state described declaratively
+2. **Versioned**: All changes in Git
+3. **Automated**: Automatic sync from Git
+4. **Reconciliation**: Continuous drift detection
+
+## GitOps Workflow
+
+```
+Developer → Git Commit → Git Repository
+                              ↓
+                         GitOps Operator
+                              ↓
+                    Kubernetes Cluster
+```
+
+## ArgoCD Example
+
+```yaml
+# Application manifest
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: myapp
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/myorg/myapp
+    targetRevision: main
+    path: k8s
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: production
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+```
+
+## Multi-Stack GitOps
+
+```
+repo/
+├── apps/
+│   ├── angular-frontend/
+│   │   ├── deployment.yaml
+│   │   ├── service.yaml
+│   │   └── ingress.yaml
+│   ├── dotnet-api/
+│   │   ├── deployment.yaml
+│   │   ├── service.yaml
+│   │   └── configmap.yaml
+│   └── nodejs-service/
+│       ├── deployment.yaml
+│       ├── service.yaml
+│       └── secret.yaml
+└── infrastructure/
+    ├── postgres/
+    │   ├── statefulset.yaml
+    │   └── service.yaml
+    ├── mongodb/
+    │   ├── statefulset.yaml
+    │   └── service.yaml
+    └── redis/
+        ├── deployment.yaml
+        └── service.yaml
+```
+
+## Flux CD
+
+```yaml
+# GitRepository
+apiVersion: source.toolkit.fluxcd.io/v1beta2
+kind: GitRepository
+metadata:
+  name: myapp
+  namespace: flux-system
+spec:
+  interval: 1m
+  url: https://github.com/myorg/myapp
+  ref:
+    branch: main
+
+---
+# Kustomization
+apiVersion: kustomize.toolkit.fluxcd.io/v1beta2
+kind: Kustomization
+metadata:
+  name: myapp
+  namespace: flux-system
+spec:
+  interval: 5m
+  path: ./k8s
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: myapp
+```
+
+## Environment Promotion
+
+```yaml
+# Dev environment
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: myapp-dev
+spec:
+  source:
+    repoURL: https://github.com/myorg/myapp
+    targetRevision: develop
+    path: k8s/overlays/dev
+  destination:
+    namespace: dev
+
+---
+# Staging environment
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: myapp-staging
+spec:
+  source:
+    repoURL: https://github.com/myorg/myapp
+    targetRevision: main
+    path: k8s/overlays/staging
+  destination:
+    namespace: staging
+
+---
+# Production environment
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: myapp-prod
+spec:
+  source:
+    repoURL: https://github.com/myorg/myapp
+    targetRevision: v1.0.0  # Tag for production
+    path: k8s/overlays/production
+  destination:
+    namespace: production
+```
+
+## Kustomize Overlays
+
+```yaml
+# base/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myapp
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+        - name: myapp
+          image: myapp:latest
+
+---
+# overlays/production/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+bases:
+  - ../../base
+replicas:
+  - name: myapp
+    count: 5
+images:
+  - name: myapp
+    newTag: v1.0.0
+```
+
+## CI/CD Integration
+
+```yaml
+# GitHub Actions
+name: GitOps Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  update-manifests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Update image tag
+        run: |
+          cd k8s
+          kustomize edit set image myapp=myapp:${{ github.sha }}
+      
+      - name: Commit changes
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add k8s/
+          git commit -m "Update image to ${{ github.sha }}"
+          git push
+```
+
+## Secrets Management
+
+```yaml
+# Sealed Secrets
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: myapp-secrets
+spec:
+  encryptedData:
+    database-url: AgBx7Qw...encrypted...
+    api-key: AgCy8Rx...encrypted...
+```
+
+## Benefits
+
+1. **Git as source of truth**: All changes tracked
+2. **Audit trail**: Complete history
+3. **Easy rollback**: Git revert
+4. **Declarative**: Desired state in code
+5. **Automated**: Continuous reconciliation
+
+## Interview Tips
+
+- **Explain GitOps**: Git-driven operations
+- **Show ArgoCD/Flux**: GitOps tools
+- **Demonstrate multi-stack**: Multiple applications
+- **Discuss environments**: Dev, staging, prod
+- **Mention benefits**: Audit trail, rollback
+- **Show Kustomize**: Configuration management
+
+## Summary
+
+GitOps uses Git as single source of truth for infrastructure and applications. ArgoCD and Flux CD automate deployment from Git. Supports multi-stack applications and databases. Use Kustomize for environment-specific configurations. Provides audit trail and easy rollback. Essential for modern Kubernetes deployments.

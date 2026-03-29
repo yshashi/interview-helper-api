@@ -1,6 +1,15 @@
 import { prisma } from '../config/database.js';
 import { log } from '../utils/logger.js';
 
+/**
+ * Get a map of valid TopicwiseMcqs ids → keys.
+ * Used to filter out orphaned quiz results that reference deleted MCQ records.
+ */
+async function getValidMcqMap(): Promise<Map<string, string>> {
+  const mcqs = await prisma.topicwiseMcqs.findMany({ select: { id: true, key: true } });
+  return new Map(mcqs.map((m) => [m.id, m.key]));
+}
+
 export interface QuestionDetail {
   questionId: number;
   question: string;
@@ -46,18 +55,18 @@ export const createTopicwiseQuizResult = async (data: {
   try {
     const formattedData = {
       ...data,
-      questionDetails: data.questionDetails ? JSON.stringify(data.questionDetails) : undefined
+      questionDetails: data.questionDetails ? JSON.stringify(data.questionDetails) : undefined,
     };
 
     const quizResult = await prisma.topicwiseQuizResult.create({
-      data: formattedData
+      data: formattedData,
     });
-    
+
     return quizResult;
   } catch (error) {
-    log.error('Error creating topicwise quiz result', { 
-      error: error instanceof Error ? error.message : String(error), 
-      userId: data.userId 
+    log.error('Error creating topicwise quiz result', {
+      error: error instanceof Error ? error.message : String(error),
+      userId: data.userId,
     });
     throw error;
   }
@@ -65,28 +74,36 @@ export const createTopicwiseQuizResult = async (data: {
 
 export const getUserTopicwiseQuizResults = async (userId: string) => {
   try {
+    const mcqMap = await getValidMcqMap();
+    const validIds = [...mcqMap.keys()];
+
     const results = await prisma.topicwiseQuizResult.findMany({
-      where: { userId },
-      include: {
-        topicwiseMcq: {
-          select: {
-            key: true
-          }
-        }
+      where: { userId, topicwiseMcqId: { in: validIds } },
+      select: {
+        id: true,
+        topicwiseMcqId: true,
+        correctAnswerCount: true,
+        wrongAnswerCount: true,
+        totalTimeTaken: true,
+        attemptCount: true,
+        questionDetails: true,
+        createdAt: true,
+        updatedAt: true,
       },
       orderBy: {
-        createdAt: 'desc'
-      }
+        createdAt: 'desc',
+      },
     });
-    
+
     return results.map((result) => ({
       ...result,
-      questionDetails: result.questionDetails ? JSON.parse(String(result.questionDetails)) : null
+      topicwiseMcq: { key: mcqMap.get(result.topicwiseMcqId) || 'unknown' },
+      questionDetails: result.questionDetails ? JSON.parse(String(result.questionDetails)) : null,
     }));
   } catch (error) {
-    log.error('Error fetching user topicwise quiz results', { 
-      error: error instanceof Error ? error.message : String(error), 
-      userId 
+    log.error('Error fetching user topicwise quiz results', {
+      error: error instanceof Error ? error.message : String(error),
+      userId,
     });
     throw error;
   }
@@ -99,22 +116,22 @@ export const getTopicwiseQuizResultById = async (id: string) => {
       include: {
         topicwiseMcq: {
           select: {
-            key: true
-          }
-        }
-      }
+            key: true,
+          },
+        },
+      },
     });
-    
+
     if (!result) return null;
-    
+
     return {
       ...result,
-      questionDetails: result.questionDetails ? JSON.parse(String(result.questionDetails)) : null
+      questionDetails: result.questionDetails ? JSON.parse(String(result.questionDetails)) : null,
     };
   } catch (error) {
-    log.error('Error fetching topicwise quiz result by ID', { 
-      error: error instanceof Error ? error.message : String(error), 
-      id 
+    log.error('Error fetching topicwise quiz result by ID', {
+      error: error instanceof Error ? error.message : String(error),
+      id,
     });
     throw error;
   }
@@ -131,23 +148,23 @@ export const getTopicwiseMcqQuizResults = async (topicwiseMcqId: string) => {
             name: true,
             username: true,
             email: true,
-            profilePicture: true
-          }
-        }
+            profilePicture: true,
+          },
+        },
       },
       orderBy: {
-        createdAt: 'desc'
-      }
+        createdAt: 'desc',
+      },
     });
-    
+
     return results.map((result) => ({
       ...result,
-      questionDetails: result.questionDetails ? JSON.parse(String(result.questionDetails)) : null
+      questionDetails: result.questionDetails ? JSON.parse(String(result.questionDetails)) : null,
     }));
   } catch (error) {
-    log.error('Error fetching topicwise MCQ quiz results', { 
-      error: error instanceof Error ? error.message : String(error), 
-      topicwiseMcqId 
+    log.error('Error fetching topicwise MCQ quiz results', {
+      error: error instanceof Error ? error.message : String(error),
+      topicwiseMcqId,
     });
     throw error;
   }
@@ -156,24 +173,24 @@ export const getTopicwiseMcqQuizResults = async (topicwiseMcqId: string) => {
 export const getUserTopicwiseMcqQuizResults = async (userId: string, topicwiseMcqId: string) => {
   try {
     const results = await prisma.topicwiseQuizResult.findMany({
-      where: { 
+      where: {
         userId,
-        topicwiseMcqId
+        topicwiseMcqId,
       },
       orderBy: {
-        createdAt: 'desc'
-      }
+        createdAt: 'desc',
+      },
     });
-    
+
     return results.map((result) => ({
       ...result,
-      questionDetails: result.questionDetails ? JSON.parse(String(result.questionDetails)) : null
+      questionDetails: result.questionDetails ? JSON.parse(String(result.questionDetails)) : null,
     }));
   } catch (error) {
-    log.error('Error fetching user topicwise MCQ quiz results', { 
-      error: error instanceof Error ? error.message : String(error), 
+    log.error('Error fetching user topicwise MCQ quiz results', {
+      error: error instanceof Error ? error.message : String(error),
       userId,
-      topicwiseMcqId
+      topicwiseMcqId,
     });
     throw error;
   }
@@ -183,22 +200,26 @@ export const getUserTopicwiseMcqQuizResults = async (userId: string, topicwiseMc
 
 export const getUserTopicPerformanceAnalytics = async (userId: string) => {
   try {
+    const mcqMap = await getValidMcqMap();
+    const validIds = [...mcqMap.keys()];
+
     const results = await prisma.topicwiseQuizResult.findMany({
-      where: { userId },
-      include: {
-        topicwiseMcq: {
-          select: {
-            key: true
-          }
-        }
-      }
+      where: { userId, topicwiseMcqId: { in: validIds } },
+      select: {
+        id: true,
+        topicwiseMcqId: true,
+        correctAnswerCount: true,
+        wrongAnswerCount: true,
+        totalTimeTaken: true,
+        createdAt: true,
+      },
     });
-    
+
     const topicPerformance: Record<string, TopicPerformance> = {};
-    
+
     results.forEach((result) => {
-      const topicKey = result.topicwiseMcq.key;
-      
+      const topicKey = mcqMap.get(result.topicwiseMcqId) || 'unknown';
+
       if (!topicPerformance[topicKey]) {
         topicPerformance[topicKey] = {
           topic: topicKey,
@@ -210,29 +231,33 @@ export const getUserTopicPerformanceAnalytics = async (userId: string) => {
           averageTimeTaken: 0,
           bestScore: 0,
           worstScore: 100,
-          lastAttemptDate: null
+          lastAttemptDate: null,
         };
       }
-      
+
       const performance = topicPerformance[topicKey];
       performance.totalAttempts += 1;
       performance.totalCorrect += result.correctAnswerCount;
       performance.totalWrong += result.wrongAnswerCount;
-      performance.totalQuestions += (result.correctAnswerCount + result.wrongAnswerCount);
-      
-      const score = (result.correctAnswerCount / (result.correctAnswerCount + result.wrongAnswerCount)) * 100;
+      performance.totalQuestions += result.correctAnswerCount + result.wrongAnswerCount;
+
+      const score =
+        (result.correctAnswerCount / (result.correctAnswerCount + result.wrongAnswerCount)) * 100;
       performance.bestScore = Math.max(performance.bestScore, score);
       performance.worstScore = Math.min(performance.worstScore, score);
-      
-      performance.averageTimeTaken = 
-        ((performance.averageTimeTaken * (performance.totalAttempts - 1)) + result.totalTimeTaken) / 
+
+      performance.averageTimeTaken =
+        (performance.averageTimeTaken * (performance.totalAttempts - 1) + result.totalTimeTaken) /
         performance.totalAttempts;
-      
-      if (!performance.lastAttemptDate || new Date(result.createdAt) > new Date(performance.lastAttemptDate)) {
+
+      if (
+        !performance.lastAttemptDate ||
+        new Date(result.createdAt) > new Date(performance.lastAttemptDate)
+      ) {
         performance.lastAttemptDate = result.createdAt;
       }
     });
-    
+
     // Calculate final averages
     Object.values(topicPerformance).forEach((performance) => {
       performance.averageScore = (performance.totalCorrect / performance.totalQuestions) * 100;
@@ -241,12 +266,12 @@ export const getUserTopicPerformanceAnalytics = async (userId: string) => {
       performance.bestScore = Math.round(performance.bestScore * 100) / 100;
       performance.worstScore = Math.round(performance.worstScore * 100) / 100;
     });
-    
+
     return Object.values(topicPerformance);
   } catch (error) {
-    log.error('Error generating user topic performance analytics', { 
-      error: error instanceof Error ? error.message : String(error), 
-      userId 
+    log.error('Error generating user topic performance analytics', {
+      error: error instanceof Error ? error.message : String(error),
+      userId,
     });
     throw error;
   }
@@ -254,49 +279,50 @@ export const getUserTopicPerformanceAnalytics = async (userId: string) => {
 
 export const getUserProgressOverTime = async (userId: string, topicKey?: string) => {
   try {
+    const mcqMap = await getValidMcqMap();
+    const validIds = [...mcqMap.keys()];
+
+    // If filtering by topicKey, find the matching mcq id(s)
+    const filteredIds = topicKey ? validIds.filter((id) => mcqMap.get(id) === topicKey) : validIds;
+
     const results = await prisma.topicwiseQuizResult.findMany({
-      where: topicKey 
-        ? { 
-            userId,
-            topicwiseMcq: {
-              key: topicKey
-            }
-          } 
-        : { userId },
-      include: {
-        topicwiseMcq: {
-          select: {
-            key: true
-          }
-        }
+      where: {
+        userId,
+        topicwiseMcqId: { in: filteredIds },
+      },
+      select: {
+        topicwiseMcqId: true,
+        correctAnswerCount: true,
+        wrongAnswerCount: true,
+        totalTimeTaken: true,
+        createdAt: true,
       },
       orderBy: {
-        createdAt: 'asc'
-      }
+        createdAt: 'asc',
+      },
     });
-    
+
     // Format results for time-series analysis
     return results.map((result) => {
       const totalQuestions = result.correctAnswerCount + result.wrongAnswerCount;
-      const scorePercentage = totalQuestions > 0 
-        ? (result.correctAnswerCount / totalQuestions) * 100 
-        : 0;
-      
+      const scorePercentage =
+        totalQuestions > 0 ? (result.correctAnswerCount / totalQuestions) * 100 : 0;
+
       return {
         date: result.createdAt,
-        topic: result.topicwiseMcq.key,
+        topic: mcqMap.get(result.topicwiseMcqId) || 'unknown',
         score: Math.round(scorePercentage * 100) / 100,
         timeTaken: result.totalTimeTaken,
         correctAnswers: result.correctAnswerCount,
         wrongAnswers: result.wrongAnswerCount,
-        totalQuestions: totalQuestions
+        totalQuestions: totalQuestions,
       };
     });
   } catch (error) {
-    log.error('Error generating user progress over time', { 
-      error: error instanceof Error ? error.message : String(error), 
+    log.error('Error generating user progress over time', {
+      error: error instanceof Error ? error.message : String(error),
       userId,
-      topicKey
+      topicKey,
     });
     throw error;
   }
@@ -304,29 +330,29 @@ export const getUserProgressOverTime = async (userId: string, topicKey?: string)
 
 export const getWeakAreasAnalysis = async (userId: string) => {
   try {
+    const mcqMap = await getValidMcqMap();
+    const validIds = [...mcqMap.keys()];
+
     const results = await prisma.topicwiseQuizResult.findMany({
-      where: { userId },
-      include: {
-        topicwiseMcq: {
-          select: {
-            key: true
-          }
-        }
-      }
+      where: { userId, topicwiseMcqId: { in: validIds } },
+      select: {
+        topicwiseMcqId: true,
+        questionDetails: true,
+      },
     });
-    
+
     // Track performance by question
     const questionPerformance: Record<string, QuestionPerformance> = {};
-    
+
     results.forEach((result) => {
       if (!result.questionDetails) return;
-      
+
       const details = JSON.parse(String(result.questionDetails)) as QuestionDetail[];
-      const topicKey = result.topicwiseMcq.key;
-      
-      details.forEach(detail => {
+      const topicKey = mcqMap.get(result.topicwiseMcqId) || 'unknown';
+
+      details.forEach((detail) => {
         const questionId = `${topicKey}-${detail.questionId}`;
-        
+
         if (!questionPerformance[questionId]) {
           questionPerformance[questionId] = {
             topic: topicKey,
@@ -335,48 +361,47 @@ export const getWeakAreasAnalysis = async (userId: string) => {
             attempts: 0,
             correctAttempts: 0,
             incorrectAttempts: 0,
-            averageTimeTaken: 0
+            averageTimeTaken: 0,
           };
         }
-        
+
         const performance = questionPerformance[questionId];
         performance.attempts += 1;
-        
+
         if (detail.isCorrect) {
           performance.correctAttempts += 1;
         } else {
           performance.incorrectAttempts += 1;
         }
-        
+
         if (detail.timeTaken) {
-          performance.averageTimeTaken = 
-            ((performance.averageTimeTaken * (performance.attempts - 1)) + detail.timeTaken) / 
+          performance.averageTimeTaken =
+            (performance.averageTimeTaken * (performance.attempts - 1) + detail.timeTaken) /
             performance.attempts;
         }
       });
     });
-    
+
     // Calculate success rates and identify weak areas
     const weakAreas = Object.values(questionPerformance)
       .map((performance) => {
-        const successRate = performance.attempts > 0 
-          ? (performance.correctAttempts / performance.attempts) * 100 
-          : 0;
-        
+        const successRate =
+          performance.attempts > 0 ? (performance.correctAttempts / performance.attempts) * 100 : 0;
+
         return {
           ...performance,
           successRate: Math.round(successRate * 100) / 100,
-          averageTimeTaken: Math.round(performance.averageTimeTaken * 100) / 100
+          averageTimeTaken: Math.round(performance.averageTimeTaken * 100) / 100,
         };
       })
       .filter((performance: any) => performance.successRate < 50)
       .sort((a: any, b: any) => a.successRate - b.successRate);
-    
+
     return weakAreas;
   } catch (error) {
-    log.error('Error generating weak areas analysis', { 
-      error: error instanceof Error ? error.message : String(error), 
-      userId 
+    log.error('Error generating weak areas analysis', {
+      error: error instanceof Error ? error.message : String(error),
+      userId,
     });
     throw error;
   }
@@ -401,31 +426,39 @@ export interface DashboardData {
 export async function getDashboardData(userId: string): Promise<DashboardData> {
   try {
     log.info('Fetching dashboard data for user', { userId });
-    const results = await prisma.topicwiseQuizResult.findMany({
+
+    // First get all valid TopicwiseMcqs ids to avoid orphaned reference errors
+    const mcqMap = await getValidMcqMap();
+    const validIds = [...mcqMap.keys()];
+
+    const rawResults = await prisma.topicwiseQuizResult.findMany({
       where: {
-        userId
+        userId,
+        topicwiseMcqId: { in: validIds },
       },
       select: {
         id: true,
         correctAnswerCount: true,
         wrongAnswerCount: true,
         createdAt: true,
-        topicwiseMcq: {
-          select: {
-            key: true
-          }
-        }
+        topicwiseMcqId: true,
       },
       orderBy: {
-        createdAt: 'desc'
-      }
+        createdAt: 'desc',
+      },
     });
-    
-    log.info('Retrieved quiz results', { 
+
+    // Map results with topic key from the lookup
+    const results = rawResults.map((r) => ({
+      ...r,
+      topicwiseMcq: { key: mcqMap.get(r.topicwiseMcqId) || 'unknown' },
+    }));
+
+    log.info('Retrieved quiz results', {
       resultCount: results.length,
-      firstResult: results[0] 
+      firstResult: results[0],
     });
-    
+
     if (results.length === 0) {
       return {
         totalQuizzes: 0,
@@ -433,76 +466,77 @@ export async function getDashboardData(userId: string): Promise<DashboardData> {
         totalWrong: 0,
         averageScore: 0,
         topPerformingTopics: [],
-        recentActivity: []
+        recentActivity: [],
       };
     }
-    
+
     // Calculate total metrics
     const totalQuizzes = results.length;
     const totalCorrect = results.reduce((sum, result) => sum + result.correctAnswerCount, 0);
     const totalWrong = results.reduce((sum, result) => sum + result.wrongAnswerCount, 0);
     const totalQuestions = totalCorrect + totalWrong;
     const averageScore = totalQuestions > 0 ? (totalCorrect / totalQuestions) * 100 : 0;
-    
+
     // Group by topic for top performing topics
-    const topicPerformance: Record<string, { totalCorrect: number; totalQuestions: number; }> = {};
-    
+    const topicPerformance: Record<string, { totalCorrect: number; totalQuestions: number }> = {};
+
     results.forEach((result) => {
       if (!result.topicwiseMcq?.key) {
         log.warn('Missing topicwiseMcq or key for result', { resultId: result.id });
         return;
       }
-      
+
       const topicKey = result.topicwiseMcq.key;
-      
+
       if (!topicPerformance[topicKey]) {
         topicPerformance[topicKey] = {
           totalCorrect: 0,
-          totalQuestions: 0
+          totalQuestions: 0,
         };
       }
-      
+
       topicPerformance[topicKey].totalCorrect += result.correctAnswerCount;
-      topicPerformance[topicKey].totalQuestions += result.correctAnswerCount + result.wrongAnswerCount;
+      topicPerformance[topicKey].totalQuestions +=
+        result.correctAnswerCount + result.wrongAnswerCount;
     });
-    
+
     log.info('Calculated topic performance', { topicPerformance });
-    
+
     const topPerformingTopics = Object.entries(topicPerformance)
       .map(([topic, data]) => ({
         topic,
-        averageScore: data.totalQuestions > 0 ? (data.totalCorrect / data.totalQuestions) * 100 : 0
+        averageScore: data.totalQuestions > 0 ? (data.totalCorrect / data.totalQuestions) * 100 : 0,
       }))
       .sort((a, b) => b.averageScore - a.averageScore)
       .slice(0, 5);
-    
+
     // Recent activity (last 10 quizzes)
-    const recentActivity = results.slice(0, 10).map(result => {
+    const recentActivity = results.slice(0, 10).map((result) => {
       const totalQuestions = result.correctAnswerCount + result.wrongAnswerCount;
       const score = totalQuestions > 0 ? (result.correctAnswerCount / totalQuestions) * 100 : 0;
-      
+
       return {
         date: result.createdAt,
         topic: result.topicwiseMcq.key,
-        score
+        score,
       };
     });
-    
+
     return {
       totalQuizzes,
       totalCorrect,
       totalWrong,
       averageScore: Math.round(averageScore * 100) / 100,
-      topPerformingTopics: topPerformingTopics.map(topic => ({
+      topPerformingTopics: topPerformingTopics.map((topic) => ({
         ...topic,
-        averageScore: Math.round(topic.averageScore * 100) / 100
+        averageScore: Math.round(topic.averageScore * 100) / 100,
       })),
-      recentActivity
+      recentActivity,
     };
   } catch (error) {
-    log.error('Error getting dashboard data', { 
-      error: error instanceof Error ? error.message : String(error), 
-      userId 
+    log.error('Error getting dashboard data', {
+      error: error instanceof Error ? error.message : String(error),
+      userId,
     });
     throw error;
   }

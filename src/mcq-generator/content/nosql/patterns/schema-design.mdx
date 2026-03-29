@@ -1,0 +1,569 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Schema Design Best Practices
+---
+
+# Schema Design Best Practices
+
+## Design for Queries
+
+```javascript
+// ❌ Bad: Normalized like SQL
+{
+  users: [
+    { _id: 1, name: "John" }
+  ],
+  addresses: [
+    { _id: 1, userId: 1, street: "123 Main St" }
+  ],
+  orders: [
+    { _id: 1, userId: 1, total: 99.99 }
+  ]
+}
+
+// ✅ Good: Denormalized for query patterns
+{
+  _id: 1,
+  name: "John",
+  address: {
+    street: "123 Main St",
+    city: "New York"
+  },
+  recentOrders: [
+    { id: 1, total: 99.99, date: "2024-01-01" }
+  ]
+}
+```
+
+## Embedding vs Referencing
+
+### When to Embed
+
+```javascript
+const embedWhen = {
+  oneToFew: 'Small number of subdocuments',
+  dataAccessedTogether: 'Always queried together',
+  dataRarelyChanges: 'Infrequent updates',
+  atomicUpdates: 'Need atomic operations',
+  childBelongsToParent: 'Strong ownership'
+};
+
+// Example: User with addresses
+{
+  _id: ObjectId("123"),
+  name: "John Doe",
+  addresses: [
+    { type: "home", street: "123 Main St", city: "NYC" },
+    { type: "work", street: "456 Office Blvd", city: "NYC" }
+  ]
+}
+```
+
+### When to Reference
+
+```javascript
+const referenceWhen = {
+  oneToMany: 'Large number of subdocuments',
+  dataAccessedSeparately: 'Queried independently',
+  dataChangesFrequently: 'Frequent updates',
+  largeSubdocuments: 'Exceeds 16MB limit',
+  manyToMany: 'Multiple relationships'
+};
+
+// Example: Blog posts and comments
+// Posts collection
+{
+  _id: ObjectId("123"),
+  title: "My Post",
+  content: "...",
+  authorId: ObjectId("456")
+}
+
+// Comments collection
+{
+  _id: ObjectId("789"),
+  postId: ObjectId("123"),
+  text: "Great post!",
+  authorId: ObjectId("999")
+}
+```
+
+## Design Patterns
+
+### 1. Attribute Pattern
+
+```javascript
+// Flexible schema for varying attributes
+{
+  _id: 1,
+  name: "Product A",
+  category: "Electronics",
+  attributes: [
+    { key: "color", value: "red" },
+    { key: "size", value: "large" },
+    { key: "weight", value: "5kg" }
+  ]
+}
+
+// Create index on attributes
+db.products.createIndex({ "attributes.key": 1, "attributes.value": 1 });
+
+// Query any attribute
+db.products.find({
+  "attributes": {
+    $elemMatch: { key: "color", value: "red" }
+  }
+});
+```
+
+### 2. Bucket Pattern
+
+```javascript
+// Group time-series data into buckets
+{
+  _id: ObjectId("123"),
+  sensorId: "sensor-1",
+  date: ISODate("2024-01-01"),
+  hour: 10,
+  measurements: [
+    { timestamp: ISODate("2024-01-01T10:05:00Z"), temp: 25.5 },
+    { timestamp: ISODate("2024-01-01T10:10:00Z"), temp: 25.7 },
+    { timestamp: ISODate("2024-01-01T10:15:00Z"), temp: 25.6 }
+  ],
+  count: 3,
+  avgTemp: 25.6,
+  minTemp: 25.5,
+  maxTemp: 25.7
+}
+
+// Benefits: Fewer documents, better performance
+```
+
+### 3. Computed Pattern
+
+```javascript
+// Pre-compute frequently accessed values
+{
+  _id: ObjectId("123"),
+  userId: "user-1",
+  orders: [
+    { id: "789", total: 99.99, date: "2024-01-01" },
+    { id: "790", total: 149.99, date: "2024-01-02" }
+  ],
+  // Computed fields
+  totalOrders: 2,
+  totalSpent: 249.98,
+  avgOrderValue: 124.99,
+  lastOrderDate: ISODate("2024-01-02")
+}
+
+// Update computed fields on write
+db.users.updateOne(
+  { _id: userId },
+  {
+    $push: { orders: newOrder },
+    $inc: { totalOrders: 1, totalSpent: newOrder.total },
+    $set: { lastOrderDate: new Date() }
+  }
+);
+```
+
+### 4. Extended Reference Pattern
+
+```javascript
+// Duplicate frequently accessed fields
+{
+  _id: ObjectId("123"),
+  title: "Blog Post",
+  content: "...",
+  author: {
+    id: ObjectId("456"),
+    name: "John Doe",      // Duplicated
+    avatar: "url"          // Duplicated
+  }
+}
+
+// Full author data in separate collection
+{
+  _id: ObjectId("456"),
+  name: "John Doe",
+  avatar: "url",
+  bio: "...",
+  email: "john@example.com",
+  // ... other fields
+}
+```
+
+### 5. Subset Pattern
+
+```javascript
+// Store subset of large arrays
+{
+  _id: ObjectId("123"),
+  title: "Popular Movie",
+  recentReviews: [  // Last 10 reviews
+    { user: "user1", rating: 5, text: "Great!" },
+    { user: "user2", rating: 4, text: "Good" }
+  ],
+  totalReviews: 10000,
+  avgRating: 4.5
+}
+
+// All reviews in separate collection
+{
+  _id: ObjectId("789"),
+  movieId: ObjectId("123"),
+  user: "user1",
+  rating: 5,
+  text: "Great!",
+  date: ISODate("2024-01-01")
+}
+```
+
+### 6. Polymorphic Pattern
+
+```javascript
+// Different document types in same collection
+{
+  _id: 1,
+  type: "book",
+  title: "MongoDB Guide",
+  author: "John Doe",
+  isbn: "123-456",
+  pages: 300
+}
+
+{
+  _id: 2,
+  type: "electronics",
+  title: "Laptop",
+  brand: "Dell",
+  model: "XPS 15",
+  specs: { cpu: "i7", ram: "16GB" }
+}
+
+// Query by type
+db.products.find({ type: "book" });
+```
+
+### 7. Approximation Pattern
+
+```javascript
+// Approximate counts for performance
+{
+  _id: ObjectId("123"),
+  postId: "post-1",
+  exactViews: 1523,      // Updated occasionally
+  approxViews: 1500,     // Updated in batches
+  lastExactUpdate: ISODate("2024-01-01T10:00:00Z")
+}
+
+// Increment approximation
+db.posts.updateOne(
+  { _id: postId },
+  { $inc: { exactViews: 1 } }
+);
+
+// Batch update approximation
+if (exactViews % 100 === 0) {
+  db.posts.updateOne(
+    { _id: postId },
+    { $set: { approxViews: exactViews } }
+  );
+}
+```
+
+### 8. Outlier Pattern
+
+```javascript
+// Handle outliers separately
+{
+  _id: ObjectId("123"),
+  userId: "user-1",
+  orders: [
+    { id: "789", total: 99.99 },
+    { id: "790", total: 149.99 }
+  ],
+  hasMoreOrders: false
+}
+
+// User with many orders (outlier)
+{
+  _id: ObjectId("456"),
+  userId: "user-2",
+  orders: [
+    { id: "791", total: 99.99 },
+    // ... first 100 orders
+  ],
+  hasMoreOrders: true
+}
+
+// Overflow collection for outliers
+{
+  _id: ObjectId("999"),
+  userId: "user-2",
+  orders: [
+    { id: "892", total: 199.99 },
+    // ... remaining orders
+  ]
+}
+```
+
+## Anti-Patterns to Avoid
+
+```javascript
+const antiPatterns = {
+  massiveArrays: {
+    problem: 'Unbounded array growth',
+    solution: 'Use bucket or subset pattern',
+    example: 'Storing all user actions in single array'
+  },
+  
+  massiveDocuments: {
+    problem: 'Documents exceeding 16MB',
+    solution: 'Split into multiple documents',
+    example: 'Embedding entire product catalog'
+  },
+  
+  unnecessaryIndexes: {
+    problem: 'Too many indexes slow writes',
+    solution: 'Index only frequently queried fields',
+    example: 'Indexing every field'
+  },
+  
+  bloatedDocuments: {
+    problem: 'Storing unnecessary data',
+    solution: 'Use projection, remove unused fields',
+    example: 'Storing full user object everywhere'
+  },
+  
+  caseInsensitiveQueries: {
+    problem: 'Slow regex queries',
+    solution: 'Store lowercase version, use text index',
+    example: 'Using /pattern/i for every search'
+  }
+};
+```
+
+## Schema Validation
+
+```javascript
+// MongoDB schema validation
+db.createCollection("users", {
+  validator: {
+    $jsonSchema: {
+      bsonType: "object",
+      required: ["name", "email", "createdAt"],
+      properties: {
+        name: {
+          bsonType: "string",
+          description: "must be a string and is required"
+        },
+        email: {
+          bsonType: "string",
+          pattern: "^.+@.+$",
+          description: "must be a valid email"
+        },
+        age: {
+          bsonType: "int",
+          minimum: 0,
+          maximum: 150,
+          description: "must be an integer between 0 and 150"
+        },
+        status: {
+          enum: ["active", "inactive", "pending"],
+          description: "must be one of the enum values"
+        },
+        createdAt: {
+          bsonType: "date",
+          description: "must be a date"
+        }
+      }
+    }
+  },
+  validationLevel: "moderate",
+  validationAction: "error"
+});
+```
+
+## Naming Conventions
+
+```javascript
+const namingConventions = {
+  collections: 'Plural, lowercase: users, orders, products',
+  fields: 'camelCase: firstName, createdAt, userId',
+  constants: 'UPPER_SNAKE_CASE: MAX_RETRIES, DEFAULT_LIMIT',
+  booleans: 'Prefix with is/has: isActive, hasOrders',
+  dates: 'Suffix with At/Date: createdAt, updatedAt, birthDate',
+  ids: 'Suffix with Id: userId, orderId, productId'
+};
+
+// Example
+{
+  _id: ObjectId("123"),
+  userId: "user-1",
+  firstName: "John",
+  lastName: "Doe",
+  isActive: true,
+  hasOrders: true,
+  createdAt: ISODate("2024-01-01"),
+  updatedAt: ISODate("2024-01-02")
+}
+```
+
+## Document Size Limits
+
+```javascript
+// MongoDB: 16MB per document
+const documentSizeBestPractices = [
+  'Keep documents under 16MB',
+  'Use GridFS for large files',
+  'Reference large arrays instead of embedding',
+  'Use bucket pattern for time-series',
+  'Monitor document sizes',
+  'Split large documents if needed'
+];
+
+// Check document size
+const doc = await db.collection('users').findOne({ _id: userId });
+const size = Object.keys(doc).reduce((total, key) => {
+  return total + JSON.stringify(doc[key]).length;
+}, 0);
+
+console.log(`Document size: ${size} bytes`);
+```
+
+## .NET Schema Design
+
+```csharp
+using MongoDB.Bson;
+using MongoDB.Bson.Serialization.Attributes;
+
+// Embedded documents
+public class User
+{
+    [BsonId]
+    public ObjectId Id { get; set; }
+    
+    [BsonElement("name")]
+    [BsonRequired]
+    public string Name { get; set; }
+    
+    [BsonElement("email")]
+    [BsonRequired]
+    public string Email { get; set; }
+    
+    [BsonElement("address")]
+    public Address Address { get; set; }  // Embedded
+    
+    [BsonElement("recentOrders")]
+    public List<OrderSummary> RecentOrders { get; set; }  // Embedded
+    
+    [BsonElement("createdAt")]
+    public DateTime CreatedAt { get; set; }
+}
+
+public class Address
+{
+    [BsonElement("street")]
+    public string Street { get; set; }
+    
+    [BsonElement("city")]
+    public string City { get; set; }
+    
+    [BsonElement("zip")]
+    public string Zip { get; set; }
+}
+
+// Referenced documents
+public class Order
+{
+    [BsonId]
+    public ObjectId Id { get; set; }
+    
+    [BsonElement("userId")]
+    [BsonRepresentation(BsonType.ObjectId)]
+    public string UserId { get; set; }  // Reference
+    
+    [BsonElement("total")]
+    public decimal Total { get; set; }
+}
+```
+
+## Migration Strategy
+
+```javascript
+// Gradual schema migration
+class SchemaMigration {
+  async migrateToNewSchema() {
+    const cursor = db.collection('users').find({ version: { $exists: false } });
+    
+    while (await cursor.hasNext()) {
+      const doc = await cursor.next();
+      
+      // Transform to new schema
+      const updated = {
+        ...doc,
+        fullName: `${doc.firstName} ${doc.lastName}`,
+        version: 2
+      };
+      
+      delete updated.firstName;
+      delete updated.lastName;
+      
+      await db.collection('users').replaceOne(
+        { _id: doc._id },
+        updated
+      );
+    }
+  }
+  
+  // Support both schemas during migration
+  async getUser(userId) {
+    const user = await db.collection('users').findOne({ _id: userId });
+    
+    if (user.version === 2) {
+      return user;
+    }
+    
+    // Transform old schema on read
+    return {
+      ...user,
+      fullName: `${user.firstName} ${user.lastName}`,
+      version: 2
+    };
+  }
+}
+```
+
+## Best Practices Checklist
+
+```javascript
+const schemaDesignChecklist = [
+  'Design for access patterns, not data structure',
+  'Embed data accessed together',
+  'Reference data accessed separately',
+  'Use appropriate design patterns',
+  'Validate schema with JSON Schema',
+  'Follow naming conventions',
+  'Monitor document sizes',
+  'Create indexes for queries',
+  'Avoid anti-patterns',
+  'Plan for schema evolution',
+  'Test with realistic data volumes',
+  'Document schema decisions'
+];
+```
+
+## Interview Tips
+
+- **Explain embedding vs referencing**: When to use each
+- **Show design patterns**: Attribute, bucket, computed, subset
+- **Demonstrate anti-patterns**: What to avoid
+- **Discuss validation**: Schema validation rules
+- **Mention limits**: 16MB document size
+- **Show examples**: Real-world schema designs
+
+## Summary
+
+Design NoSQL schemas for query patterns, not normalized data structures. Embed documents for one-to-few relationships and data accessed together. Reference for one-to-many and frequently changing data. Apply patterns: attribute (flexible fields), bucket (time-series), computed (pre-calculated), extended reference (duplicate frequently accessed), subset (partial arrays), polymorphic (different types). Avoid anti-patterns like massive arrays and unnecessary indexes. Use schema validation. Follow naming conventions. Monitor document sizes. Essential for efficient NoSQL applications.

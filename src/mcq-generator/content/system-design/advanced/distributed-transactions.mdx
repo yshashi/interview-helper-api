@@ -1,0 +1,489 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Distributed Transactions
+---
+
+# Distributed Transactions
+
+## What are Distributed Transactions?
+
+Distributed transactions are operations that span multiple databases or services and must be executed atomically - either all operations succeed or all fail. They're challenging because traditional ACID transactions don't work across network boundaries.
+
+## The Challenge
+
+**Traditional Transaction (Single Database):**
+- BEGIN TRANSACTION
+- Update account A: -$100
+- Update account B: +$100
+- COMMIT
+- Database ensures atomicity
+
+**Distributed Transaction (Multiple Databases):**
+- Service A updates its database
+- Service B updates its database
+- Network can fail between operations
+- How to ensure both succeed or both fail?
+
+## Two-Phase Commit (2PC)
+
+**Purpose:** Coordinate distributed transaction across multiple participants
+
+**Roles:**
+- **Coordinator:** Orchestrates the transaction
+- **Participants:** Services/databases involved
+
+**Phase 1: Prepare**
+1. Coordinator asks all participants: "Can you commit?"
+2. Participants prepare transaction (lock resources)
+3. Participants vote: YES or NO
+4. If any participant votes NO, transaction aborts
+
+**Phase 2: Commit**
+1. If all voted YES, coordinator sends COMMIT
+2. If any voted NO, coordinator sends ROLLBACK
+3. Participants execute decision
+4. Participants acknowledge completion
+
+**Example Flow:**
+
+```
+Coordinator: "Prepare to transfer $100 from A to B"
+
+Participant 1 (Account A): 
+  - Check balance ($500 available)
+  - Lock account
+  - Vote: YES
+
+Participant 2 (Account B):
+  - Check account exists
+  - Lock account
+  - Vote: YES
+
+Coordinator: "All voted YES, COMMIT"
+
+Participant 1: Deduct $100, unlock, ACK
+Participant 2: Add $100, unlock, ACK
+
+Coordinator: "Transaction complete"
+```
+
+**Advantages:**
+- Strong consistency
+- Clear commit/rollback semantics
+
+**Disadvantages:**
+- Blocking protocol (locks held during voting)
+- Coordinator is single point of failure
+- Poor performance (multiple network round trips)
+- Not suitable for microservices
+
+## Saga Pattern
+
+**Purpose:** Manage distributed transactions without locking, using compensating transactions
+
+**How it Works:**
+- Break transaction into sequence of local transactions
+- Each step has compensating transaction (undo)
+- If step fails, execute compensating transactions for completed steps
+
+**Types:**
+
+### Choreography-Based Saga
+
+**Approach:** Services communicate via events, no central coordinator
+
+**Example: Order Processing**
+
+```
+1. Order Service: Create order (status: PENDING)
+   → Publishes: OrderCreated
+
+2. Payment Service: Process payment
+   → Success: Publishes PaymentCompleted
+   → Failure: Publishes PaymentFailed
+
+3. Inventory Service: Reserve items
+   → Success: Publishes InventoryReserved
+   → Failure: Publishes InventoryFailed
+
+4. Shipping Service: Create shipment
+   → Success: Publishes ShipmentCreated
+   → Order status: COMPLETED
+```
+
+**Compensation Flow (if inventory fails):**
+
+```
+1. Inventory Service: Publishes InventoryFailed
+
+2. Payment Service: Listens to InventoryFailed
+   → Refund payment (compensating transaction)
+   → Publishes PaymentRefunded
+
+3. Order Service: Listens to PaymentRefunded
+   → Update order status: CANCELLED
+```
+
+**Implementation:**
+
+```javascript
+// Order Service
+class OrderService {
+  async createOrder(orderData) {
+    const order = await db.orders.create({
+      ...orderData,
+      status: 'PENDING'
+    });
+    
+    await eventBus.publish('OrderCreated', {
+      orderId: order.id,
+      userId: order.userId,
+      items: order.items,
+      total: order.total
+    });
+    
+    return order;
+  }
+  
+  // Listen for success/failure events
+  async onPaymentFailed(event) {
+    await db.orders.update(event.orderId, {
+      status: 'PAYMENT_FAILED'
+    });
+  }
+  
+  async onShipmentCreated(event) {
+    await db.orders.update(event.orderId, {
+      status: 'COMPLETED'
+    });
+  }
+}
+
+// Payment Service
+class PaymentService {
+  async onOrderCreated(event) {
+    try {
+      const payment = await this.processPayment(event);
+      
+      await eventBus.publish('PaymentCompleted', {
+        orderId: event.orderId,
+        paymentId: payment.id
+      });
+    } catch (error) {
+      await eventBus.publish('PaymentFailed', {
+        orderId: event.orderId,
+        reason: error.message
+      });
+    }
+  }
+  
+  // Compensating transaction
+  async onInventoryFailed(event) {
+    const payment = await db.payments.findByOrderId(event.orderId);
+    
+    if (payment) {
+      await this.refundPayment(payment.id);
+      
+      await eventBus.publish('PaymentRefunded', {
+        orderId: event.orderId,
+        paymentId: payment.id
+      });
+    }
+  }
+}
+```
+
+**Advantages:**
+- No central coordinator
+- Services loosely coupled
+- Scales well
+
+**Disadvantages:**
+- Complex to understand and debug
+- Difficult to track saga state
+- Cyclic dependencies possible
+
+### Orchestration-Based Saga
+
+**Approach:** Central orchestrator coordinates saga steps
+
+**Example:**
+
+```javascript
+class OrderSagaOrchestrator {
+  async executeOrderSaga(orderData) {
+    const sagaId = generateId();
+    const state = {
+      sagaId,
+      currentStep: 0,
+      completedSteps: [],
+      orderData
+    };
+    
+    try {
+      // Step 1: Create order
+      const order = await this.orderService.createOrder(orderData);
+      state.completedSteps.push('createOrder');
+      state.orderId = order.id;
+      
+      // Step 2: Process payment
+      const payment = await this.paymentService.processPayment({
+        orderId: order.id,
+        amount: order.total
+      });
+      state.completedSteps.push('processPayment');
+      state.paymentId = payment.id;
+      
+      // Step 3: Reserve inventory
+      await this.inventoryService.reserveItems({
+        orderId: order.id,
+        items: order.items
+      });
+      state.completedSteps.push('reserveInventory');
+      
+      // Step 4: Create shipment
+      await this.shippingService.createShipment({
+        orderId: order.id,
+        address: order.shippingAddress
+      });
+      state.completedSteps.push('createShipment');
+      
+      // Complete saga
+      await this.orderService.completeOrder(order.id);
+      
+      return { success: true, orderId: order.id };
+      
+    } catch (error) {
+      // Compensate completed steps in reverse order
+      await this.compensate(state);
+      
+      return { success: false, error: error.message };
+    }
+  }
+  
+  async compensate(state) {
+    const steps = state.completedSteps.reverse();
+    
+    for (const step of steps) {
+      try {
+        switch (step) {
+          case 'createShipment':
+            await this.shippingService.cancelShipment(state.orderId);
+            break;
+          case 'reserveInventory':
+            await this.inventoryService.releaseItems(state.orderId);
+            break;
+          case 'processPayment':
+            await this.paymentService.refundPayment(state.paymentId);
+            break;
+          case 'createOrder':
+            await this.orderService.cancelOrder(state.orderId);
+            break;
+        }
+      } catch (error) {
+        console.error(`Compensation failed for ${step}:`, error);
+        // Log for manual intervention
+      }
+    }
+  }
+}
+```
+
+**Advantages:**
+- Centralized logic, easier to understand
+- Clear saga state
+- Easier to monitor and debug
+
+**Disadvantages:**
+- Orchestrator is single point of failure
+- Services coupled to orchestrator
+- Orchestrator can become complex
+
+## Event Sourcing
+
+**Concept:** Store all changes as sequence of events, rebuild state by replaying events
+
+**Benefits for Distributed Transactions:**
+- Natural audit trail
+- Can replay events to recover state
+- Events are immutable facts
+
+**Example:**
+
+```javascript
+// Events
+const events = [
+  { type: 'OrderCreated', orderId: '123', total: 100 },
+  { type: 'PaymentProcessed', orderId: '123', paymentId: 'p456' },
+  { type: 'InventoryReserved', orderId: '123', items: [...] },
+  { type: 'ShipmentCreated', orderId: '123', trackingId: 't789' }
+];
+
+// Rebuild order state
+function rebuildOrderState(orderId, events) {
+  const orderEvents = events.filter(e => e.orderId === orderId);
+  
+  let state = { status: 'UNKNOWN' };
+  
+  for (const event of orderEvents) {
+    switch (event.type) {
+      case 'OrderCreated':
+        state = { status: 'PENDING', total: event.total };
+        break;
+      case 'PaymentProcessed':
+        state.status = 'PAID';
+        state.paymentId = event.paymentId;
+        break;
+      case 'InventoryReserved':
+        state.status = 'RESERVED';
+        break;
+      case 'ShipmentCreated':
+        state.status = 'SHIPPED';
+        state.trackingId = event.trackingId;
+        break;
+    }
+  }
+  
+  return state;
+}
+```
+
+## Idempotency
+
+**Critical for Distributed Transactions:** Operations must be safely retryable
+
+**Idempotent Operation:** Executing multiple times has same effect as executing once
+
+**Example:**
+
+```javascript
+// NOT idempotent
+async function addToBalance(userId, amount) {
+  const user = await db.users.findById(userId);
+  await db.users.update(userId, {
+    balance: user.balance + amount
+  });
+}
+// Retry adds amount again!
+
+// Idempotent
+async function addToBalance(userId, amount, transactionId) {
+  // Check if already processed
+  const existing = await db.transactions.findById(transactionId);
+  if (existing) {
+    return existing; // Already processed
+  }
+  
+  const user = await db.users.findById(userId);
+  await db.users.update(userId, {
+    balance: user.balance + amount
+  });
+  
+  // Record transaction
+  await db.transactions.create({
+    id: transactionId,
+    userId,
+    amount,
+    processedAt: new Date()
+  });
+}
+// Safe to retry with same transactionId
+```
+
+## .NET Distributed Transaction Example
+
+```csharp
+public class DistributedTransactionService
+{
+    private readonly IOrderRepository _orderRepo;
+    private readonly IPaymentService _paymentService;
+    private readonly IInventoryService _inventoryService;
+    private readonly IMessageBus _messageBus;
+    
+    // Saga orchestrator
+    public async Task<Result> ProcessOrderAsync(OrderRequest request)
+    {
+        var sagaId = Guid.NewGuid();
+        var compensations = new Stack<Func<Task>>();
+        
+        try
+        {
+            // Step 1: Create order
+            var order = await _orderRepo.CreateAsync(request);
+            compensations.Push(async () => 
+                await _orderRepo.CancelAsync(order.Id));
+            
+            // Step 2: Process payment
+            var payment = await _paymentService.ProcessAsync(
+                order.Id, order.Total);
+            compensations.Push(async () => 
+                await _paymentService.RefundAsync(payment.Id));
+            
+            // Step 3: Reserve inventory
+            await _inventoryService.ReserveAsync(
+                order.Id, order.Items);
+            compensations.Push(async () => 
+                await _inventoryService.ReleaseAsync(order.Id));
+            
+            // Step 4: Publish success event
+            await _messageBus.PublishAsync(new OrderCompletedEvent
+            {
+                OrderId = order.Id,
+                SagaId = sagaId
+            });
+            
+            return Result.Success(order.Id);
+        }
+        catch (Exception ex)
+        {
+            // Execute compensations
+            await CompensateAsync(compensations);
+            
+            return Result.Failure(ex.Message);
+        }
+    }
+    
+    private async Task CompensateAsync(Stack<Func<Task>> compensations)
+    {
+        while (compensations.Count > 0)
+        {
+            var compensation = compensations.Pop();
+            try
+            {
+                await compensation();
+            }
+            catch (Exception ex)
+            {
+                // Log compensation failure for manual intervention
+                _logger.LogError(ex, "Compensation failed");
+            }
+        }
+    }
+}
+```
+
+## Best Practices
+
+- **Avoid distributed transactions when possible** - Design services with clear boundaries
+- **Use saga pattern for microservices** - Better than 2PC
+- **Make operations idempotent** - Safe retries
+- **Implement compensating transactions** - Undo completed steps
+- **Monitor saga state** - Track progress and failures
+- **Set timeouts** - Don't wait forever
+- **Log everything** - Essential for debugging
+- **Plan for partial failures** - System must handle them
+- **Use unique transaction IDs** - Prevent duplicates
+- **Test failure scenarios** - Chaos engineering
+
+## Interview Tips
+
+- **Explain the challenge**: ACID doesn't work across services
+- **Show 2PC**: Traditional approach, blocking
+- **Demonstrate saga**: Modern approach for microservices
+- **Discuss compensation**: How to undo steps
+- **Mention idempotency**: Critical for retries
+- **Show orchestration vs choreography**: Trade-offs
+
+## Summary
+
+Distributed transactions coordinate operations across multiple services/databases. Two-Phase Commit (2PC) uses coordinator and voting but blocks and has single point of failure. Saga pattern breaks transaction into local transactions with compensating actions. Choreography-based sagas use events (loosely coupled). Orchestration-based sagas use central coordinator (easier to understand). Make operations idempotent for safe retries. Use unique transaction IDs to prevent duplicates. Event sourcing provides audit trail. Avoid distributed transactions when possible through better service boundaries. Essential for building reliable microservices.

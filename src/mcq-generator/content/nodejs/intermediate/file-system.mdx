@@ -1,0 +1,204 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: File System in Node.js
+---
+
+# File System in Node.js
+
+## fs Module
+
+The **fs** module provides an API for interacting with the file system.
+
+```javascript
+const fs = require('fs');
+const fsPromises = require('fs').promises;
+```
+
+## Reading Files
+
+### Asynchronous
+
+```javascript
+fs.readFile('file.txt', 'utf8', (err, data) => {
+  if (err) throw err;
+  console.log(data);
+});
+```
+
+### Synchronous
+
+```javascript
+try {
+  const data = fs.readFileSync('file.txt', 'utf8');
+  console.log(data);
+} catch (err) {
+  console.error(err);
+}
+```
+
+### Promise-based
+
+```javascript
+async function readFile() {
+  try {
+    const data = await fsPromises.readFile('file.txt', 'utf8');
+    console.log(data);
+  } catch (err) {
+    console.error(err);
+  }
+}
+```
+
+## Writing Files
+
+```javascript
+// Async
+fs.writeFile('output.txt', 'Hello World', (err) => {
+  if (err) throw err;
+  console.log('File written');
+});
+
+// Sync
+fs.writeFileSync('output.txt', 'Hello World');
+
+// Promise
+await fsPromises.writeFile('output.txt', 'Hello World');
+
+// Append
+fs.appendFile('log.txt', 'New log entry\n', (err) => {
+  if (err) throw err;
+});
+```
+
+## File Operations
+
+```javascript
+// Check if file exists
+fs.access('file.txt', fs.constants.F_OK, (err) => {
+  console.log(err ? 'File does not exist' : 'File exists');
+});
+
+// Get file stats
+fs.stat('file.txt', (err, stats) => {
+  console.log(stats.size);
+  console.log(stats.isFile());
+  console.log(stats.isDirectory());
+});
+
+// Rename file
+fs.rename('old.txt', 'new.txt', (err) => {
+  if (err) throw err;
+});
+
+// Delete file
+fs.unlink('file.txt', (err) => {
+  if (err) throw err;
+});
+
+// Copy file
+fs.copyFile('source.txt', 'dest.txt', (err) => {
+  if (err) throw err;
+});
+```
+
+## Directory Operations
+
+```javascript
+// Create directory
+fs.mkdir('newdir', (err) => {
+  if (err) throw err;
+});
+
+// Read directory
+fs.readdir('.', (err, files) => {
+  console.log(files);
+});
+
+// Remove directory
+fs.rmdir('dir', (err) => {
+  if (err) throw err;
+});
+
+// Remove directory recursively
+fs.rm('dir', { recursive: true }, (err) => {
+  if (err) throw err;
+});
+```
+
+## Streams
+
+```javascript
+// Read stream
+const readStream = fs.createReadStream('large-file.txt', 'utf8');
+
+readStream.on('data', (chunk) => {
+  console.log('Chunk:', chunk);
+});
+
+readStream.on('end', () => {
+  console.log('Reading complete');
+});
+
+// Write stream
+const writeStream = fs.createWriteStream('output.txt');
+writeStream.write('Hello ');
+writeStream.write('World');
+writeStream.end();
+
+// Pipe streams
+fs.createReadStream('input.txt')
+  .pipe(fs.createWriteStream('output.txt'));
+```
+
+## Watch Files
+
+```javascript
+fs.watch('file.txt', (eventType, filename) => {
+  console.log(`${filename} ${eventType}`);
+});
+
+fs.watchFile('file.txt', (curr, prev) => {
+  console.log('File modified');
+});
+```
+
+## Path Module
+
+```javascript
+const path = require('path');
+
+// Join paths
+const filePath = path.join(__dirname, 'files', 'data.txt');
+
+// Resolve absolute path
+const absolute = path.resolve('file.txt');
+
+// Get directory name
+const dir = path.dirname('/users/john/file.txt'); // /users/john
+
+// Get file name
+const file = path.basename('/users/john/file.txt'); // file.txt
+
+// Get extension
+const ext = path.extname('file.txt'); // .txt
+```
+
+## Best Practices
+
+1. **Use async methods** for better performance
+2. **Handle errors** properly
+3. **Use streams** for large files
+4. **Use path module** for cross-platform compatibility
+5. **Close file descriptors** when done
+
+## Interview Tips
+
+- **Explain fs module**: File system operations
+- **Show async vs sync**: Performance differences
+- **Demonstrate streams**: Large file handling
+- **Discuss path module**: Cross-platform paths
+- **Mention promises**: Modern async approach
+
+## Summary
+
+The fs module provides file system operations. Use async methods for non-blocking I/O, streams for large files, and path module for cross-platform file paths. Available in callback, synchronous, and promise-based APIs.

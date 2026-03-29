@@ -1,0 +1,538 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Conflict Resolution
+---
+
+# Conflict Resolution
+
+## What are Conflicts?
+
+**Conflicts** occur when multiple clients update the same data concurrently in distributed systems with eventual consistency.
+
+## Conflict Resolution Strategies
+
+### 1. Last-Write-Wins (LWW)
+
+```javascript
+// MongoDB with timestamps
+class LWWService {
+  async update(documentId, updates) {
+    await db.collection('data').updateOne(
+      { _id: documentId },
+      {
+        $set: {
+          ...updates,
+          lastModified: new Date(),
+          version: Date.now()
+        }
+      }
+    );
+  }
+  
+  async resolve(documentId) {
+    // Latest timestamp wins
+    const doc = await db.collection('data')
+      .find({ _id: documentId })
+      .sort({ lastModified: -1 })
+      .limit(1)
+      .toArray();
+    
+    return doc[0];
+  }
+}
+
+// Cassandra LWW (built-in)
+await client.execute(
+  'UPDATE users SET name = ?, updated_at = ? WHERE id = ?',
+  [name, Date.now(), userId],
+  { prepare: true }
+);
+// Cassandra automatically uses timestamp for conflict resolution
+```
+
+### 2. Version Vectors
+
+```javascript
+// Track versions per replica
+class VersionVectorService {
+  async update(documentId, updates, replicaId) {
+    const doc = await db.collection('data').findOne({ _id: documentId });
+    
+    const versionVector = doc.versionVector || {};
+    versionVector[replicaId] = (versionVector[replicaId] || 0) + 1;
+    
+    await db.collection('data').updateOne(
+      { _id: documentId },
+      {
+        $set: {
+          ...updates,
+          versionVector,
+          lastModified: new Date()
+        }
+      }
+    );
+  }
+  
+  compareVersions(v1, v2) {
+    // v1 > v2 if all components >= and at least one >
+    // v1 < v2 if all components <= and at least one <
+    // Otherwise concurrent (conflict)
+    
+    const allKeys = new Set([...Object.keys(v1), ...Object.keys(v2)]);
+    let greater = false;
+    let less = false;
+    
+    for (const key of allKeys) {
+      const val1 = v1[key] || 0;
+      const val2 = v2[key] || 0;
+      
+      if (val1 > val2) greater = true;
+      if (val1 < val2) less = true;
+    }
+    
+    if (greater && !less) return 1;   // v1 > v2
+    if (less && !greater) return -1;  // v1 < v2
+    return 0;  // Concurrent (conflict)
+  }
+}
+```
+
+### 3. Optimistic Locking
+
+```javascript
+// MongoDB optimistic locking
+class OptimisticLockService {
+  async update(documentId, updates) {
+    const doc = await db.collection('data').findOne({ _id: documentId });
+    
+    const result = await db.collection('data').updateOne(
+      {
+        _id: documentId,
+        version: doc.version  // Check version hasn't changed
+      },
+      {
+        $set: updates,
+        $inc: { version: 1 }
+      }
+    );
+    
+    if (result.modifiedCount === 0) {
+      throw new Error('Conflict detected - document was modified');
+    }
+  }
+  
+  async updateWithRetry(documentId, updateFn, maxRetries = 3) {
+    for (let i = 0; i < maxRetries; i++) {
+      try {
+        const doc = await db.collection('data').findOne({ _id: documentId });
+        const updates = updateFn(doc);
+        
+        const result = await db.collection('data').updateOne(
+          { _id: documentId, version: doc.version },
+          {
+            $set: updates,
+            $inc: { version: 1 }
+          }
+        );
+        
+        if (result.modifiedCount === 1) {
+          return;  // Success
+        }
+      } catch (error) {
+        if (i === maxRetries - 1) throw error;
+      }
+      
+      // Wait before retry
+      await new Promise(resolve => setTimeout(resolve, 100 * Math.pow(2, i)));
+    }
+  }
+}
+```
+
+### 4. CRDTs (Conflict-Free Replicated Data Types)
+
+```javascript
+// G-Counter (Grow-only Counter)
+class GCounter {
+  constructor(replicaId) {
+    this.replicaId = replicaId;
+    this.counts = {};
+  }
+  
+  increment() {
+    this.counts[this.replicaId] = (this.counts[this.replicaId] || 0) + 1;
+  }
+  
+  value() {
+    return Object.values(this.counts).reduce((sum, count) => sum + count, 0);
+  }
+  
+  merge(other) {
+    for (const [replica, count] of Object.entries(other.counts)) {
+      this.counts[replica] = Math.max(
+        this.counts[replica] || 0,
+        count
+      );
+    }
+  }
+}
+
+// PN-Counter (Positive-Negative Counter)
+class PNCounter {
+  constructor(replicaId) {
+    this.positive = new GCounter(replicaId);
+    this.negative = new GCounter(replicaId);
+  }
+  
+  increment() {
+    this.positive.increment();
+  }
+  
+  decrement() {
+    this.negative.increment();
+  }
+  
+  value() {
+    return this.positive.value() - this.negative.value();
+  }
+  
+  merge(other) {
+    this.positive.merge(other.positive);
+    this.negative.merge(other.negative);
+  }
+}
+
+// LWW-Element-Set
+class LWWSet {
+  constructor() {
+    this.adds = new Map();     // element -> timestamp
+    this.removes = new Map();  // element -> timestamp
+  }
+  
+  add(element) {
+    this.adds.set(element, Date.now());
+  }
+  
+  remove(element) {
+    this.removes.set(element, Date.now());
+  }
+  
+  has(element) {
+    const addTime = this.adds.get(element) || 0;
+    const removeTime = this.removes.get(element) || 0;
+    return addTime > removeTime;
+  }
+  
+  values() {
+    const result = [];
+    for (const [element, addTime] of this.adds) {
+      const removeTime = this.removes.get(element) || 0;
+      if (addTime > removeTime) {
+        result.push(element);
+      }
+    }
+    return result;
+  }
+  
+  merge(other) {
+    for (const [element, timestamp] of other.adds) {
+      this.adds.set(element, Math.max(
+        this.adds.get(element) || 0,
+        timestamp
+      ));
+    }
+    
+    for (const [element, timestamp] of other.removes) {
+      this.removes.set(element, Math.max(
+        this.removes.get(element) || 0,
+        timestamp
+      ));
+    }
+  }
+}
+```
+
+### 5. Application-Level Merge
+
+```javascript
+// Custom merge logic
+class MergeService {
+  async mergeDocuments(doc1, doc2) {
+    const merged = {};
+    
+    // Merge strategy per field
+    merged.name = this.mergeStrings(doc1.name, doc2.name);
+    merged.tags = this.mergeSets(doc1.tags, doc2.tags);
+    merged.counters = this.mergeCounters(doc1.counters, doc2.counters);
+    merged.preferences = this.mergeObjects(doc1.preferences, doc2.preferences);
+    
+    return merged;
+  }
+  
+  mergeStrings(s1, s2) {
+    // Use latest non-empty value
+    if (s1.timestamp > s2.timestamp) return s1.value;
+    return s2.value;
+  }
+  
+  mergeSets(set1, set2) {
+    // Union of sets
+    return [...new Set([...set1, ...set2])];
+  }
+  
+  mergeCounters(c1, c2) {
+    // Sum counters
+    return c1 + c2;
+  }
+  
+  mergeObjects(obj1, obj2) {
+    // Merge nested objects
+    const result = { ...obj1 };
+    for (const [key, value] of Object.entries(obj2)) {
+      if (typeof value === 'object' && !Array.isArray(value)) {
+        result[key] = this.mergeObjects(obj1[key] || {}, value);
+      } else {
+        result[key] = value;
+      }
+    }
+    return result;
+  }
+}
+```
+
+## DynamoDB Conditional Writes
+
+```javascript
+const { ConditionalCheckFailedException } = require('@aws-sdk/client-dynamodb');
+
+async function updateWithCondition(userId, updates) {
+  try {
+    await docClient.send(new UpdateCommand({
+      TableName: 'Users',
+      Key: { userId },
+      UpdateExpression: 'SET #name = :name, #version = :newVersion',
+      ConditionExpression: '#version = :currentVersion',
+      ExpressionAttributeNames: {
+        '#name': 'name',
+        '#version': 'version'
+      },
+      ExpressionAttributeValues: {
+        ':name': updates.name,
+        ':currentVersion': updates.currentVersion,
+        ':newVersion': updates.currentVersion + 1
+      }
+    }));
+  } catch (error) {
+    if (error instanceof ConditionalCheckFailedException) {
+      throw new Error('Conflict detected');
+    }
+    throw error;
+  }
+}
+```
+
+## Cassandra Lightweight Transactions
+
+```javascript
+// Compare-and-set
+const result = await client.execute(
+  'UPDATE users SET name = ? WHERE id = ? IF name = ?',
+  [newName, userId, expectedName],
+  { prepare: true }
+);
+
+if (!result.rows[0]['[applied]']) {
+  console.log('Conflict detected');
+  console.log('Current value:', result.rows[0].name);
+}
+
+// Insert if not exists
+await client.execute(
+  'INSERT INTO users (id, name, email) VALUES (?, ?, ?) IF NOT EXISTS',
+  [userId, name, email],
+  { prepare: true }
+);
+```
+
+## Multi-Master Replication
+
+```javascript
+// Handle conflicts in multi-master setup
+class MultiMasterService {
+  async handleConflict(documentId, replicas) {
+    const versions = await Promise.all(
+      replicas.map(r => r.getDocument(documentId))
+    );
+    
+    // Detect conflicts
+    const conflicts = this.detectConflicts(versions);
+    
+    if (conflicts.length > 0) {
+      // Resolve using strategy
+      const resolved = this.resolveConflict(conflicts);
+      
+      // Propagate resolution to all replicas
+      await Promise.all(
+        replicas.map(r => r.updateDocument(documentId, resolved))
+      );
+      
+      return resolved;
+    }
+    
+    return versions[0];
+  }
+  
+  detectConflicts(versions) {
+    const conflicts = [];
+    for (let i = 0; i < versions.length; i++) {
+      for (let j = i + 1; j < versions.length; j++) {
+        if (!this.areEqual(versions[i], versions[j])) {
+          conflicts.push({ v1: versions[i], v2: versions[j] });
+        }
+      }
+    }
+    return conflicts;
+  }
+  
+  resolveConflict(conflicts) {
+    // Use LWW strategy
+    return conflicts.reduce((latest, conflict) => {
+      if (conflict.v1.timestamp > conflict.v2.timestamp) {
+        return conflict.v1;
+      }
+      return conflict.v2;
+    });
+  }
+}
+```
+
+## Conflict Detection
+
+```javascript
+// Detect conflicts using ETags
+class ETagService {
+  async getDocument(documentId) {
+    const doc = await db.collection('data').findOne({ _id: documentId });
+    const etag = this.generateETag(doc);
+    
+    return { doc, etag };
+  }
+  
+  async updateDocument(documentId, updates, expectedETag) {
+    const { doc, etag } = await this.getDocument(documentId);
+    
+    if (etag !== expectedETag) {
+      throw new Error('Conflict detected - document was modified');
+    }
+    
+    await db.collection('data').updateOne(
+      { _id: documentId },
+      { $set: updates }
+    );
+  }
+  
+  generateETag(doc) {
+    const crypto = require('crypto');
+    return crypto
+      .createHash('md5')
+      .update(JSON.stringify(doc))
+      .digest('hex');
+  }
+}
+```
+
+## .NET Conflict Resolution
+
+```csharp
+using MongoDB.Driver;
+
+public class ConflictResolutionService
+{
+    private readonly IMongoCollection<Document> _collection;
+    
+    public async Task UpdateWithOptimisticLock(string id, Document updates)
+    {
+        var doc = await _collection.Find(d => d.Id == id).FirstOrDefaultAsync();
+        
+        var filter = Builders<Document>.Filter.And(
+            Builders<Document>.Filter.Eq(d => d.Id, id),
+            Builders<Document>.Filter.Eq(d => d.Version, doc.Version)
+        );
+        
+        var update = Builders<Document>.Update
+            .Set(d => d.Name, updates.Name)
+            .Inc(d => d.Version, 1);
+        
+        var result = await _collection.UpdateOneAsync(filter, update);
+        
+        if (result.ModifiedCount == 0)
+        {
+            throw new InvalidOperationException("Conflict detected");
+        }
+    }
+    
+    public async Task UpdateWithRetry(string id, Func<Document, Document> updateFn)
+    {
+        const int maxRetries = 3;
+        
+        for (int i = 0; i < maxRetries; i++)
+        {
+            try
+            {
+                var doc = await _collection.Find(d => d.Id == id).FirstOrDefaultAsync();
+                var updated = updateFn(doc);
+                
+                var filter = Builders<Document>.Filter.And(
+                    Builders<Document>.Filter.Eq(d => d.Id, id),
+                    Builders<Document>.Filter.Eq(d => d.Version, doc.Version)
+                );
+                
+                var update = Builders<Document>.Update
+                    .Set(d => d.Data, updated.Data)
+                    .Inc(d => d.Version, 1);
+                
+                var result = await _collection.UpdateOneAsync(filter, update);
+                
+                if (result.ModifiedCount == 1)
+                {
+                    return;
+                }
+            }
+            catch when (i < maxRetries - 1)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(100 * Math.Pow(2, i)));
+            }
+        }
+        
+        throw new InvalidOperationException("Failed after retries");
+    }
+}
+```
+
+## Best Practices
+
+```javascript
+const conflictResolutionBestPractices = [
+  'Choose strategy based on use case',
+  'Use optimistic locking for critical data',
+  'Implement retry logic with exponential backoff',
+  'Consider CRDTs for commutative operations',
+  'Log conflicts for analysis',
+  'Provide conflict resolution UI when needed',
+  'Test conflict scenarios',
+  'Monitor conflict rates'
+];
+```
+
+## Interview Tips
+
+- **Explain conflicts**: Concurrent updates in distributed systems
+- **Show strategies**: LWW, version vectors, optimistic locking
+- **Demonstrate CRDTs**: Conflict-free data types
+- **Discuss trade-offs**: Consistency vs availability
+- **Mention detection**: ETags, version numbers
+- **Show examples**: MongoDB, DynamoDB, Cassandra
+
+## Summary
+
+Conflicts occur with concurrent updates in distributed systems. Resolution strategies include Last-Write-Wins (timestamp-based), version vectors (track per-replica versions), optimistic locking (version checks), CRDTs (conflict-free types), and application-level merge. Use conditional writes in DynamoDB, lightweight transactions in Cassandra. Implement retry logic with exponential backoff. CRDTs provide automatic conflict resolution for specific data types. Choose strategy based on consistency requirements. Essential for distributed NoSQL systems with eventual consistency.

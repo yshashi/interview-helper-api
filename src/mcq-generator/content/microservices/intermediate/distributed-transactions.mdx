@@ -1,0 +1,331 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Distributed Transactions in Microservices
+---
+
+# Distributed Transactions in Microservices
+
+## The Problem
+
+In microservices, a business transaction often spans multiple services, each with its own database.
+
+```javascript
+// Problem: Transaction across services
+async function placeOrder(orderData) {
+  // Service 1: Reserve inventory
+  await inventoryService.reserve(orderData.productId);
+  
+  // Service 2: Process payment
+  await paymentService.charge(orderData.amount);
+  
+  // Service 3: Create order
+  await orderService.create(orderData);
+  
+  // What if payment fails after inventory is reserved?
+  // What if order creation fails after payment?
+}
+```
+
+## Two-Phase Commit (2PC)
+
+Traditional distributed transaction protocol.
+
+```javascript
+class TwoPhaseCommitCoordinator {
+  async execute(transaction) {
+    const participants = transaction.getParticipants();
+    
+    // Phase 1: Prepare
+    const prepareResults = await Promise.all(
+      participants.map(p => p.prepare())
+    );
+    
+    if (prepareResults.every(r => r.success)) {
+      // Phase 2: Commit
+      await Promise.all(participants.map(p => p.commit()));
+      return { success: true };
+    } else {
+      // Rollback
+      await Promise.all(participants.map(p => p.rollback()));
+      return { success: false };
+    }
+  }
+}
+
+// Participant
+class InventoryParticipant {
+  async prepare() {
+    try {
+      await this.reserveInventory();
+      return { success: true };
+    } catch (error) {
+      return { success: false };
+    }
+  }
+  
+  async commit() {
+    await this.confirmReservation();
+  }
+  
+  async rollback() {
+    await this.releaseReservation();
+  }
+}
+```
+
+### Problems with 2PC
+- Blocking protocol
+- Single point of failure
+- Not suitable for microservices
+- Performance overhead
+
+## Saga Pattern
+
+Better approach for microservices.
+
+### Choreography-Based Saga
+
+```javascript
+// Order Service
+async function createOrder(orderData) {
+  const order = await Order.create({
+    ...orderData,
+    status: 'PENDING'
+  });
+  
+  // Publish event
+  await eventBus.publish('OrderCreated', {
+    orderId: order.id,
+    productId: orderData.productId,
+    amount: orderData.amount
+  });
+  
+  return order;
+}
+
+// Inventory Service
+eventBus.subscribe('OrderCreated', async (event) => {
+  try {
+    await reserveInventory(event.data.productId);
+    
+    await eventBus.publish('InventoryReserved', {
+      orderId: event.data.orderId
+    });
+  } catch (error) {
+    await eventBus.publish('InventoryReservationFailed', {
+      orderId: event.data.orderId
+    });
+  }
+});
+
+// Payment Service
+eventBus.subscribe('InventoryReserved', async (event) => {
+  try {
+    await processPayment(event.data.orderId);
+    
+    await eventBus.publish('PaymentProcessed', {
+      orderId: event.data.orderId
+    });
+  } catch (error) {
+    await eventBus.publish('PaymentFailed', {
+      orderId: event.data.orderId
+    });
+  }
+});
+
+// Compensation: Inventory Service
+eventBus.subscribe('PaymentFailed', async (event) => {
+  await releaseInventory(event.data.orderId);
+});
+
+// Order Service: Update status
+eventBus.subscribe('PaymentProcessed', async (event) => {
+  await Order.findByIdAndUpdate(event.data.orderId, {
+    status: 'CONFIRMED'
+  });
+});
+```
+
+### Orchestration-Based Saga
+
+```javascript
+class OrderSaga {
+  constructor(orderId) {
+    this.orderId = orderId;
+    this.state = 'STARTED';
+    this.compensations = [];
+  }
+  
+  async execute(orderData) {
+    try {
+      // Step 1: Reserve inventory
+      await this.reserveInventory(orderData.productId);
+      this.compensations.push(() => this.releaseInventory(orderData.productId));
+      
+      // Step 2: Process payment
+      await this.processPayment(orderData.amount);
+      this.compensations.push(() => this.refundPayment(orderData.amount));
+      
+      // Step 3: Create order
+      await this.createOrder(orderData);
+      
+      this.state = 'COMPLETED';
+      return { success: true };
+      
+    } catch (error) {
+      await this.compensate();
+      this.state = 'FAILED';
+      return { success: false, error };
+    }
+  }
+  
+  async reserveInventory(productId) {
+    const response = await axios.post('http://inventory-service/reserve', {
+      productId,
+      orderId: this.orderId
+    });
+    
+    if (!response.data.success) {
+      throw new Error('Inventory reservation failed');
+    }
+  }
+  
+  async releaseInventory(productId) {
+    await axios.post('http://inventory-service/release', {
+      productId,
+      orderId: this.orderId
+    });
+  }
+  
+  async processPayment(amount) {
+    const response = await axios.post('http://payment-service/charge', {
+      amount,
+      orderId: this.orderId
+    });
+    
+    if (!response.data.success) {
+      throw new Error('Payment failed');
+    }
+  }
+  
+  async refundPayment(amount) {
+    await axios.post('http://payment-service/refund', {
+      amount,
+      orderId: this.orderId
+    });
+  }
+  
+  async createOrder(orderData) {
+    await axios.post('http://order-service/orders', {
+      ...orderData,
+      orderId: this.orderId,
+      status: 'CONFIRMED'
+    });
+  }
+  
+  async compensate() {
+    // Execute compensations in reverse order
+    for (const compensation of this.compensations.reverse()) {
+      try {
+        await compensation();
+      } catch (error) {
+        console.error('Compensation failed:', error);
+      }
+    }
+  }
+}
+
+// Usage
+const saga = new OrderSaga('order_123');
+const result = await saga.execute({
+  productId: 'prod_456',
+  amount: 99.99,
+  userId: 'user_789'
+});
+```
+
+## Eventual Consistency
+
+```javascript
+// Accept eventual consistency
+async function placeOrder(orderData) {
+  // Create order immediately
+  const order = await Order.create({
+    ...orderData,
+    status: 'PENDING'
+  });
+  
+  // Process asynchronously
+  await processOrderAsync(order.id);
+  
+  // Return immediately
+  return order;
+}
+
+async function processOrderAsync(orderId) {
+  try {
+    await reserveInventory(orderId);
+    await processPayment(orderId);
+    await updateOrderStatus(orderId, 'CONFIRMED');
+  } catch (error) {
+    await updateOrderStatus(orderId, 'FAILED');
+    await compensate(orderId);
+  }
+}
+```
+
+## Idempotency
+
+```javascript
+// Ensure operations are idempotent
+class PaymentService {
+  async charge(orderId, amount) {
+    // Check if already processed
+    const existing = await Payment.findOne({ orderId });
+    
+    if (existing) {
+      return existing; // Idempotent
+    }
+    
+    // Process payment
+    const payment = await Payment.create({
+      orderId,
+      amount,
+      status: 'COMPLETED'
+    });
+    
+    return payment;
+  }
+}
+```
+
+## Comparison
+
+| Approach | Pros | Cons |
+|----------|------|------|
+| **2PC** | Strong consistency | Blocking, not scalable |
+| **Saga (Choreography)** | Loose coupling | Complex to understand |
+| **Saga (Orchestration)** | Centralized control | Single point of failure |
+| **Eventual Consistency** | Simple, scalable | Temporary inconsistency |
+
+## Best Practices
+
+1. **Use Saga pattern** for distributed transactions
+2. **Implement compensations** for rollback
+3. **Make operations idempotent**
+4. **Use unique transaction IDs**
+5. **Monitor saga execution**
+6. **Handle partial failures**
+
+## Interview Tips
+
+- **Explain problem**: Transactions across services
+- **Show 2PC limitations**: Blocking, not suitable
+- **Demonstrate Saga**: Choreography vs orchestration
+- **Discuss compensations**: Rollback mechanism
+- **Mention idempotency**: Handle retries
+- **Show eventual consistency**: Accept temporary inconsistency
+
+## Summary
+
+Distributed transactions in microservices require special handling. Avoid 2PC due to blocking nature. Use Saga pattern with choreography or orchestration. Implement compensating transactions for rollback. Ensure idempotency. Accept eventual consistency. Monitor and handle partial failures gracefully.

@@ -1,0 +1,280 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Backend for Frontend (BFF) Pattern
+---
+
+# Backend for Frontend (BFF) Pattern
+
+## What is BFF?
+
+**Backend for Frontend (BFF)** creates separate backend services tailored to specific frontend applications (web, mobile, desktop).
+
+## Architecture
+
+```
+┌─────────┐  ┌─────────┐  ┌─────────┐
+│   Web   │  │ Mobile  │  │ Desktop │
+└────┬────┘  └────┬────┘  └────┬────┘
+     │            │             │
+┌────▼────┐  ┌───▼─────┐  ┌───▼─────┐
+│ Web BFF │  │Mobile   │  │Desktop  │
+│         │  │  BFF    │  │  BFF    │
+└────┬────┘  └────┬────┘  └────┬────┘
+     │            │             │
+  ───┴────────────┴─────────────┴───
+  │       │       │       │       │
+┌─▼──┐ ┌──▼─┐ ┌──▼─┐ ┌──▼─┐ ┌──▼─┐
+│User│ │Order│ │Prod│ │Pay │ │Noti│
+│Svc │ │ Svc │ │Svc │ │Svc │ │Svc │
+└────┘ └────┘ └────┘ └────┘ └────┘
+```
+
+## Web BFF
+
+```javascript
+// Web BFF - Optimized for web browsers
+const express = require('express');
+const app = express();
+
+// Aggregate data for web dashboard
+app.get('/api/dashboard', async (req, res) => {
+  const [user, orders, stats] = await Promise.all([
+    axios.get(`http://user-service/users/${req.user.id}`),
+    axios.get(`http://order-service/orders?userId=${req.user.id}`),
+    axios.get(`http://analytics-service/stats?userId=${req.user.id}`)
+  ]);
+  
+  res.json({
+    user: user.data,
+    recentOrders: orders.data.slice(0, 5),
+    stats: stats.data,
+    // Web-specific formatting
+    formattedDate: new Date().toLocaleDateString('en-US')
+  });
+});
+
+// Rich data for web
+app.get('/api/products', async (req, res) => {
+  const products = await axios.get('http://product-service/products');
+  
+  res.json({
+    products: products.data.map(p => ({
+      ...p,
+      // Include full details for web
+      description: p.description,
+      specifications: p.specifications,
+      reviews: p.reviews,
+      relatedProducts: p.relatedProducts
+    }))
+  });
+});
+```
+
+## Mobile BFF
+
+```javascript
+// Mobile BFF - Optimized for mobile apps
+const express = require('express');
+const app = express();
+
+// Lightweight data for mobile
+app.get('/api/dashboard', async (req, res) => {
+  const [user, orders] = await Promise.all([
+    axios.get(`http://user-service/users/${req.user.id}`),
+    axios.get(`http://order-service/orders?userId=${req.user.id}&limit=3`)
+  ]);
+  
+  res.json({
+    user: {
+      id: user.data.id,
+      name: user.data.name,
+      // Minimal data for mobile
+      avatar: user.data.avatar
+    },
+    recentOrders: orders.data.map(o => ({
+      id: o.id,
+      status: o.status,
+      total: o.total
+      // Exclude heavy data
+    }))
+  });
+});
+
+// Paginated, minimal data
+app.get('/api/products', async (req, res) => {
+  const page = req.query.page || 1;
+  const limit = 20; // Smaller pages for mobile
+  
+  const products = await axios.get(
+    `http://product-service/products?page=${page}&limit=${limit}`
+  );
+  
+  res.json({
+    products: products.data.map(p => ({
+      id: p.id,
+      name: p.name,
+      price: p.price,
+      thumbnail: p.thumbnail // Small images
+      // Exclude description, reviews, etc.
+    })),
+    hasMore: products.data.length === limit
+  });
+});
+```
+
+## GraphQL BFF
+
+```javascript
+const { ApolloServer, gql } = require('apollo-server-express');
+
+// Schema tailored for frontend needs
+const typeDefs = gql`
+  type User {
+    id: ID!
+    name: String!
+    email: String!
+    orders: [Order!]!
+  }
+  
+  type Order {
+    id: ID!
+    status: String!
+    total: Float!
+    items: [OrderItem!]!
+  }
+  
+  type OrderItem {
+    product: Product!
+    quantity: Int!
+  }
+  
+  type Product {
+    id: ID!
+    name: String!
+    price: Float!
+  }
+  
+  type Query {
+    me: User!
+    product(id: ID!): Product
+  }
+`;
+
+// Resolvers aggregate from multiple services
+const resolvers = {
+  Query: {
+    me: async (_, __, { userId }) => {
+      const user = await axios.get(`http://user-service/users/${userId}`);
+      return user.data;
+    },
+    product: async (_, { id }) => {
+      const product = await axios.get(`http://product-service/products/${id}`);
+      return product.data;
+    }
+  },
+  User: {
+    orders: async (user) => {
+      const orders = await axios.get(`http://order-service/orders?userId=${user.id}`);
+      return orders.data;
+    }
+  },
+  OrderItem: {
+    product: async (item) => {
+      const product = await axios.get(`http://product-service/products/${item.productId}`);
+      return product.data;
+    }
+  }
+};
+
+const server = new ApolloServer({ typeDefs, resolvers });
+```
+
+## Benefits
+
+1. **Optimized for Each Client**: Tailored responses
+2. **Reduced Over-fetching**: Only needed data
+3. **Simplified Frontend**: Backend handles complexity
+4. **Independent Evolution**: Change BFF without affecting others
+5. **Better Performance**: Optimized queries per platform
+
+## Challenges
+
+1. **Code Duplication**: Similar logic across BFFs
+2. **More Services**: Additional services to maintain
+3. **Consistency**: Keep BFFs in sync
+4. **Overhead**: More network calls
+
+## Shared Logic
+
+```javascript
+// Shared library for common logic
+class ServiceClient {
+  async getUser(userId) {
+    const response = await axios.get(`http://user-service/users/${userId}`);
+    return response.data;
+  }
+  
+  async getOrders(userId, options = {}) {
+    const response = await axios.get(`http://order-service/orders`, {
+      params: { userId, ...options }
+    });
+    return response.data;
+  }
+}
+
+// Web BFF uses shared client
+const client = new ServiceClient();
+
+app.get('/api/dashboard', async (req, res) => {
+  const user = await client.getUser(req.user.id);
+  const orders = await client.getOrders(req.user.id, { limit: 10 });
+  
+  res.json({ user, orders });
+});
+
+// Mobile BFF uses same client
+app.get('/api/dashboard', async (req, res) => {
+  const user = await client.getUser(req.user.id);
+  const orders = await client.getOrders(req.user.id, { limit: 3 });
+  
+  res.json({
+    user: { id: user.id, name: user.name },
+    orders: orders.map(o => ({ id: o.id, status: o.status }))
+  });
+});
+```
+
+## When to Use BFF
+
+### Good For:
+- Multiple frontend platforms
+- Different data requirements
+- Complex aggregations
+- Platform-specific features
+
+### Not Recommended:
+- Single frontend
+- Simple CRUD operations
+- Minimal differences between platforms
+
+## Best Practices
+
+1. **Share common code**
+2. **Keep BFFs thin**
+3. **Use caching**
+4. **Implement rate limiting**
+5. **Monitor separately**
+6. **Version BFFs independently**
+
+## Interview Tips
+
+- **Explain pattern**: Backend per frontend type
+- **Show differences**: Web vs mobile optimization
+- **Demonstrate aggregation**: Multiple service calls
+- **Discuss benefits**: Tailored responses, performance
+- **Mention challenges**: Code duplication, maintenance
+- **Show alternatives**: API Gateway, GraphQL
+
+## Summary
+
+Backend for Frontend pattern creates separate backend services for each frontend type. Optimizes data transfer and aggregation per platform. Web BFF provides rich data, mobile BFF provides lightweight responses. Use GraphQL for flexible queries. Share common logic via libraries. Best for applications with multiple frontend platforms with different needs.

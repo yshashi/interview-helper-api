@@ -1,0 +1,237 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Repository Pattern with EF Core
+---
+
+# Repository Pattern with EF Core
+
+## What is Repository Pattern?
+
+The **Repository Pattern** provides an abstraction layer between the data access logic and business logic, making code more testable and maintainable.
+
+## Basic Repository Interface
+
+```csharp
+public interface IRepository<T> where T : class
+{
+    Task<T> GetByIdAsync(int id);
+    Task<IEnumerable<T>> GetAllAsync();
+    Task<IEnumerable<T>> FindAsync(Expression<Func<T, bool>> predicate);
+    Task AddAsync(T entity);
+    Task AddRangeAsync(IEnumerable<T> entities);
+    void Update(T entity);
+    void Remove(T entity);
+    void RemoveRange(IEnumerable<T> entities);
+}
+```
+
+## Generic Repository Implementation
+
+```csharp
+public class Repository<T> : IRepository<T> where T : class
+{
+    protected readonly ApplicationDbContext _context;
+    protected readonly DbSet<T> _dbSet;
+    
+    public Repository(ApplicationDbContext context)
+    {
+        _context = context;
+        _dbSet = context.Set<T>();
+    }
+    
+    public async Task<T> GetByIdAsync(int id)
+    {
+        return await _dbSet.FindAsync(id);
+    }
+    
+    public async Task<IEnumerable<T>> GetAllAsync()
+    {
+        return await _dbSet.ToListAsync();
+    }
+    
+    public async Task<IEnumerable<T>> FindAsync(Expression<Func<T, bool>> predicate)
+    {
+        return await _dbSet.Where(predicate).ToListAsync();
+    }
+    
+    public async Task AddAsync(T entity)
+    {
+        await _dbSet.AddAsync(entity);
+    }
+    
+    public async Task AddRangeAsync(IEnumerable<T> entities)
+    {
+        await _dbSet.AddRangeAsync(entities);
+    }
+    
+    public void Update(T entity)
+    {
+        _dbSet.Update(entity);
+    }
+    
+    public void Remove(T entity)
+    {
+        _dbSet.Remove(entity);
+    }
+    
+    public void RemoveRange(IEnumerable<T> entities)
+    {
+        _dbSet.RemoveRange(entities);
+    }
+}
+```
+
+## Specific Repository
+
+```csharp
+public interface IProductRepository : IRepository<Product>
+{
+    Task<IEnumerable<Product>> GetProductsByCategoryAsync(int categoryId);
+    Task<IEnumerable<Product>> GetActiveProductsAsync();
+}
+
+public class ProductRepository : Repository<Product>, IProductRepository
+{
+    public ProductRepository(ApplicationDbContext context) : base(context)
+    {
+    }
+    
+    public async Task<IEnumerable<Product>> GetProductsByCategoryAsync(int categoryId)
+    {
+        return await _dbSet
+            .Where(p => p.CategoryId == categoryId)
+            .Include(p => p.Category)
+            .ToListAsync();
+    }
+    
+    public async Task<IEnumerable<Product>> GetActiveProductsAsync()
+    {
+        return await _dbSet
+            .Where(p => p.IsActive)
+            .OrderBy(p => p.Name)
+            .ToListAsync();
+    }
+}
+```
+
+## Unit of Work Pattern
+
+```csharp
+public interface IUnitOfWork : IDisposable
+{
+    IProductRepository Products { get; }
+    ICategoryRepository Categories { get; }
+    IOrderRepository Orders { get; }
+    Task<int> SaveChangesAsync();
+}
+
+public class UnitOfWork : IUnitOfWork
+{
+    private readonly ApplicationDbContext _context;
+    
+    public UnitOfWork(ApplicationDbContext context)
+    {
+        _context = context;
+        Products = new ProductRepository(_context);
+        Categories = new CategoryRepository(_context);
+        Orders = new OrderRepository(_context);
+    }
+    
+    public IProductRepository Products { get; }
+    public ICategoryRepository Categories { get; }
+    public IOrderRepository Orders { get; }
+    
+    public async Task<int> SaveChangesAsync()
+    {
+        return await _context.SaveChangesAsync();
+    }
+    
+    public void Dispose()
+    {
+        _context.Dispose();
+    }
+}
+```
+
+## Service Layer Usage
+
+```csharp
+public class ProductService
+{
+    private readonly IUnitOfWork _unitOfWork;
+    
+    public ProductService(IUnitOfWork unitOfWork)
+    {
+        _unitOfWork = unitOfWork;
+    }
+    
+    public async Task<IEnumerable<Product>> GetActiveProductsAsync()
+    {
+        return await _unitOfWork.Products.GetActiveProductsAsync();
+    }
+    
+    public async Task CreateProductAsync(Product product)
+    {
+        await _unitOfWork.Products.AddAsync(product);
+        await _unitOfWork.SaveChangesAsync();
+    }
+    
+    public async Task UpdateProductAsync(Product product)
+    {
+        _unitOfWork.Products.Update(product);
+        await _unitOfWork.SaveChangesAsync();
+    }
+}
+```
+
+## Dependency Injection Setup
+
+```csharp
+services.AddScoped<IUnitOfWork, UnitOfWork>();
+services.AddScoped<IProductRepository, ProductRepository>();
+services.AddScoped(typeof(IRepository<>), typeof(Repository<>));
+```
+
+## Testing with Repository
+
+```csharp
+public class ProductServiceTests
+{
+    [Fact]
+    public async Task GetActiveProducts_ReturnsOnlyActiveProducts()
+    {
+        // Arrange
+        var mockRepo = new Mock<IProductRepository>();
+        mockRepo.Setup(r => r.GetActiveProductsAsync())
+            .ReturnsAsync(GetTestProducts());
+        
+        var mockUnitOfWork = new Mock<IUnitOfWork>();
+        mockUnitOfWork.Setup(u => u.Products).Returns(mockRepo.Object);
+        
+        var service = new ProductService(mockUnitOfWork.Object);
+        
+        // Act
+        var result = await service.GetActiveProductsAsync();
+        
+        // Assert
+        Assert.All(result, p => Assert.True(p.IsActive));
+    }
+}
+```
+
+## Pros and Cons
+
+### Pros
+- Testability
+- Separation of concerns
+- Centralized data access logic
+- Easy to mock for unit tests
+
+### Cons
+- Additional abstraction layer
+- May be overkill for simple applications
+- DbContext already implements repository pattern
+
+## Summary
+
+The Repository Pattern with EF Core provides abstraction for data access, improving testability and maintainability. Combine with Unit of Work pattern for transaction management. Consider if the added complexity is justified for your application.

@@ -1,0 +1,254 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: HTTP Methods
+---
+
+# HTTP Methods
+
+## Overview
+
+HTTP methods (also called HTTP verbs) define the action to be performed on a resource.
+
+## Common HTTP Methods
+
+| Method | Purpose | Safe | Idempotent | Request Body | Response Body |
+|--------|---------|------|------------|--------------|---------------|
+| **GET** | Retrieve resource | ✅ | ✅ | ❌ | ✅ |
+| **POST** | Create resource | ❌ | ❌ | ✅ | ✅ |
+| **PUT** | Update/Replace | ❌ | ✅ | ✅ | ✅ |
+| **PATCH** | Partial update | ❌ | ❌ | ✅ | ✅ |
+| **DELETE** | Remove resource | ❌ | ✅ | ❌ | ❌ |
+| **HEAD** | Get headers only | ✅ | ✅ | ❌ | ❌ |
+| **OPTIONS** | Get allowed methods | ✅ | ✅ | ❌ | ✅ |
+
+## GET - Retrieve Resources
+
+```javascript
+// Node.js/Express
+app.get('/api/users', async (req, res) => {
+  const users = await User.find();
+  res.json(users);
+});
+
+app.get('/api/users/:id', async (req, res) => {
+  const user = await User.findById(req.params.id);
+  res.json(user);
+});
+```
+
+```csharp
+// .NET
+[HttpGet]
+public async Task<ActionResult<IEnumerable<User>>> GetUsers()
+{
+    return await _context.Users.ToListAsync();
+}
+
+[HttpGet("{id}")]
+public async Task<ActionResult<User>> GetUser(int id)
+{
+    return await _context.Users.FindAsync(id);
+}
+```
+
+```typescript
+// Angular
+getUsers(): Observable<User[]> {
+  return this.http.get<User[]>(`${this.apiUrl}/users`);
+}
+
+getUser(id: string): Observable<User> {
+  return this.http.get<User>(`${this.apiUrl}/users/${id}`);
+}
+```
+
+## POST - Create Resources
+
+```javascript
+// Node.js/Express
+app.post('/api/users', async (req, res) => {
+  const user = await User.create(req.body);
+  res.status(201).json(user);
+});
+```
+
+```csharp
+// .NET
+[HttpPost]
+public async Task<ActionResult<User>> CreateUser(CreateUserDto dto)
+{
+    var user = new User
+    {
+        Name = dto.Name,
+        Email = dto.Email
+    };
+    
+    _context.Users.Add(user);
+    await _context.SaveChangesAsync();
+    
+    return CreatedAtAction(nameof(GetUser), new { id = user.Id }, user);
+}
+```
+
+```typescript
+// Angular
+createUser(user: CreateUserDto): Observable<User> {
+  return this.http.post<User>(`${this.apiUrl}/users`, user);
+}
+```
+
+## PUT - Update/Replace Resources
+
+```javascript
+// Node.js/Express
+app.put('/api/users/:id', async (req, res) => {
+  const user = await User.findByIdAndUpdate(
+    req.params.id,
+    req.body,
+    { new: true, overwrite: true }
+  );
+  res.json(user);
+});
+```
+
+```csharp
+// .NET
+[HttpPut("{id}")]
+public async Task<IActionResult> UpdateUser(int id, UpdateUserDto dto)
+{
+    var user = await _context.Users.FindAsync(id);
+    if (user == null) return NotFound();
+    
+    user.Name = dto.Name;
+    user.Email = dto.Email;
+    
+    await _context.SaveChangesAsync();
+    return NoContent();
+}
+```
+
+## PATCH - Partial Update
+
+```javascript
+// Node.js/Express
+app.patch('/api/users/:id', async (req, res) => {
+  const user = await User.findByIdAndUpdate(
+    req.params.id,
+    { $set: req.body },
+    { new: true }
+  );
+  res.json(user);
+});
+```
+
+```csharp
+// .NET with JSON Patch
+[HttpPatch("{id}")]
+public async Task<IActionResult> PatchUser(int id, JsonPatchDocument<User> patchDoc)
+{
+    var user = await _context.Users.FindAsync(id);
+    if (user == null) return NotFound();
+    
+    patchDoc.ApplyTo(user);
+    await _context.SaveChangesAsync();
+    
+    return NoContent();
+}
+```
+
+```typescript
+// Angular
+updateUserEmail(id: string, email: string): Observable<User> {
+  return this.http.patch<User>(`${this.apiUrl}/users/${id}`, { email });
+}
+```
+
+## DELETE - Remove Resources
+
+```javascript
+// Node.js/Express
+app.delete('/api/users/:id', async (req, res) => {
+  await User.findByIdAndDelete(req.params.id);
+  res.status(204).send();
+});
+```
+
+```csharp
+// .NET
+[HttpDelete("{id}")]
+public async Task<IActionResult> DeleteUser(int id)
+{
+    var user = await _context.Users.FindAsync(id);
+    if (user == null) return NotFound();
+    
+    _context.Users.Remove(user);
+    await _context.SaveChangesAsync();
+    
+    return NoContent();
+}
+```
+
+## HEAD - Get Headers
+
+```javascript
+// Node.js/Express
+app.head('/api/users/:id', async (req, res) => {
+  const exists = await User.exists({ _id: req.params.id });
+  if (exists) {
+    res.status(200).end();
+  } else {
+    res.status(404).end();
+  }
+});
+```
+
+## OPTIONS - Get Allowed Methods
+
+```javascript
+// Node.js/Express
+app.options('/api/users', (req, res) => {
+  res.set('Allow', 'GET, POST, OPTIONS');
+  res.status(200).send();
+});
+```
+
+## Safe Methods
+
+Methods that don't modify resources:
+- **GET**: Retrieve data
+- **HEAD**: Get headers
+- **OPTIONS**: Get allowed methods
+
+## Idempotent Methods
+
+Methods that produce same result when called multiple times:
+- **GET**: Always returns same data
+- **PUT**: Same update multiple times = same result
+- **DELETE**: Deleting twice = same as deleting once
+- **HEAD**: Always returns same headers
+- **OPTIONS**: Always returns same allowed methods
+
+## Method Selection Guide
+
+```
+Create new resource → POST
+Replace entire resource → PUT
+Update part of resource → PATCH
+Retrieve resource → GET
+Delete resource → DELETE
+Check if exists → HEAD
+Get allowed operations → OPTIONS
+```
+
+## Interview Tips
+
+- **Explain methods**: GET, POST, PUT, PATCH, DELETE
+- **Show examples**: Node.js, .NET, Angular
+- **Discuss safety**: Safe vs unsafe methods
+- **Mention idempotency**: Multiple calls same result
+- **Demonstrate CRUD**: Complete operations
+- **Show proper usage**: Right method for right action
+
+## Summary
+
+HTTP methods define actions on resources. GET retrieves, POST creates, PUT replaces, PATCH updates partially, DELETE removes. Safe methods don't modify data. Idempotent methods produce same result when repeated. Use appropriate method for each operation. Essential for RESTful API design.

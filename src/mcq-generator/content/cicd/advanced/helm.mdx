@@ -1,0 +1,305 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Helm
+---
+
+# Helm
+
+## What is Helm?
+
+**Helm** is a package manager for Kubernetes that helps define, install, and upgrade complex Kubernetes applications using charts.
+
+## Helm Chart Structure
+
+```
+myapp/
+├── Chart.yaml
+├── values.yaml
+├── templates/
+│   ├── deployment.yaml
+│   ├── service.yaml
+│   ├── ingress.yaml
+│   └── _helpers.tpl
+└── charts/
+```
+
+## Chart.yaml
+
+```yaml
+apiVersion: v2
+name: myapp
+description: Full-stack application
+version: 1.0.0
+appVersion: "1.0.0"
+dependencies:
+  - name: postgresql
+    version: 12.x.x
+    repository: https://charts.bitnami.com/bitnami
+  - name: mongodb
+    version: 13.x.x
+    repository: https://charts.bitnami.com/bitnami
+  - name: redis
+    version: 17.x.x
+    repository: https://charts.bitnami.com/bitnami
+```
+
+## values.yaml
+
+```yaml
+# Angular Frontend
+frontend:
+  enabled: true
+  replicaCount: 3
+  image:
+    repository: myapp/frontend
+    tag: "1.0.0"
+  service:
+    type: LoadBalancer
+    port: 80
+
+# .NET API
+api:
+  enabled: true
+  replicaCount: 5
+  image:
+    repository: myapp/api
+    tag: "1.0.0"
+  service:
+    type: ClusterIP
+    port: 5000
+  env:
+    ASPNETCORE_ENVIRONMENT: Production
+
+# Node.js Service
+service:
+  enabled: true
+  replicaCount: 4
+  image:
+    repository: myapp/service
+    tag: "1.0.0"
+  service:
+    type: ClusterIP
+    port: 3000
+  env:
+    NODE_ENV: production
+
+# PostgreSQL
+postgresql:
+  enabled: true
+  auth:
+    database: myapp
+    username: admin
+  primary:
+    persistence:
+      size: 10Gi
+
+# MongoDB
+mongodb:
+  enabled: true
+  auth:
+    enabled: false
+  persistence:
+    size: 20Gi
+
+# Redis
+redis:
+  enabled: true
+  master:
+    persistence:
+      enabled: false
+```
+
+## Deployment Template
+
+```yaml
+# templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "myapp.fullname" . }}-api
+  labels:
+    {{- include "myapp.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.api.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ include "myapp.name" . }}-api
+  template:
+    metadata:
+      labels:
+        app: {{ include "myapp.name" . }}-api
+    spec:
+      containers:
+        - name: api
+          image: "{{ .Values.api.image.repository }}:{{ .Values.api.image.tag }}"
+          ports:
+            - containerPort: {{ .Values.api.service.port }}
+          env:
+            {{- range $key, $value := .Values.api.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+            - name: DATABASE_URL
+              value: "postgresql://{{ .Values.postgresql.auth.username }}@{{ include "myapp.fullname" . }}-postgresql:5432/{{ .Values.postgresql.auth.database }}"
+```
+
+## Service Template
+
+```yaml
+# templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "myapp.fullname" . }}-api
+spec:
+  type: {{ .Values.api.service.type }}
+  ports:
+    - port: {{ .Values.api.service.port }}
+      targetPort: {{ .Values.api.service.port }}
+  selector:
+    app: {{ include "myapp.name" . }}-api
+```
+
+## Helpers
+
+```yaml
+# templates/_helpers.tpl
+{{- define "myapp.name" -}}
+{{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{- define "myapp.fullname" -}}
+{{- if .Values.fullnameOverride }}
+{{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
+{{- else }}
+{{- $name := default .Chart.Name .Values.nameOverride }}
+{{- printf "%s-%s" .Release.Name $name | trunc 63 | trimSuffix "-" }}
+{{- end }}
+{{- end }}
+
+{{- define "myapp.labels" -}}
+helm.sh/chart: {{ include "myapp.chart" . }}
+{{ include "myapp.selectorLabels" . }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end }}
+```
+
+## Install Chart
+
+```bash
+# Add repository
+helm repo add bitnami https://charts.bitnami.com/bitnami
+helm repo update
+
+# Install chart
+helm install myapp ./myapp
+
+# Install with custom values
+helm install myapp ./myapp -f values-production.yaml
+
+# Install with overrides
+helm install myapp ./myapp \
+  --set api.replicaCount=10 \
+  --set postgresql.auth.password=secret123
+```
+
+## Upgrade
+
+```bash
+# Upgrade release
+helm upgrade myapp ./myapp
+
+# Upgrade with new values
+helm upgrade myapp ./myapp -f values-production.yaml
+
+# Rollback
+helm rollback myapp 1
+```
+
+## Environment-Specific Values
+
+```yaml
+# values-dev.yaml
+api:
+  replicaCount: 1
+postgresql:
+  primary:
+    persistence:
+      size: 1Gi
+
+---
+# values-production.yaml
+api:
+  replicaCount: 10
+postgresql:
+  primary:
+    persistence:
+      size: 100Gi
+```
+
+## CI/CD Integration
+
+```yaml
+# GitHub Actions
+name: Helm Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Install Helm
+        uses: azure/setup-helm@v3
+      
+      - name: Deploy to Kubernetes
+        run: |
+          helm upgrade --install myapp ./helm/myapp \
+            --set api.image.tag=${{ github.sha }} \
+            --set frontend.image.tag=${{ github.sha }} \
+            --set service.image.tag=${{ github.sha }} \
+            -f helm/myapp/values-production.yaml
+```
+
+## Helm Commands
+
+```bash
+# List releases
+helm list
+
+# Get release status
+helm status myapp
+
+# Get values
+helm get values myapp
+
+# Uninstall
+helm uninstall myapp
+
+# Lint chart
+helm lint ./myapp
+
+# Package chart
+helm package ./myapp
+
+# Test chart
+helm test myapp
+```
+
+## Interview Tips
+
+- **Explain Helm**: Kubernetes package manager
+- **Show chart structure**: Templates, values
+- **Demonstrate multi-stack**: Frontend, API, databases
+- **Discuss dependencies**: PostgreSQL, MongoDB, Redis
+- **Mention environments**: Dev, staging, production
+- **Show CI/CD**: Automated deployments
+
+## Summary
+
+Helm packages Kubernetes applications into charts with templates and values. Supports multi-stack applications including Angular, .NET, Node.js, and databases. Use values files for environment-specific configurations. Integrate with CI/CD for automated deployments. Provides versioning, rollback, and dependency management.

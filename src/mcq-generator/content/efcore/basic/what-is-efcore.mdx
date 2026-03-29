@@ -1,0 +1,365 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: What is Entity Framework Core?
+---
+
+# What is Entity Framework Core?
+
+## Overview
+
+**Entity Framework Core (EF Core)** is a modern, lightweight, extensible, open-source, and cross-platform Object-Relational Mapper (ORM) for .NET. It enables developers to work with databases using .NET objects, eliminating the need for most data-access code.
+
+## Key Features
+
+### 1. Cross-Platform Support
+- Works on Windows, Linux, and macOS
+- Supports .NET Core, .NET 5+, and .NET Framework
+- Can be used in various application types (web, desktop, mobile)
+
+### 2. Database Provider Model
+- Supports multiple database providers
+- SQL Server, PostgreSQL, MySQL, SQLite, Oracle, and more
+- In-memory database for testing
+
+### 3. LINQ Support
+- Write database queries using C# LINQ syntax
+- Type-safe queries with IntelliSense support
+- Compile-time query validation
+
+## Architecture
+
+```csharp
+// DbContext - represents a session with the database
+public class ApplicationDbContext : DbContext
+{
+    public DbSet<Product> Products { get; set; }
+    public DbSet<Category> Categories { get; set; }
+    
+    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+    {
+        optionsBuilder.UseSqlServer("connection-string");
+    }
+}
+
+// Entity - represents a table in the database
+public class Product
+{
+    public int Id { get; set; }
+    public string Name { get; set; }
+    public decimal Price { get; set; }
+    public int CategoryId { get; set; }
+    
+    // Navigation property
+    public Category Category { get; set; }
+}
+
+public class Category
+{
+    public int Id { get; set; }
+    public string Name { get; set; }
+    
+    // Collection navigation property
+    public ICollection<Product> Products { get; set; }
+}
+```
+
+## Basic Operations
+
+### Querying Data
+
+```csharp
+using (var context = new ApplicationDbContext())
+{
+    // Simple query
+    var products = context.Products.ToList();
+    
+    // Filtered query
+    var expensiveProducts = context.Products
+        .Where(p => p.Price > 100)
+        .ToList();
+    
+    // Query with navigation properties
+    var productsWithCategories = context.Products
+        .Include(p => p.Category)
+        .ToList();
+    
+    // Single item
+    var product = context.Products
+        .FirstOrDefault(p => p.Id == 1);
+}
+```
+
+### Adding Data
+
+```csharp
+using (var context = new ApplicationDbContext())
+{
+    var newProduct = new Product
+    {
+        Name = "Laptop",
+        Price = 999.99m,
+        CategoryId = 1
+    };
+    
+    context.Products.Add(newProduct);
+    context.SaveChanges();
+}
+```
+
+### Updating Data
+
+```csharp
+using (var context = new ApplicationDbContext())
+{
+    var product = context.Products.Find(1);
+    
+    if (product != null)
+    {
+        product.Price = 899.99m;
+        context.SaveChanges();
+    }
+}
+```
+
+### Deleting Data
+
+```csharp
+using (var context = new ApplicationDbContext())
+{
+    var product = context.Products.Find(1);
+    
+    if (product != null)
+    {
+        context.Products.Remove(product);
+        context.SaveChanges();
+    }
+}
+```
+
+## Core Components
+
+### 1. DbContext
+
+The primary class for interacting with the database:
+
+```csharp
+public class BloggingContext : DbContext
+{
+    public DbSet<Blog> Blogs { get; set; }
+    public DbSet<Post> Posts { get; set; }
+    
+    protected override void OnConfiguring(DbContextOptionsBuilder options)
+        => options.UseSqlServer("Server=.;Database=Blogging;Trusted_Connection=true;");
+    
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        // Configure entity relationships and constraints
+        modelBuilder.Entity<Post>()
+            .HasOne(p => p.Blog)
+            .WithMany(b => b.Posts)
+            .HasForeignKey(p => p.BlogId);
+    }
+}
+```
+
+### 2. DbSet
+
+Represents a collection of entities:
+
+```csharp
+public DbSet<Product> Products { get; set; }
+
+// Usage
+var allProducts = context.Products.ToList();
+var activeProducts = context.Products.Where(p => p.IsActive).ToList();
+```
+
+### 3. Entity Classes
+
+POCOs (Plain Old CLR Objects) that map to database tables:
+
+```csharp
+public class Blog
+{
+    public int BlogId { get; set; }
+    public string Url { get; set; }
+    public int Rating { get; set; }
+    
+    public List<Post> Posts { get; set; }
+}
+
+public class Post
+{
+    public int PostId { get; set; }
+    public string Title { get; set; }
+    public string Content { get; set; }
+    
+    public int BlogId { get; set; }
+    public Blog Blog { get; set; }
+}
+```
+
+## Database Providers
+
+### SQL Server
+
+```csharp
+optionsBuilder.UseSqlServer(connectionString);
+```
+
+### PostgreSQL
+
+```csharp
+optionsBuilder.UseNpgsql(connectionString);
+```
+
+### MySQL
+
+```csharp
+optionsBuilder.UseMySql(connectionString, ServerVersion.AutoDetect(connectionString));
+```
+
+### SQLite
+
+```csharp
+optionsBuilder.UseSqlite(connectionString);
+```
+
+### In-Memory (for testing)
+
+```csharp
+optionsBuilder.UseInMemoryDatabase("TestDatabase");
+```
+
+## Dependency Injection Setup
+
+### ASP.NET Core
+
+```csharp
+// Program.cs or Startup.cs
+builder.Services.AddDbContext<ApplicationDbContext>(options =>
+    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+
+// Usage in controller
+public class ProductsController : Controller
+{
+    private readonly ApplicationDbContext _context;
+    
+    public ProductsController(ApplicationDbContext context)
+    {
+        _context = context;
+    }
+    
+    public async Task<IActionResult> Index()
+    {
+        var products = await _context.Products.ToListAsync();
+        return View(products);
+    }
+}
+```
+
+## Configuration Options
+
+```csharp
+services.AddDbContext<ApplicationDbContext>(options =>
+{
+    options.UseSqlServer(connectionString)
+        .EnableSensitiveDataLogging()  // Log parameter values
+        .EnableDetailedErrors()         // Detailed error messages
+        .UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking)  // Default no tracking
+        .LogTo(Console.WriteLine, LogLevel.Information);  // Log to console
+});
+```
+
+## Advantages of EF Core
+
+1. **Productivity**: Less boilerplate code compared to ADO.NET
+2. **Type Safety**: Compile-time checking of queries
+3. **LINQ Support**: Familiar C# syntax for queries
+4. **Change Tracking**: Automatic detection of entity changes
+5. **Migrations**: Database schema versioning
+6. **Cross-Platform**: Works on multiple operating systems
+7. **Performance**: Optimized query generation
+8. **Testability**: Easy to mock and test
+
+## Common Use Cases
+
+### 1. CRUD Operations
+
+```csharp
+// Create
+var user = new User { Name = "John", Email = "john@example.com" };
+context.Users.Add(user);
+await context.SaveChangesAsync();
+
+// Read
+var users = await context.Users.Where(u => u.IsActive).ToListAsync();
+
+// Update
+var user = await context.Users.FindAsync(id);
+user.Email = "newemail@example.com";
+await context.SaveChangesAsync();
+
+// Delete
+context.Users.Remove(user);
+await context.SaveChangesAsync();
+```
+
+### 2. Complex Queries
+
+```csharp
+var result = await context.Orders
+    .Include(o => o.Customer)
+    .Include(o => o.OrderItems)
+        .ThenInclude(oi => oi.Product)
+    .Where(o => o.OrderDate >= DateTime.Now.AddMonths(-1))
+    .OrderByDescending(o => o.TotalAmount)
+    .Take(10)
+    .ToListAsync();
+```
+
+### 3. Transactions
+
+```csharp
+using var transaction = await context.Database.BeginTransactionAsync();
+try
+{
+    context.Accounts.Add(newAccount);
+    await context.SaveChangesAsync();
+    
+    context.Transactions.Add(newTransaction);
+    await context.SaveChangesAsync();
+    
+    await transaction.CommitAsync();
+}
+catch
+{
+    await transaction.RollbackAsync();
+    throw;
+}
+```
+
+## Best Practices
+
+1. **Use async methods**: `ToListAsync()`, `SaveChangesAsync()`
+2. **Dispose DbContext properly**: Use `using` statements
+3. **Use AsNoTracking**: For read-only queries
+4. **Avoid N+1 queries**: Use `Include()` for eager loading
+5. **Use migrations**: For database schema changes
+6. **Configure relationships**: Use Fluent API for complex scenarios
+7. **Handle concurrency**: Implement optimistic concurrency control
+
+## Interview Tips
+
+- **Explain ORM concept**: How EF Core maps objects to database tables
+- **Describe DbContext**: Central class for database operations
+- **Discuss LINQ integration**: Type-safe queries with C# syntax
+- **Mention cross-platform support**: Works on Windows, Linux, macOS
+- **Show basic operations**: CRUD examples with code
+- **Explain database providers**: Support for multiple databases
+- **Discuss advantages**: Productivity, type safety, change tracking
+- **Compare with ADO.NET**: Higher-level abstraction vs direct SQL
+
+## Summary
+
+Entity Framework Core is a modern, lightweight ORM that enables .NET developers to work with databases using strongly-typed .NET objects. It provides LINQ support, change tracking, migrations, and works across multiple platforms and database providers. EF Core simplifies data access code while maintaining performance and flexibility.

@@ -1,0 +1,183 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Memory Management in Node.js
+---
+
+# Memory Management in Node.js
+
+## V8 Memory Structure
+
+Node.js uses V8's garbage collector with two main memory spaces:
+
+### 1. Stack Memory
+- Stores primitive values and references
+- Fixed size, fast access
+- Automatically managed
+
+### 2. Heap Memory
+- Stores objects and functions
+- Dynamic size
+- Garbage collected
+
+## Heap Structure
+
+```
+┌─────────────────────────────┐
+│      New Space (Young)      │ ← Short-lived objects
+├─────────────────────────────┤
+│      Old Space              │ ← Long-lived objects
+├─────────────────────────────┤
+│      Large Object Space     │ ← Objects > 1MB
+├─────────────────────────────┤
+│      Code Space             │ ← Compiled code
+└─────────────────────────────┘
+```
+
+## Garbage Collection
+
+### Scavenge (Minor GC)
+Cleans New Space frequently
+
+### Mark-Sweep-Compact (Major GC)
+Cleans Old Space less frequently
+
+## Memory Monitoring
+
+```javascript
+// Check memory usage
+const used = process.memoryUsage();
+console.log({
+  rss: `${Math.round(used.rss / 1024 / 1024)}MB`,
+  heapTotal: `${Math.round(used.heapTotal / 1024 / 1024)}MB`,
+  heapUsed: `${Math.round(used.heapUsed / 1024 / 1024)}MB`,
+  external: `${Math.round(used.external / 1024 / 1024)}MB`
+});
+```
+
+## Common Memory Leaks
+
+### 1. Global Variables
+
+```javascript
+// BAD - Memory leak
+global.cache = {};
+function addToCache(key, value) {
+  global.cache[key] = value; // Never cleaned
+}
+
+// GOOD - Use proper cache with TTL
+const NodeCache = require('node-cache');
+const cache = new NodeCache({ stdTTL: 600 });
+```
+
+### 2. Event Listeners
+
+```javascript
+// BAD - Memory leak
+function setupListener() {
+  const data = new Array(1000000);
+  emitter.on('event', () => {
+    console.log(data.length); // Holds reference to data
+  });
+}
+
+// GOOD - Remove listeners
+function setupListener() {
+  const handler = () => console.log('event');
+  emitter.on('event', handler);
+  
+  // Clean up
+  setTimeout(() => {
+    emitter.removeListener('event', handler);
+  }, 60000);
+}
+```
+
+### 3. Closures
+
+```javascript
+// BAD - Memory leak
+function createClosure() {
+  const largeData = new Array(1000000);
+  return function() {
+    return largeData.length;
+  };
+}
+
+// GOOD - Don't capture unnecessary data
+function createClosure() {
+  const largeData = new Array(1000000);
+  const length = largeData.length;
+  return function() {
+    return length;
+  };
+}
+```
+
+### 4. Timers
+
+```javascript
+// BAD - Memory leak
+function startTimer() {
+  const data = new Array(1000000);
+  setInterval(() => {
+    console.log(data.length);
+  }, 1000);
+}
+
+// GOOD - Clear timers
+function startTimer() {
+  const data = new Array(1000000);
+  const timer = setInterval(() => {
+    console.log(data.length);
+  }, 1000);
+  
+  setTimeout(() => clearInterval(timer), 60000);
+}
+```
+
+## Heap Snapshots
+
+```javascript
+const v8 = require('v8');
+const fs = require('fs');
+
+// Take heap snapshot
+const snapshot = v8.writeHeapSnapshot();
+console.log('Snapshot written to:', snapshot);
+
+// Or write to specific file
+v8.writeHeapSnapshot('./heap-snapshot.heapsnapshot');
+```
+
+## Increase Heap Size
+
+```bash
+# Increase max old space size
+node --max-old-space-size=4096 app.js
+
+# Increase max new space size
+node --max-new-space-size=2048 app.js
+```
+
+## Best Practices
+
+1. **Avoid global variables**
+2. **Remove event listeners**
+3. **Clear timers and intervals**
+4. **Use streams for large data**
+5. **Implement proper caching**
+6. **Monitor memory usage**
+7. **Profile regularly**
+
+## Interview Tips
+
+- **Explain V8 memory**: Stack and heap structure
+- **Show garbage collection**: Scavenge and Mark-Sweep
+- **Demonstrate leaks**: Common patterns
+- **Discuss monitoring**: process.memoryUsage()
+- **Mention heap snapshots**: Debugging tool
+
+## Summary
+
+Node.js uses V8's garbage collector with stack and heap memory. Common leaks: globals, event listeners, closures, timers. Monitor with process.memoryUsage(), debug with heap snapshots. Increase heap size with --max-old-space-size flag.

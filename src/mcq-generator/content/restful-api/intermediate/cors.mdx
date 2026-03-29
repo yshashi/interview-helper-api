@@ -1,0 +1,303 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: CORS (Cross-Origin Resource Sharing)
+---
+
+# CORS (Cross-Origin Resource Sharing)
+
+## What is CORS?
+
+**CORS** is a security mechanism that allows or restricts web applications running at one origin to access resources from a different origin.
+
+## Same-Origin Policy
+
+```
+Same Origin:
+https://example.com/page1 → https://example.com/api ✅
+
+Different Origin:
+https://example.com → https://api.example.com ❌
+https://example.com → http://example.com ❌ (different protocol)
+https://example.com → https://example.com:8080 ❌ (different port)
+```
+
+## CORS Headers
+
+### Request Headers
+
+```
+Origin: https://example.com
+Access-Control-Request-Method: POST
+Access-Control-Request-Headers: Content-Type, Authorization
+```
+
+### Response Headers
+
+```
+Access-Control-Allow-Origin: https://example.com
+Access-Control-Allow-Methods: GET, POST, PUT, DELETE
+Access-Control-Allow-Headers: Content-Type, Authorization
+Access-Control-Allow-Credentials: true
+Access-Control-Max-Age: 86400
+```
+
+## Node.js/Express Implementation
+
+```javascript
+// Using cors middleware
+const cors = require('cors');
+
+// Allow all origins (development only)
+app.use(cors());
+
+// Specific origin
+app.use(cors({
+  origin: 'https://example.com'
+}));
+
+// Multiple origins
+app.use(cors({
+  origin: ['https://example.com', 'https://app.example.com']
+}));
+
+// Dynamic origin
+app.use(cors({
+  origin: (origin, callback) => {
+    const allowedOrigins = ['https://example.com', 'https://app.example.com'];
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  }
+}));
+
+// Full configuration
+app.use(cors({
+  origin: 'https://example.com',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  exposedHeaders: ['X-Total-Count', 'X-Page'],
+  credentials: true,
+  maxAge: 86400 // 24 hours
+}));
+```
+
+## Manual CORS Implementation
+
+```javascript
+// Without cors middleware
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', 'https://example.com');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  
+  // Handle preflight
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  
+  next();
+});
+```
+
+## .NET Implementation
+
+```csharp
+// Startup.cs
+public void ConfigureServices(IServiceCollection services)
+{
+    services.AddCors(options =>
+    {
+        options.AddPolicy("AllowSpecificOrigin",
+            builder =>
+            {
+                builder.WithOrigins("https://example.com")
+                       .AllowAnyMethod()
+                       .AllowAnyHeader()
+                       .AllowCredentials();
+            });
+        
+        // Multiple policies
+        options.AddPolicy("AllowMultipleOrigins",
+            builder =>
+            {
+                builder.WithOrigins(
+                    "https://example.com",
+                    "https://app.example.com")
+                       .WithMethods("GET", "POST", "PUT", "DELETE")
+                       .WithHeaders("Content-Type", "Authorization")
+                       .WithExposedHeaders("X-Total-Count")
+                       .SetPreflightMaxAge(TimeSpan.FromDays(1));
+            });
+    });
+}
+
+public void Configure(IApplicationBuilder app)
+{
+    app.UseCors("AllowSpecificOrigin");
+    
+    app.UseRouting();
+    app.UseAuthentication();
+    app.UseAuthorization();
+    
+    app.UseEndpoints(endpoints =>
+    {
+        endpoints.MapControllers();
+    });
+}
+
+// Per-controller CORS
+[EnableCors("AllowSpecificOrigin")]
+[ApiController]
+[Route("api/[controller]")]
+public class UsersController : ControllerBase
+{
+    // ...
+}
+```
+
+## Preflight Requests
+
+```javascript
+// Browser sends OPTIONS request before actual request
+OPTIONS /api/users
+Origin: https://example.com
+Access-Control-Request-Method: POST
+Access-Control-Request-Headers: Content-Type, Authorization
+
+// Server responds
+HTTP/1.1 200 OK
+Access-Control-Allow-Origin: https://example.com
+Access-Control-Allow-Methods: GET, POST, PUT, DELETE
+Access-Control-Allow-Headers: Content-Type, Authorization
+Access-Control-Max-Age: 86400
+
+// Then browser sends actual request
+POST /api/users
+Origin: https://example.com
+Content-Type: application/json
+Authorization: Bearer token123
+```
+
+## Credentials
+
+```javascript
+// Server allows credentials
+app.use(cors({
+  origin: 'https://example.com',
+  credentials: true
+}));
+
+// Angular - Include credentials
+@Injectable()
+export class UserService {
+  getUsers(): Observable<User[]> {
+    return this.http.get<User[]>(`${this.apiUrl}/users`, {
+      withCredentials: true
+    });
+  }
+}
+
+// Fetch API
+fetch('https://api.example.com/users', {
+  credentials: 'include'
+});
+```
+
+## Environment-Specific CORS
+
+```javascript
+// Development - Allow all
+if (process.env.NODE_ENV === 'development') {
+  app.use(cors());
+}
+
+// Production - Specific origins
+if (process.env.NODE_ENV === 'production') {
+  app.use(cors({
+    origin: process.env.ALLOWED_ORIGINS.split(','),
+    credentials: true
+  }));
+}
+```
+
+## Route-Specific CORS
+
+```javascript
+// Different CORS for different routes
+const publicCors = cors({
+  origin: '*'
+});
+
+const privateCors = cors({
+  origin: 'https://example.com',
+  credentials: true
+});
+
+app.get('/api/public/data', publicCors, (req, res) => {
+  res.json({ data: 'public' });
+});
+
+app.get('/api/private/data', privateCors, authenticate, (req, res) => {
+  res.json({ data: 'private' });
+});
+```
+
+## Common CORS Errors
+
+```javascript
+// Error: No 'Access-Control-Allow-Origin' header
+// Solution: Add CORS middleware
+
+// Error: Credential is not supported if the CORS header 'Access-Control-Allow-Origin' is '*'
+// Solution: Specify exact origin when using credentials
+app.use(cors({
+  origin: 'https://example.com', // Not '*'
+  credentials: true
+}));
+
+// Error: Request header field authorization is not allowed
+// Solution: Add header to allowedHeaders
+app.use(cors({
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+```
+
+## Angular Proxy (Development)
+
+```json
+// proxy.conf.json
+{
+  "/api": {
+    "target": "http://localhost:3000",
+    "secure": false,
+    "changeOrigin": true
+  }
+}
+```
+
+```json
+// angular.json
+{
+  "serve": {
+    "options": {
+      "proxyConfig": "proxy.conf.json"
+    }
+  }
+}
+```
+
+## Interview Tips
+
+- **Explain CORS**: Cross-origin security mechanism
+- **Show headers**: Request and response headers
+- **Demonstrate implementation**: Node.js, .NET
+- **Discuss preflight**: OPTIONS requests
+- **Mention credentials**: withCredentials flag
+- **Show errors**: Common issues and solutions
+
+## Summary
+
+CORS allows controlled access to resources from different origins. Configure allowed origins, methods, and headers on server. Browser sends preflight OPTIONS request for complex requests. Use credentials flag for cookies/auth. Set specific origins in production, not wildcard. Handle CORS in middleware or per-route. Essential for web APIs accessed from browsers.

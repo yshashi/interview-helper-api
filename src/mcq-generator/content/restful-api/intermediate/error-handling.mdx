@@ -1,0 +1,418 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Error Handling in REST APIs
+---
+
+# Error Handling in REST APIs
+
+## Error Response Structure
+
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Invalid input data",
+    "details": [
+      {
+        "field": "email",
+        "message": "Email is required"
+      },
+      {
+        "field": "password",
+        "message": "Password must be at least 8 characters"
+      }
+    ],
+    "timestamp": "2024-01-01T00:00:00Z",
+    "path": "/api/users"
+  }
+}
+```
+
+## Node.js/Express Error Handling
+
+```javascript
+// Custom error class
+class ApiError extends Error {
+  constructor(statusCode, message, details = []) {
+    super(message);
+    this.statusCode = statusCode;
+    this.details = details;
+  }
+}
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+  const statusCode = err.statusCode || 500;
+  
+  res.status(statusCode).json({
+    error: {
+      code: err.code || 'INTERNAL_ERROR',
+      message: err.message || 'Internal server error',
+      details: err.details || [],
+      timestamp: new Date().toISOString(),
+      path: req.path
+    }
+  });
+});
+
+// Usage
+app.post('/api/users', async (req, res, next) => {
+  try {
+    const { email, password } = req.body;
+    
+    if (!email) {
+      throw new ApiError(400, 'Validation error', [
+        { field: 'email', message: 'Email is required' }
+      ]);
+    }
+    
+    const user = await User.create({ email, password });
+    res.status(201).json(user);
+  } catch (error) {
+    next(error);
+  }
+});
+```
+
+## .NET Error Handling
+
+```csharp
+// Custom exception
+public class ApiException : Exception
+{
+    public int StatusCode { get; set; }
+    public string Code { get; set; }
+    public List<ErrorDetail> Details { get; set; }
+    
+    public ApiException(int statusCode, string message, string code = null)
+        : base(message)
+    {
+        StatusCode = statusCode;
+        Code = code ?? "ERROR";
+        Details = new List<ErrorDetail>();
+    }
+}
+
+public class ErrorDetail
+{
+    public string Field { get; set; }
+    public string Message { get; set; }
+}
+
+// Error response model
+public class ErrorResponse
+{
+    public ErrorInfo Error { get; set; }
+}
+
+public class ErrorInfo
+{
+    public string Code { get; set; }
+    public string Message { get; set; }
+    public List<ErrorDetail> Details { get; set; }
+    public DateTime Timestamp { get; set; }
+    public string Path { get; set; }
+}
+
+// Global exception handler
+public class ExceptionMiddleware
+{
+    private readonly RequestDelegate _next;
+    
+    public ExceptionMiddleware(RequestDelegate next)
+    {
+        _next = next;
+    }
+    
+    public async Task InvokeAsync(HttpContext context)
+    {
+        try
+        {
+            await _next(context);
+        }
+        catch (ApiException ex)
+        {
+            await HandleApiExceptionAsync(context, ex);
+        }
+        catch (Exception ex)
+        {
+            await HandleExceptionAsync(context, ex);
+        }
+    }
+    
+    private static Task HandleApiExceptionAsync(HttpContext context, ApiException exception)
+    {
+        context.Response.ContentType = "application/json";
+        context.Response.StatusCode = exception.StatusCode;
+        
+        var response = new ErrorResponse
+        {
+            Error = new ErrorInfo
+            {
+                Code = exception.Code,
+                Message = exception.Message,
+                Details = exception.Details,
+                Timestamp = DateTime.UtcNow,
+                Path = context.Request.Path
+            }
+        };
+        
+        return context.Response.WriteAsJsonAsync(response);
+    }
+}
+
+// Startup.cs
+app.UseMiddleware<ExceptionMiddleware>();
+```
+
+## Validation Errors
+
+```javascript
+// Express with Joi validation
+const Joi = require('joi');
+
+const userSchema = Joi.object({
+  email: Joi.string().email().required(),
+  password: Joi.string().min(8).required(),
+  name: Joi.string().min(2).required()
+});
+
+app.post('/api/users', async (req, res, next) => {
+  try {
+    const { error, value } = userSchema.validate(req.body, { abortEarly: false });
+    
+    if (error) {
+      const details = error.details.map(detail => ({
+        field: detail.path[0],
+        message: detail.message
+      }));
+      
+      throw new ApiError(422, 'Validation failed', details);
+    }
+    
+    const user = await User.create(value);
+    res.status(201).json(user);
+  } catch (err) {
+    next(err);
+  }
+});
+```
+
+```csharp
+// .NET with FluentValidation
+public class CreateUserValidator : AbstractValidator<CreateUserDto>
+{
+    public CreateUserValidator()
+    {
+        RuleFor(x => x.Email).NotEmpty().EmailAddress();
+        RuleFor(x => x.Password).NotEmpty().MinimumLength(8);
+        RuleFor(x => x.Name).NotEmpty().MinimumLength(2);
+    }
+}
+
+[HttpPost]
+public async Task<ActionResult<User>> CreateUser(CreateUserDto dto)
+{
+    var validator = new CreateUserValidator();
+    var result = await validator.ValidateAsync(dto);
+    
+    if (!result.IsValid)
+    {
+        var details = result.Errors.Select(e => new ErrorDetail
+        {
+            Field = e.PropertyName,
+            Message = e.ErrorMessage
+        }).ToList();
+        
+        throw new ApiException(422, "Validation failed", "VALIDATION_ERROR")
+        {
+            Details = details
+        };
+    }
+    
+    var user = await _userService.CreateAsync(dto);
+    return CreatedAtAction(nameof(GetUser), new { id = user.Id }, user);
+}
+```
+
+## Common HTTP Error Codes
+
+```javascript
+// 400 Bad Request
+if (!req.body.email) {
+  throw new ApiError(400, 'Bad request', [
+    { field: 'email', message: 'Email is required' }
+  ]);
+}
+
+// 401 Unauthorized
+if (!token) {
+  throw new ApiError(401, 'Authentication required');
+}
+
+// 403 Forbidden
+if (req.user.role !== 'admin') {
+  throw new ApiError(403, 'Insufficient permissions');
+}
+
+// 404 Not Found
+const user = await User.findById(id);
+if (!user) {
+  throw new ApiError(404, 'User not found');
+}
+
+// 409 Conflict
+const exists = await User.findOne({ email });
+if (exists) {
+  throw new ApiError(409, 'Email already exists');
+}
+
+// 422 Unprocessable Entity
+if (validationErrors.length > 0) {
+  throw new ApiError(422, 'Validation failed', validationErrors);
+}
+
+// 429 Too Many Requests
+if (rateLimitExceeded) {
+  throw new ApiError(429, 'Too many requests');
+}
+
+// 500 Internal Server Error
+throw new ApiError(500, 'Internal server error');
+
+// 503 Service Unavailable
+if (!dbConnected) {
+  throw new ApiError(503, 'Service temporarily unavailable');
+}
+```
+
+## Angular Error Handling
+
+```typescript
+import { HttpErrorResponse } from '@angular/common/http';
+import { catchError } from 'rxjs/operators';
+import { throwError } from 'rxjs';
+
+@Injectable()
+export class UserService {
+  createUser(user: CreateUserDto): Observable<User> {
+    return this.http.post<User>(`${this.apiUrl}/users`, user).pipe(
+      catchError(this.handleError)
+    );
+  }
+  
+  private handleError(error: HttpErrorResponse) {
+    if (error.error instanceof ErrorEvent) {
+      // Client-side error
+      console.error('Client error:', error.error.message);
+    } else {
+      // Server-side error
+      console.error(`Server error ${error.status}:`, error.error);
+      
+      if (error.status === 422 && error.error.error?.details) {
+        // Validation errors
+        const validationErrors = error.error.error.details;
+        return throwError(() => ({
+          type: 'validation',
+          errors: validationErrors
+        }));
+      }
+      
+      if (error.status === 401) {
+        // Unauthorized - redirect to login
+        return throwError(() => ({ type: 'unauthorized' }));
+      }
+    }
+    
+    return throwError(() => ({
+      type: 'unknown',
+      message: error.error?.error?.message || 'An error occurred'
+    }));
+  }
+}
+
+// Global error interceptor
+@Injectable()
+export class ErrorInterceptor implements HttpInterceptor {
+  constructor(private router: Router) {}
+  
+  intercept(req: HttpRequest<any>, next: HttpHandler): Observable<HttpEvent<any>> {
+    return next.handle(req).pipe(
+      catchError((error: HttpErrorResponse) => {
+        if (error.status === 401) {
+          this.router.navigate(['/login']);
+        }
+        
+        if (error.status === 500) {
+          // Show global error message
+        }
+        
+        return throwError(() => error);
+      })
+    );
+  }
+}
+```
+
+## Async Error Handling
+
+```javascript
+// Wrapper for async route handlers
+const asyncHandler = (fn) => (req, res, next) => {
+  Promise.resolve(fn(req, res, next)).catch(next);
+};
+
+// Usage
+app.get('/api/users/:id', asyncHandler(async (req, res) => {
+  const user = await User.findById(req.params.id);
+  if (!user) {
+    throw new ApiError(404, 'User not found');
+  }
+  res.json(user);
+}));
+```
+
+## Logging Errors
+
+```javascript
+const winston = require('winston');
+
+const logger = winston.createLogger({
+  level: 'error',
+  format: winston.format.json(),
+  transports: [
+    new winston.transports.File({ filename: 'error.log' })
+  ]
+});
+
+app.use((err, req, res, next) => {
+  logger.error({
+    message: err.message,
+    stack: err.stack,
+    path: req.path,
+    method: req.method,
+    statusCode: err.statusCode,
+    timestamp: new Date().toISOString()
+  });
+  
+  res.status(err.statusCode || 500).json({
+    error: {
+      message: err.message,
+      code: err.code
+    }
+  });
+});
+```
+
+## Interview Tips
+
+- **Explain error structure**: Consistent format
+- **Show status codes**: 400, 401, 404, 422, 500
+- **Demonstrate validation**: Field-level errors
+- **Discuss middleware**: Global error handler
+- **Mention logging**: Error tracking
+- **Show client handling**: Angular error interceptor
+
+## Summary
+
+REST API error handling uses consistent error response structure with code, message, and details. Return appropriate HTTP status codes for different error types. Implement global error middleware to catch and format errors. Validate input and return 422 with field-level errors. Log errors for debugging. Handle errors in client with interceptors. Essential for robust REST APIs.

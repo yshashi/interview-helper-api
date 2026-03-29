@@ -189,3 +189,15 @@ model QuestionContribution {
   @@index([status])
   @@map("QuestionContributions")
 }
+
+// Tracks content hashes for incremental MCQ regeneration
+model McqContentHash {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  topic       String
+  sourceFile  String   @unique
+  contentHash String
+  updatedAt   DateTime @updatedAt
+
+  @@index([topic])
+  @@map("McqContentHashes")
+}

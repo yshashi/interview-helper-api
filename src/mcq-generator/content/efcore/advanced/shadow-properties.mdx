@@ -1,0 +1,96 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Shadow Properties in EF Core
+---
+
+# Shadow Properties in EF Core
+
+## What are Shadow Properties?
+
+**Shadow properties** are properties that exist in the EF Core model but not in the entity class. They're stored in the database but accessed through the Change Tracker API.
+
+## Creating Shadow Properties
+
+```csharp
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    modelBuilder.Entity<Product>()
+        .Property<DateTime>("CreatedAt");
+    
+    modelBuilder.Entity<Product>()
+        .Property<DateTime>("UpdatedAt");
+    
+    modelBuilder.Entity<Product>()
+        .Property<string>("CreatedBy")
+        .HasMaxLength(100);
+}
+```
+
+## Accessing Shadow Properties
+
+```csharp
+var product = new Product { Name = "Laptop", Price = 999.99m };
+context.Products.Add(product);
+
+// Set shadow property
+context.Entry(product).Property("CreatedAt").CurrentValue = DateTime.UtcNow;
+context.Entry(product).Property("CreatedBy").CurrentValue = "admin";
+
+await context.SaveChangesAsync();
+
+// Read shadow property
+var createdAt = context.Entry(product).Property("CreatedAt").CurrentValue;
+```
+
+## Querying Shadow Properties
+
+```csharp
+var products = context.Products
+    .Where(p => EF.Property<DateTime>(p, "CreatedAt") >= DateTime.Today)
+    .ToList();
+
+var recentProducts = context.Products
+    .OrderByDescending(p => EF.Property<DateTime>(p, "UpdatedAt"))
+    .Take(10)
+    .ToList();
+```
+
+## Automatic Audit Trail
+
+```csharp
+public override int SaveChanges()
+{
+    foreach (var entry in ChangeTracker.Entries())
+    {
+        if (entry.State == EntityState.Added)
+        {
+            entry.Property("CreatedAt").CurrentValue = DateTime.UtcNow;
+            entry.Property("CreatedBy").CurrentValue = _currentUser;
+        }
+        
+        if (entry.State == EntityState.Modified)
+        {
+            entry.Property("UpdatedAt").CurrentValue = DateTime.UtcNow;
+            entry.Property("UpdatedBy").CurrentValue = _currentUser;
+        }
+    }
+    
+    return base.SaveChanges();
+}
+```
+
+## Foreign Keys as Shadow Properties
+
+```csharp
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    modelBuilder.Entity<Post>()
+        .HasOne(p => p.Blog)
+        .WithMany(b => b.Posts)
+        .HasForeignKey("BlogForeignKey"); // Shadow property
+}
+```
+
+## Summary
+
+Shadow properties exist in the EF Core model but not in entity classes. They're useful for audit fields, foreign keys, and metadata. Access them using Entry().Property() or EF.Property() in queries.

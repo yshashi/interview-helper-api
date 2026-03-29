@@ -1,0 +1,300 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: CQRS Pattern
+---
+
+# CQRS Pattern
+
+## What is CQRS?
+
+**CQRS (Command Query Responsibility Segregation)** separates read and write operations into different models. Commands modify data, queries retrieve data.
+
+## Traditional Approach
+
+```javascript
+// Single model for reads and writes
+class UserService {
+  async getUser(id) {
+    return await User.findById(id);
+  }
+  
+  async createUser(data) {
+    return await User.create(data);
+  }
+  
+  async updateUser(id, data) {
+    return await User.findByIdAndUpdate(id, data);
+  }
+}
+```
+
+## CQRS Approach
+
+### Command Side (Write)
+
+```javascript
+// Command handlers modify state
+class CreateUserCommand {
+  constructor(userData) {
+    this.userData = userData;
+  }
+}
+
+class CreateUserCommandHandler {
+  async handle(command) {
+    const user = await User.create(command.userData);
+    
+    // Publish event
+    await eventBus.publish('UserCreated', {
+      userId: user.id,
+      email: user.email
+    });
+    
+    return user.id;
+  }
+}
+
+class UpdateUserCommand {
+  constructor(userId, updates) {
+    this.userId = userId;
+    this.updates = updates;
+  }
+}
+
+class UpdateUserCommandHandler {
+  async handle(command) {
+    await User.findByIdAndUpdate(command.userId, command.updates);
+    
+    await eventBus.publish('UserUpdated', {
+      userId: command.userId,
+      updates: command.updates
+    });
+  }
+}
+```
+
+### Query Side (Read)
+
+```javascript
+// Query handlers retrieve data
+class GetUserQuery {
+  constructor(userId) {
+    this.userId = userId;
+  }
+}
+
+class GetUserQueryHandler {
+  async handle(query) {
+    // Read from optimized read model
+    return await UserReadModel.findById(query.userId);
+  }
+}
+
+class GetUsersByRoleQuery {
+  constructor(role) {
+    this.role = role;
+  }
+}
+
+class GetUsersByRoleQueryHandler {
+  async handle(query) {
+    // Use denormalized read model for fast queries
+    return await UserReadModel.find({ role: query.role });
+  }
+}
+```
+
+## Separate Databases
+
+```javascript
+// Write Database (Normalized)
+const writeDB = mongoose.createConnection('mongodb://localhost/users_write');
+
+const UserWriteModel = writeDB.model('User', {
+  email: String,
+  passwordHash: String,
+  createdAt: Date
+});
+
+// Read Database (Denormalized)
+const readDB = mongoose.createConnection('mongodb://localhost/users_read');
+
+const UserReadModel = readDB.model('UserRead', {
+  id: String,
+  email: String,
+  fullName: String,
+  role: String,
+  lastLogin: Date,
+  orderCount: Number,  // Denormalized
+  totalSpent: Number   // Denormalized
+});
+```
+
+## Synchronization
+
+```javascript
+// Event handler to sync read model
+eventBus.subscribe('UserCreated', async (event) => {
+  await UserReadModel.create({
+    id: event.data.userId,
+    email: event.data.email,
+    fullName: event.data.fullName,
+    role: event.data.role,
+    orderCount: 0,
+    totalSpent: 0
+  });
+});
+
+eventBus.subscribe('OrderCreated', async (event) => {
+  // Update denormalized data
+  await UserReadModel.findByIdAndUpdate(event.data.userId, {
+    $inc: {
+      orderCount: 1,
+      totalSpent: event.data.amount
+    }
+  });
+});
+```
+
+## Command Bus
+
+```javascript
+class CommandBus {
+  constructor() {
+    this.handlers = new Map();
+  }
+  
+  register(commandType, handler) {
+    this.handlers.set(commandType, handler);
+  }
+  
+  async execute(command) {
+    const handler = this.handlers.get(command.constructor.name);
+    
+    if (!handler) {
+      throw new Error(`No handler for ${command.constructor.name}`);
+    }
+    
+    return await handler.handle(command);
+  }
+}
+
+// Setup
+const commandBus = new CommandBus();
+commandBus.register('CreateUserCommand', new CreateUserCommandHandler());
+commandBus.register('UpdateUserCommand', new UpdateUserCommandHandler());
+
+// Usage
+const command = new CreateUserCommand({
+  email: 'user@example.com',
+  password: 'password123'
+});
+
+const userId = await commandBus.execute(command);
+```
+
+## Query Bus
+
+```javascript
+class QueryBus {
+  constructor() {
+    this.handlers = new Map();
+  }
+  
+  register(queryType, handler) {
+    this.handlers.set(queryType, handler);
+  }
+  
+  async execute(query) {
+    const handler = this.handlers.get(query.constructor.name);
+    
+    if (!handler) {
+      throw new Error(`No handler for ${query.constructor.name}`);
+    }
+    
+    return await handler.handle(query);
+  }
+}
+
+// Setup
+const queryBus = new QueryBus();
+queryBus.register('GetUserQuery', new GetUserQueryHandler());
+queryBus.register('GetUsersByRoleQuery', new GetUsersByRoleQueryHandler());
+
+// Usage
+const query = new GetUserQuery('user_123');
+const user = await queryBus.execute(query);
+```
+
+## Complete Example
+
+```javascript
+// API Layer
+app.post('/users', async (req, res) => {
+  const command = new CreateUserCommand(req.body);
+  const userId = await commandBus.execute(command);
+  res.status(201).json({ userId });
+});
+
+app.get('/users/:id', async (req, res) => {
+  const query = new GetUserQuery(req.params.id);
+  const user = await queryBus.execute(query);
+  res.json(user);
+});
+
+app.put('/users/:id', async (req, res) => {
+  const command = new UpdateUserCommand(req.params.id, req.body);
+  await commandBus.execute(command);
+  res.status(204).send();
+});
+
+app.get('/users/role/:role', async (req, res) => {
+  const query = new GetUsersByRoleQuery(req.params.role);
+  const users = await queryBus.execute(query);
+  res.json(users);
+});
+```
+
+## Benefits
+
+1. **Scalability**: Scale reads and writes independently
+2. **Performance**: Optimize read models for queries
+3. **Flexibility**: Different models for different needs
+4. **Simplicity**: Separate concerns clearly
+5. **Evolution**: Change models independently
+
+## Challenges
+
+1. **Complexity**: More moving parts
+2. **Eventual Consistency**: Read model may lag
+3. **Data Duplication**: Same data in multiple places
+4. **Synchronization**: Keep models in sync
+5. **Learning Curve**: New pattern to learn
+
+## When to Use CQRS
+
+### Good For:
+- Complex domains
+- Different read/write patterns
+- High read/write ratio
+- Need for scalability
+- Event sourcing
+
+### Not Recommended:
+- Simple CRUD applications
+- Small applications
+- Immediate consistency required
+- Limited team experience
+
+## Interview Tips
+
+- **Explain CQRS**: Separate read and write models
+- **Show implementation**: Commands and queries
+- **Demonstrate sync**: Event-based synchronization
+- **Discuss benefits**: Scalability, performance
+- **Mention challenges**: Complexity, eventual consistency
+- **Show use cases**: When to use CQRS
+
+## Summary
+
+CQRS separates read and write operations into different models. Commands modify state, queries retrieve data. Use separate databases optimized for each operation. Synchronize via events. Provides scalability and performance but adds complexity. Best for complex domains with different read/write patterns.

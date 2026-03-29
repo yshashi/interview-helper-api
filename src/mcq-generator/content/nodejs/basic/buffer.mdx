@@ -1,0 +1,123 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Buffer Class in Node.js
+---
+
+# Buffer Class in Node.js
+
+## What is Buffer?
+
+**Buffer** is a class that provides a way to work with binary data directly. It's used to handle streams of binary data, such as reading files or network communications.
+
+## Creating Buffers
+
+```javascript
+// From string
+const buf1 = Buffer.from('Hello');
+
+// From array
+const buf2 = Buffer.from([72, 101, 108, 108, 111]);
+
+// Allocate buffer
+const buf3 = Buffer.alloc(10); // 10 bytes, filled with 0
+const buf4 = Buffer.allocUnsafe(10); // Faster, not initialized
+
+// From buffer
+const buf5 = Buffer.from(buf1);
+```
+
+## Buffer Methods
+
+```javascript
+const buf = Buffer.from('Hello World');
+
+// Length
+console.log(buf.length); // 11
+
+// Convert to string
+console.log(buf.toString()); // 'Hello World'
+console.log(buf.toString('hex')); // Hexadecimal
+console.log(buf.toString('base64')); // Base64
+
+// Write to buffer
+buf.write('Hi');
+console.log(buf.toString()); // 'Hi World'
+
+// Compare buffers
+const buf1 = Buffer.from('ABC');
+const buf2 = Buffer.from('ABC');
+console.log(buf1.equals(buf2)); // true
+
+// Concatenate
+const buf3 = Buffer.concat([buf1, buf2]);
+```
+
+## Working with Binary Data
+
+```javascript
+const buf = Buffer.alloc(4);
+
+// Write integers
+buf.writeInt8(127, 0);
+buf.writeInt16BE(1000, 1);
+
+// Read integers
+console.log(buf.readInt8(0)); // 127
+console.log(buf.readInt16BE(1)); // 1000
+```
+
+## File Operations
+
+```javascript
+const fs = require('fs');
+
+// Read file as buffer
+fs.readFile('image.png', (err, buffer) => {
+  console.log(buffer); // <Buffer ...>
+  console.log(buffer.length);
+});
+
+// Write buffer to file
+const data = Buffer.from('Hello World');
+fs.writeFile('output.txt', data, (err) => {
+  if (err) throw err;
+  console.log('File written');
+});
+```
+
+## Encoding
+
+```javascript
+const buf = Buffer.from('Hello', 'utf8');
+
+// Different encodings
+console.log(buf.toString('utf8')); // Hello
+console.log(buf.toString('hex')); // 48656c6c6f
+console.log(buf.toString('base64')); // SGVsbG8=
+console.log(buf.toString('ascii')); // Hello
+```
+
+## Buffer and Streams
+
+```javascript
+const fs = require('fs');
+
+const readStream = fs.createReadStream('large-file.txt');
+
+readStream.on('data', (chunk) => {
+  console.log('Chunk:', chunk); // Buffer
+  console.log('Size:', chunk.length);
+});
+```
+
+## Interview Tips
+
+- **Explain Buffer purpose**: Handle binary data
+- **Show creation methods**: from, alloc, allocUnsafe
+- **Demonstrate conversions**: toString, different encodings
+- **Mention use cases**: Files, streams, network data
+- **Discuss performance**: allocUnsafe vs alloc
+
+## Summary
+
+Buffer is a Node.js class for handling binary data. Create with Buffer.from(), Buffer.alloc(), or Buffer.allocUnsafe(). Convert to strings with toString(). Used extensively with files, streams, and network operations.

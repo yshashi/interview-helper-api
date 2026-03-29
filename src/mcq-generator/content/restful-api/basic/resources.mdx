@@ -1,0 +1,245 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Resources in REST
+---
+
+# Resources in REST
+
+## What is a Resource?
+
+A **resource** is any information that can be named and addressed. In REST, everything is a resource - users, products, orders, etc.
+
+## Resource Identification
+
+Resources are identified by URIs (Uniform Resource Identifiers).
+
+```
+/api/users              - Collection of users
+/api/users/123          - Specific user
+/api/users/123/orders   - User's orders
+/api/products           - Collection of products
+/api/products/456       - Specific product
+```
+
+## Resource Representation
+
+Resources can be represented in multiple formats:
+
+```javascript
+// JSON representation
+{
+  "id": "123",
+  "name": "John Doe",
+  "email": "john@example.com",
+  "createdAt": "2024-01-01T00:00:00Z"
+}
+
+// XML representation
+<user>
+  <id>123</id>
+  <name>John Doe</name>
+  <email>john@example.com</email>
+  <createdAt>2024-01-01T00:00:00Z</createdAt>
+</user>
+```
+
+## Resource Naming Conventions
+
+```javascript
+// ✅ Good - Use nouns, not verbs
+GET    /api/users
+POST   /api/users
+GET    /api/users/123
+PUT    /api/users/123
+DELETE /api/users/123
+
+// ❌ Bad - Using verbs
+GET    /api/getUsers
+POST   /api/createUser
+GET    /api/getUserById/123
+```
+
+## Collection vs Single Resource
+
+```javascript
+// Node.js/Express
+// Collection resource
+app.get('/api/users', async (req, res) => {
+  const users = await User.find();
+  res.json({
+    data: users,
+    total: users.length
+  });
+});
+
+// Single resource
+app.get('/api/users/:id', async (req, res) => {
+  const user = await User.findById(req.params.id);
+  res.json(user);
+});
+```
+
+```csharp
+// .NET
+// Collection
+[HttpGet]
+public async Task<ActionResult<IEnumerable<User>>> GetUsers()
+{
+    var users = await _context.Users.ToListAsync();
+    return Ok(new { data = users, total = users.Count });
+}
+
+// Single resource
+[HttpGet("{id}")]
+public async Task<ActionResult<User>> GetUser(int id)
+{
+    var user = await _context.Users.FindAsync(id);
+    return Ok(user);
+}
+```
+
+## Nested Resources
+
+```javascript
+// User's orders
+app.get('/api/users/:userId/orders', async (req, res) => {
+  const orders = await Order.find({ userId: req.params.userId });
+  res.json(orders);
+});
+
+// Specific order for a user
+app.get('/api/users/:userId/orders/:orderId', async (req, res) => {
+  const order = await Order.findOne({
+    _id: req.params.orderId,
+    userId: req.params.userId
+  });
+  res.json(order);
+});
+```
+
+## Resource Relationships
+
+```javascript
+// One-to-Many: User has many orders
+GET /api/users/123/orders
+
+// Many-to-Many: Product has many categories
+GET /api/products/456/categories
+
+// Embedded resources
+{
+  "id": "123",
+  "name": "John Doe",
+  "orders": [
+    { "id": "789", "total": 99.99 },
+    { "id": "790", "total": 149.99 }
+  ]
+}
+
+// Linked resources
+{
+  "id": "123",
+  "name": "John Doe",
+  "links": {
+    "orders": "/api/users/123/orders"
+  }
+}
+```
+
+## Resource State
+
+```javascript
+// Resource with state
+{
+  "id": "789",
+  "status": "pending",
+  "items": [...],
+  "total": 99.99
+}
+
+// State transitions via HTTP methods
+POST   /api/orders           - Create (status: pending)
+PATCH  /api/orders/789       - Update (status: processing)
+PATCH  /api/orders/789       - Update (status: completed)
+```
+
+## Singular vs Plural
+
+```javascript
+// ✅ Preferred - Use plural for consistency
+/api/users
+/api/users/123
+/api/products
+/api/products/456
+
+// ❌ Avoid - Mixing singular and plural
+/api/user
+/api/user/123
+/api/product
+/api/product/456
+```
+
+## Resource Hierarchies
+
+```javascript
+// Shallow hierarchy (preferred)
+GET /api/users/123
+GET /api/orders?userId=123
+GET /api/comments?orderId=789
+
+// Deep hierarchy (use sparingly)
+GET /api/users/123/orders/789/items/1
+```
+
+## Resource Actions
+
+```javascript
+// ✅ Use HTTP methods for CRUD
+POST   /api/orders           - Create order
+GET    /api/orders/789       - Get order
+PUT    /api/orders/789       - Update order
+DELETE /api/orders/789       - Delete order
+
+// ✅ For non-CRUD operations, use sub-resources
+POST   /api/orders/789/cancel
+POST   /api/orders/789/refund
+POST   /api/users/123/activate
+
+// ❌ Avoid verbs in URLs
+POST   /api/cancelOrder/789
+POST   /api/refundOrder/789
+```
+
+## Resource Filtering
+
+```javascript
+// Filter collection resources
+app.get('/api/users', async (req, res) => {
+  const { role, status, city } = req.query;
+  
+  const filter = {};
+  if (role) filter.role = role;
+  if (status) filter.status = status;
+  if (city) filter.city = city;
+  
+  const users = await User.find(filter);
+  res.json(users);
+});
+
+// Usage
+GET /api/users?role=admin
+GET /api/users?status=active&city=NYC
+```
+
+## Interview Tips
+
+- **Explain resources**: Anything that can be named
+- **Show URIs**: Proper resource identification
+- **Demonstrate collections**: Multiple vs single
+- **Discuss nesting**: Parent-child relationships
+- **Mention naming**: Nouns, plural, consistent
+- **Show examples**: Node.js, .NET implementations
+
+## Summary
+
+Resources are core to REST - anything that can be named and addressed. Use nouns for resource names, plural for consistency. Collections return multiple resources, single endpoints return one. Nest resources for relationships. Use HTTP methods for operations, not verbs in URLs. Essential for RESTful API design.

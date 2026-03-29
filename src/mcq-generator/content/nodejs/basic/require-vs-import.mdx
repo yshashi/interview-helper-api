@@ -1,0 +1,313 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: require() vs import in Node.js
+---
+
+# require() vs import in Node.js
+
+## Overview
+
+Node.js supports two module systems: **CommonJS** (require) and **ES6 Modules** (import). Understanding the differences is crucial for modern Node.js development.
+
+## CommonJS (require)
+
+### Syntax
+
+```javascript
+// Importing
+const express = require('express');
+const { readFile } = require('fs');
+const math = require('./math');
+
+// Exporting
+module.exports = function() {};
+module.exports = { add, subtract };
+exports.name = 'John';
+```
+
+### Characteristics
+
+- **Synchronous**: Loads modules synchronously
+- **Dynamic**: Can use conditionally
+- **Runtime**: Resolved at runtime
+- **Default in Node.js**: Traditional module system
+
+### Examples
+
+```javascript
+// Dynamic import
+if (condition) {
+  const module = require('./module');
+}
+
+// Conditional loading
+const db = process.env.DB === 'mongo' 
+  ? require('./mongo')
+  : require('./postgres');
+
+// In functions
+function loadModule() {
+  return require('./dynamic-module');
+}
+```
+
+## ES6 Modules (import)
+
+### Syntax
+
+```javascript
+// Importing
+import express from 'express';
+import { readFile } from 'fs';
+import * as math from './math.js';
+
+// Exporting
+export default function() {};
+export const add = (a, b) => a + b;
+export { name, age };
+```
+
+### Characteristics
+
+- **Asynchronous**: Loads modules asynchronously
+- **Static**: Must be at top level
+- **Compile-time**: Resolved at compile time
+- **Tree-shaking**: Better for optimization
+
+### Examples
+
+```javascript
+// Named imports
+import { add, subtract } from './math.js';
+
+// Default import
+import Calculator from './Calculator.js';
+
+// Import all
+import * as utils from './utils.js';
+
+// Rename imports
+import { add as sum } from './math.js';
+
+// Side-effect import
+import './polyfills.js';
+```
+
+## Key Differences
+
+| Feature | require() | import |
+|---------|-----------|--------|
+| **Type** | CommonJS | ES6 Modules |
+| **Loading** | Synchronous | Asynchronous |
+| **When** | Runtime | Compile-time |
+| **Where** | Anywhere | Top-level only |
+| **Dynamic** | Yes | No (use import()) |
+| **Tree-shaking** | No | Yes |
+| **Default** | module.exports | export default |
+
+## Enabling ES6 Modules
+
+### Method 1: package.json
+
+```json
+{
+  "type": "module"
+}
+```
+
+### Method 2: .mjs Extension
+
+```javascript
+// math.mjs
+export const add = (a, b) => a + b;
+
+// app.mjs
+import { add } from './math.mjs';
+```
+
+## Dynamic Import
+
+### ES6 Dynamic Import
+
+```javascript
+// Async import
+async function loadModule() {
+  const module = await import('./module.js');
+  module.doSomething();
+}
+
+// Conditional import
+if (condition) {
+  const { feature } = await import('./feature.js');
+  feature();
+}
+
+// Lazy loading
+button.addEventListener('click', async () => {
+  const { Chart } = await import('./chart.js');
+  new Chart();
+});
+```
+
+## Mixing Both Systems
+
+### Using require in ES6 Modules
+
+```javascript
+// Not directly possible
+// Use createRequire
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const data = require('./data.json');
+```
+
+### Using import in CommonJS
+
+```javascript
+// Use dynamic import
+async function loadESModule() {
+  const module = await import('./es-module.js');
+  return module.default;
+}
+```
+
+## File Extensions
+
+### CommonJS
+
+```javascript
+// .js files (default)
+const module = require('./module');
+const module = require('./module.js');
+```
+
+### ES6 Modules
+
+```javascript
+// Must include .js extension
+import module from './module.js';
+
+// .mjs for ES6 modules
+import module from './module.mjs';
+```
+
+## Export Patterns
+
+### CommonJS
+
+```javascript
+// Single export
+module.exports = class User {};
+
+// Multiple exports
+module.exports = {
+  add,
+  subtract,
+  multiply
+};
+
+// Named exports
+exports.name = 'John';
+exports.age = 30;
+```
+
+### ES6 Modules
+
+```javascript
+// Default export
+export default class User {}
+
+// Named exports
+export const add = (a, b) => a + b;
+export const subtract = (a, b) => a - b;
+
+// Export list
+const name = 'John';
+const age = 30;
+export { name, age };
+
+// Re-export
+export { add } from './math.js';
+export * from './utils.js';
+```
+
+## Performance Considerations
+
+### require()
+
+```javascript
+// Cached after first load
+const module1 = require('./module');
+const module2 = require('./module'); // Uses cache
+```
+
+### import
+
+```javascript
+// Static analysis enables tree-shaking
+import { usedFunction } from './module.js';
+// unusedFunction is removed during build
+```
+
+## Best Practices
+
+### Use ES6 Modules When:
+- Building modern applications
+- Need tree-shaking
+- Want better static analysis
+- Using modern build tools
+
+### Use CommonJS When:
+- Working with legacy code
+- Need dynamic imports at runtime
+- Using older Node.js versions
+- Conditional module loading
+
+## Migration Example
+
+### Before (CommonJS)
+
+```javascript
+// math.js
+function add(a, b) {
+  return a + b;
+}
+
+function subtract(a, b) {
+  return a - b;
+}
+
+module.exports = { add, subtract };
+
+// app.js
+const { add, subtract } = require('./math');
+```
+
+### After (ES6 Modules)
+
+```javascript
+// math.js
+export function add(a, b) {
+  return a + b;
+}
+
+export function subtract(a, b) {
+  return a - b;
+}
+
+// app.js
+import { add, subtract } from './math.js';
+```
+
+## Interview Tips
+
+- **Explain both systems**: CommonJS vs ES6 Modules
+- **Show syntax differences**: require vs import
+- **Discuss loading**: Synchronous vs asynchronous
+- **Mention tree-shaking**: ES6 advantage
+- **Show dynamic import**: Async import()
+- **Explain when to use each**: Use cases
+
+## Summary
+
+require() is CommonJS, synchronous, and dynamic. import is ES6 Modules, asynchronous, and static. ES6 modules enable tree-shaking and better optimization. Use ES6 for new projects, CommonJS for legacy compatibility. Enable ES6 with "type": "module" in package.json.

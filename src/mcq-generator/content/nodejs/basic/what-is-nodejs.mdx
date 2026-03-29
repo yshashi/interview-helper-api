@@ -1,0 +1,307 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: What is Node.js and How Does It Work?
+---
+
+# What is Node.js and How Does It Work?
+
+## What is Node.js?
+
+**Node.js** is an open-source, cross-platform JavaScript runtime environment that executes JavaScript code outside of a web browser. It's built on Chrome's V8 JavaScript engine and enables developers to use JavaScript for server-side programming.
+
+## Key Characteristics
+
+### 1. JavaScript Runtime
+- Executes JavaScript on the server
+- Built on V8 engine (same as Chrome)
+- Supports modern JavaScript features (ES6+)
+
+### 2. Event-Driven Architecture
+- Non-blocking I/O operations
+- Event loop for handling asynchronous operations
+- Efficient handling of concurrent requests
+
+### 3. Single-Threaded
+- Uses single thread with event loop
+- Handles multiple connections concurrently
+- Non-blocking operations prevent thread blocking
+
+## How Node.js Works
+
+### Architecture
+
+```
+┌─────────────────────────────────────┐
+│        JavaScript Code              │
+├─────────────────────────────────────┤
+│        Node.js APIs                 │
+├─────────────────────────────────────┤
+│        V8 Engine                    │
+├─────────────────────────────────────┤
+│        libuv (Event Loop)           │
+├─────────────────────────────────────┤
+│     Operating System (I/O)          │
+└─────────────────────────────────────┘
+```
+
+### V8 Engine
+```javascript
+// V8 compiles JavaScript to machine code
+function add(a, b) {
+  return a + b;
+}
+
+// V8 optimizes frequently called functions
+for (let i = 0; i < 1000000; i++) {
+  add(i, i + 1);
+}
+```
+
+### Event Loop
+```javascript
+console.log('1. Start');
+
+setTimeout(() => {
+  console.log('2. Timeout callback');
+}, 0);
+
+Promise.resolve().then(() => {
+  console.log('3. Promise callback');
+});
+
+console.log('4. End');
+
+// Output:
+// 1. Start
+// 4. End
+// 3. Promise callback
+// 2. Timeout callback
+```
+
+## Basic Example
+
+### Simple HTTP Server
+
+```javascript
+const http = require('http');
+
+const server = http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end('Hello, Node.js!');
+});
+
+server.listen(3000, () => {
+  console.log('Server running at http://localhost:3000/');
+});
+```
+
+### File Operations
+
+```javascript
+const fs = require('fs');
+
+// Asynchronous file read
+fs.readFile('example.txt', 'utf8', (err, data) => {
+  if (err) {
+    console.error('Error reading file:', err);
+    return;
+  }
+  console.log('File contents:', data);
+});
+
+console.log('Reading file...'); // Executes immediately
+```
+
+## Core Features
+
+### 1. Non-Blocking I/O
+
+```javascript
+// Blocking (synchronous)
+const data = fs.readFileSync('large-file.txt');
+console.log(data);
+console.log('Next operation'); // Waits for file read
+
+// Non-blocking (asynchronous)
+fs.readFile('large-file.txt', (err, data) => {
+  console.log(data);
+});
+console.log('Next operation'); // Executes immediately
+```
+
+### 2. Module System
+
+```javascript
+// CommonJS modules
+const express = require('express');
+const { readFile } = require('fs');
+
+// ES6 modules (with type: "module" in package.json)
+import express from 'express';
+import { readFile } from 'fs';
+```
+
+### 3. NPM Ecosystem
+
+```bash
+# Initialize project
+npm init -y
+
+# Install packages
+npm install express
+npm install --save-dev nodemon
+
+# Run scripts
+npm start
+npm test
+```
+
+## Use Cases
+
+### 1. Web Servers
+
+```javascript
+const express = require('express');
+const app = express();
+
+app.get('/', (req, res) => {
+  res.send('Hello World!');
+});
+
+app.listen(3000);
+```
+
+### 2. REST APIs
+
+```javascript
+app.get('/api/users', async (req, res) => {
+  const users = await User.find();
+  res.json(users);
+});
+
+app.post('/api/users', async (req, res) => {
+  const user = await User.create(req.body);
+  res.status(201).json(user);
+});
+```
+
+### 3. Real-Time Applications
+
+```javascript
+const io = require('socket.io')(server);
+
+io.on('connection', (socket) => {
+  console.log('User connected');
+  
+  socket.on('message', (msg) => {
+    io.emit('message', msg);
+  });
+});
+```
+
+### 4. Microservices
+
+```javascript
+const express = require('express');
+const app = express();
+
+// User service
+app.get('/users/:id', async (req, res) => {
+  const user = await getUserById(req.params.id);
+  res.json(user);
+});
+
+app.listen(3001);
+```
+
+## Advantages
+
+1. **JavaScript Everywhere**: Same language for frontend and backend
+2. **High Performance**: V8 engine and non-blocking I/O
+3. **Scalability**: Event-driven architecture handles many connections
+4. **Large Ecosystem**: NPM has millions of packages
+5. **Active Community**: Large developer community and resources
+6. **Cross-Platform**: Runs on Windows, Linux, macOS
+
+## Disadvantages
+
+1. **Single-Threaded**: CPU-intensive tasks can block event loop
+2. **Callback Hell**: Nested callbacks can be hard to manage
+3. **Immature Tools**: Some tools less mature than other platforms
+4. **API Instability**: Frequent changes in earlier versions
+
+## When to Use Node.js
+
+### Good For:
+- Real-time applications (chat, gaming)
+- REST APIs and microservices
+- Streaming applications
+- Single-page applications
+- I/O intensive applications
+
+### Not Ideal For:
+- CPU-intensive operations
+- Heavy computational tasks
+- Applications requiring multi-threading
+
+## Basic Setup
+
+### Installation
+
+```bash
+# Check Node.js version
+node --version
+
+# Check npm version
+npm --version
+
+# Run JavaScript file
+node app.js
+
+# Interactive REPL
+node
+```
+
+### Hello World
+
+```javascript
+// app.js
+console.log('Hello, Node.js!');
+
+// Run: node app.js
+```
+
+### Package.json
+
+```json
+{
+  "name": "my-app",
+  "version": "1.0.0",
+  "description": "My Node.js application",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.0"
+  },
+  "devDependencies": {
+    "nodemon": "^2.0.0"
+  }
+}
+```
+
+## Interview Tips
+
+- **Explain event-driven architecture**: Non-blocking I/O and event loop
+- **Describe V8 engine**: Compiles JavaScript to machine code
+- **Discuss single-threaded nature**: How it handles concurrency
+- **Mention use cases**: Real-time apps, APIs, microservices
+- **Show basic example**: Simple HTTP server or file operations
+- **Explain advantages**: Performance, scalability, JavaScript everywhere
+- **Discuss limitations**: CPU-intensive tasks, callback complexity
+
+## Summary
+
+Node.js is a JavaScript runtime built on Chrome's V8 engine that enables server-side JavaScript execution. It uses an event-driven, non-blocking I/O model that makes it lightweight and efficient for building scalable network applications. Perfect for real-time applications, REST APIs, and microservices.

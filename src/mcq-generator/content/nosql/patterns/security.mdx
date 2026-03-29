@@ -1,0 +1,584 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Security Best Practices
+---
+
+# Security Best Practices
+
+## Authentication
+
+### MongoDB Authentication
+
+```javascript
+// Enable authentication
+// mongod.conf
+security:
+  authorization: enabled
+
+// Create admin user
+use admin
+db.createUser({
+  user: "admin",
+  pwd: "securePassword",
+  roles: ["userAdminAnyDatabase", "dbAdminAnyDatabase", "readWriteAnyDatabase"]
+});
+
+// Create application user
+use myapp
+db.createUser({
+  user: "appUser",
+  pwd: "appPassword",
+  roles: [
+    { role: "readWrite", db: "myapp" }
+  ]
+});
+
+// Connect with authentication
+const { MongoClient } = require('mongodb');
+
+const client = new MongoClient(
+  'mongodb://appUser:appPassword@localhost:27017/myapp',
+  {
+    authSource: 'myapp',
+    authMechanism: 'SCRAM-SHA-256'
+  }
+);
+```
+
+### Role-Based Access Control
+
+```javascript
+// Create custom role
+db.createRole({
+  role: "dataAnalyst",
+  privileges: [
+    {
+      resource: { db: "myapp", collection: "analytics" },
+      actions: ["find", "aggregate"]
+    }
+  ],
+  roles: []
+});
+
+// Assign role to user
+db.grantRolesToUser("analyst", ["dataAnalyst"]);
+
+// Revoke role
+db.revokeRolesFromUser("analyst", ["dataAnalyst"]);
+```
+
+## Encryption
+
+### Encryption at Rest
+
+```javascript
+// MongoDB encryption at rest
+// mongod.conf
+security:
+  enableEncryption: true
+  encryptionKeyFile: /path/to/keyfile
+
+// Client-side field level encryption
+const { ClientEncryption } = require('mongodb-client-encryption');
+
+const encryption = new ClientEncryption(client, {
+  keyVaultNamespace: 'encryption.__keyVault',
+  kmsProviders: {
+    local: {
+      key: Buffer.from(process.env.MASTER_KEY, 'base64')
+    }
+  }
+});
+
+// Encrypt field
+const encryptedSSN = await encryption.encrypt(
+  '123-45-6789',
+  {
+    algorithm: 'AEAD_AES_256_CBC_HMAC_SHA_512-Deterministic',
+    keyId: dataKeyId
+  }
+);
+
+await db.collection('users').insertOne({
+  name: 'John Doe',
+  ssn: encryptedSSN
+});
+```
+
+### Encryption in Transit
+
+```javascript
+// TLS/SSL connection
+const client = new MongoClient(
+  'mongodb://localhost:27017/myapp',
+  {
+    tls: true,
+    tlsCertificateKeyFile: '/path/to/client.pem',
+    tlsCAFile: '/path/to/ca.pem'
+  }
+);
+
+// DynamoDB with HTTPS
+const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
+
+const client = new DynamoDBClient({
+  region: 'us-east-1',
+  endpoint: 'https://dynamodb.us-east-1.amazonaws.com'
+});
+```
+
+## Input Validation
+
+```javascript
+// Validate and sanitize input
+class UserService {
+  async createUser(userData) {
+    // Validate input
+    if (!this.isValidEmail(userData.email)) {
+      throw new Error('Invalid email');
+    }
+    
+    if (!this.isValidName(userData.name)) {
+      throw new Error('Invalid name');
+    }
+    
+    // Sanitize input
+    const sanitized = {
+      name: this.sanitize(userData.name),
+      email: this.sanitize(userData.email).toLowerCase(),
+      age: parseInt(userData.age)
+    };
+    
+    // Use parameterized queries
+    await db.collection('users').insertOne(sanitized);
+  }
+  
+  isValidEmail(email) {
+    const regex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return regex.test(email);
+  }
+  
+  isValidName(name) {
+    return typeof name === 'string' && name.length > 0 && name.length < 100;
+  }
+  
+  sanitize(input) {
+    return input.trim().replace(/[<>]/g, '');
+  }
+}
+```
+
+## NoSQL Injection Prevention
+
+```javascript
+// ❌ Bad: Vulnerable to injection
+app.post('/login', async (req, res) => {
+  const user = await db.collection('users').findOne({
+    username: req.body.username,
+    password: req.body.password
+  });
+});
+
+// Attack: { "username": { "$ne": null }, "password": { "$ne": null } }
+
+// ✅ Good: Validate input types
+app.post('/login', async (req, res) => {
+  if (typeof req.body.username !== 'string' || 
+      typeof req.body.password !== 'string') {
+    return res.status(400).json({ error: 'Invalid input' });
+  }
+  
+  const user = await db.collection('users').findOne({
+    username: req.body.username,
+    password: req.body.password
+  });
+});
+
+// ✅ Better: Use schema validation
+const Joi = require('joi');
+
+const loginSchema = Joi.object({
+  username: Joi.string().alphanum().min(3).max(30).required(),
+  password: Joi.string().min(8).required()
+});
+
+app.post('/login', async (req, res) => {
+  const { error, value } = loginSchema.validate(req.body);
+  if (error) {
+    return res.status(400).json({ error: error.details[0].message });
+  }
+  
+  const user = await db.collection('users').findOne({
+    username: value.username,
+    password: value.password
+  });
+});
+```
+
+## Password Security
+
+```javascript
+const bcrypt = require('bcrypt');
+
+class AuthService {
+  async createUser(username, password) {
+    // Hash password
+    const saltRounds = 12;
+    const hashedPassword = await bcrypt.hash(password, saltRounds);
+    
+    await db.collection('users').insertOne({
+      username,
+      password: hashedPassword,
+      createdAt: new Date()
+    });
+  }
+  
+  async verifyPassword(username, password) {
+    const user = await db.collection('users').findOne({ username });
+    
+    if (!user) {
+      return false;
+    }
+    
+    return await bcrypt.compare(password, user.password);
+  }
+}
+```
+
+## API Key Management
+
+```javascript
+// Store API keys securely
+class APIKeyService {
+  async createAPIKey(userId) {
+    const crypto = require('crypto');
+    const apiKey = crypto.randomBytes(32).toString('hex');
+    const hashedKey = crypto.createHash('sha256').update(apiKey).digest('hex');
+    
+    await db.collection('api_keys').insertOne({
+      userId,
+      keyHash: hashedKey,
+      createdAt: new Date(),
+      lastUsed: null
+    });
+    
+    // Return unhashed key only once
+    return apiKey;
+  }
+  
+  async validateAPIKey(apiKey) {
+    const crypto = require('crypto');
+    const hashedKey = crypto.createHash('sha256').update(apiKey).digest('hex');
+    
+    const key = await db.collection('api_keys').findOne({ keyHash: hashedKey });
+    
+    if (key) {
+      // Update last used
+      await db.collection('api_keys').updateOne(
+        { _id: key._id },
+        { $set: { lastUsed: new Date() } }
+      );
+      return key.userId;
+    }
+    
+    return null;
+  }
+}
+```
+
+## Rate Limiting
+
+```javascript
+const redis = require('redis');
+const redisClient = redis.createClient();
+await redisClient.connect();
+
+class RateLimiter {
+  async checkLimit(userId, limit = 100, window = 60) {
+    const key = `ratelimit:${userId}`;
+    const now = Date.now();
+    const windowStart = now - (window * 1000);
+    
+    // Remove old entries
+    await redisClient.zRemRangeByScore(key, 0, windowStart);
+    
+    // Count requests in window
+    const count = await redisClient.zCard(key);
+    
+    if (count >= limit) {
+      return { allowed: false, remaining: 0, resetAt: windowStart + (window * 1000) };
+    }
+    
+    // Add current request
+    await redisClient.zAdd(key, [{ score: now, value: `${now}-${Math.random()}` }]);
+    await redisClient.expire(key, window);
+    
+    return { allowed: true, remaining: limit - count - 1 };
+  }
+}
+
+// Express middleware
+app.use(async (req, res, next) => {
+  const userId = req.user?.id || req.ip;
+  const result = await rateLimiter.checkLimit(userId);
+  
+  if (!result.allowed) {
+    return res.status(429).json({
+      error: 'Too many requests',
+      resetAt: result.resetAt
+    });
+  }
+  
+  res.set('X-RateLimit-Remaining', result.remaining);
+  next();
+});
+```
+
+## Audit Logging
+
+```javascript
+class AuditLogger {
+  async logAccess(userId, action, resource, result) {
+    await db.collection('audit_log').insertOne({
+      userId,
+      action,
+      resource,
+      result,
+      timestamp: new Date(),
+      ip: req.ip,
+      userAgent: req.get('user-agent')
+    });
+  }
+  
+  async logDataChange(userId, collection, documentId, changes) {
+    await db.collection('audit_log').insertOne({
+      type: 'data_change',
+      userId,
+      collection,
+      documentId,
+      changes,
+      timestamp: new Date()
+    });
+  }
+}
+
+// Middleware
+app.use(async (req, res, next) => {
+  const originalSend = res.send;
+  
+  res.send = function(data) {
+    auditLogger.logAccess(
+      req.user?.id,
+      req.method,
+      req.path,
+      res.statusCode
+    );
+    
+    originalSend.call(this, data);
+  };
+  
+  next();
+});
+```
+
+## Network Security
+
+```javascript
+// IP Whitelist
+const allowedIPs = ['192.168.1.100', '10.0.0.50'];
+
+app.use((req, res, next) => {
+  const clientIP = req.ip;
+  
+  if (!allowedIPs.includes(clientIP)) {
+    return res.status(403).json({ error: 'Access denied' });
+  }
+  
+  next();
+});
+
+// MongoDB IP binding
+// mongod.conf
+net:
+  bindIp: 127.0.0.1,192.168.1.100
+
+// Firewall rules (iptables)
+// Allow only specific IPs to MongoDB port
+// iptables -A INPUT -p tcp --dport 27017 -s 192.168.1.100 -j ACCEPT
+// iptables -A INPUT -p tcp --dport 27017 -j DROP
+```
+
+## Data Masking
+
+```javascript
+class DataMaskingService {
+  maskSensitiveData(user) {
+    return {
+      ...user,
+      ssn: this.maskSSN(user.ssn),
+      creditCard: this.maskCreditCard(user.creditCard),
+      email: this.maskEmail(user.email)
+    };
+  }
+  
+  maskSSN(ssn) {
+    return ssn ? `***-**-${ssn.slice(-4)}` : null;
+  }
+  
+  maskCreditCard(card) {
+    return card ? `****-****-****-${card.slice(-4)}` : null;
+  }
+  
+  maskEmail(email) {
+    const [local, domain] = email.split('@');
+    return `${local[0]}***@${domain}`;
+  }
+}
+
+// API response
+app.get('/users/:id', async (req, res) => {
+  const user = await db.collection('users').findOne({ _id: req.params.id });
+  
+  // Mask sensitive data for non-admin users
+  if (!req.user.isAdmin) {
+    const masked = dataMaskingService.maskSensitiveData(user);
+    return res.json(masked);
+  }
+  
+  res.json(user);
+});
+```
+
+## Backup Security
+
+```javascript
+// Encrypted backups
+const { exec } = require('child_process');
+const crypto = require('crypto');
+
+class BackupService {
+  async createEncryptedBackup() {
+    const timestamp = new Date().toISOString();
+    const backupFile = `backup-${timestamp}.gz`;
+    const encryptedFile = `${backupFile}.enc`;
+    
+    // Create backup
+    await this.execPromise(`mongodump --archive=${backupFile} --gzip`);
+    
+    // Encrypt backup
+    const password = process.env.BACKUP_PASSWORD;
+    await this.execPromise(
+      `openssl enc -aes-256-cbc -salt -in ${backupFile} -out ${encryptedFile} -k ${password}`
+    );
+    
+    // Remove unencrypted backup
+    await this.execPromise(`rm ${backupFile}`);
+    
+    // Upload to secure storage
+    await this.uploadToS3(encryptedFile);
+  }
+  
+  execPromise(command) {
+    return new Promise((resolve, reject) => {
+      exec(command, (error, stdout, stderr) => {
+        if (error) reject(error);
+        else resolve(stdout);
+      });
+    });
+  }
+}
+```
+
+## .NET Security
+
+```csharp
+using MongoDB.Driver;
+using System.Security.Cryptography;
+
+public class SecurityService
+{
+    private readonly IMongoCollection<User> _users;
+    
+    public async Task<User> CreateUser(string username, string password)
+    {
+        // Hash password
+        using var sha256 = SHA256.Create();
+        var hashedPassword = Convert.ToBase64String(
+            sha256.ComputeHash(Encoding.UTF8.GetBytes(password))
+        );
+        
+        var user = new User
+        {
+            Username = username,
+            Password = hashedPassword,
+            CreatedAt = DateTime.UtcNow
+        };
+        
+        await _users.InsertOneAsync(user);
+        return user;
+    }
+    
+    public async Task<bool> ValidateUser(string username, string password)
+    {
+        using var sha256 = SHA256.Create();
+        var hashedPassword = Convert.ToBase64String(
+            sha256.ComputeHash(Encoding.UTF8.GetBytes(password))
+        );
+        
+        var user = await _users.Find(u => 
+            u.Username == username && 
+            u.Password == hashedPassword
+        ).FirstOrDefaultAsync();
+        
+        return user != null;
+    }
+    
+    // Prevent NoSQL injection
+    public async Task<User> GetUserSafe(string username)
+    {
+        // Validate input
+        if (string.IsNullOrWhiteSpace(username) || username.Length > 50)
+        {
+            throw new ArgumentException("Invalid username");
+        }
+        
+        var filter = Builders<User>.Filter.Eq(u => u.Username, username);
+        return await _users.Find(filter).FirstOrDefaultAsync();
+    }
+}
+```
+
+## Security Checklist
+
+```javascript
+const securityChecklist = [
+  'Enable authentication',
+  'Use role-based access control',
+  'Encrypt data at rest',
+  'Encrypt data in transit (TLS/SSL)',
+  'Validate and sanitize all input',
+  'Prevent NoSQL injection',
+  'Hash passwords with bcrypt',
+  'Implement rate limiting',
+  'Enable audit logging',
+  'Use IP whitelisting',
+  'Mask sensitive data in responses',
+  'Encrypt backups',
+  'Rotate credentials regularly',
+  'Keep software updated',
+  'Monitor for suspicious activity'
+];
+```
+
+## Interview Tips
+
+- **Explain authentication**: RBAC, user management
+- **Show encryption**: At rest, in transit, field-level
+- **Demonstrate injection prevention**: Input validation
+- **Discuss password security**: Hashing with bcrypt
+- **Mention rate limiting**: Prevent abuse
+- **Show audit logging**: Track access and changes
+
+## Summary
+
+Secure NoSQL databases with authentication, role-based access control, and encryption (at rest and in transit). Validate and sanitize all input to prevent NoSQL injection. Hash passwords with bcrypt. Implement rate limiting to prevent abuse. Enable audit logging for compliance. Use IP whitelisting and network security. Mask sensitive data in responses. Encrypt backups. Rotate credentials regularly. Monitor for suspicious activity. Essential for production NoSQL security.

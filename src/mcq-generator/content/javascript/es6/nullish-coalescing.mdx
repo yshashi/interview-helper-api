@@ -1,0 +1,480 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Nullish Coalescing in JavaScript
+---
+
+# Nullish Coalescing in JavaScript
+
+## What is Nullish Coalescing?
+
+The nullish coalescing operator (`??`) is an ES2020 feature that returns the right-hand operand when the left-hand operand is `null` or `undefined`, and otherwise returns the left-hand operand.
+
+## Syntax
+
+```javascript
+leftExpression ?? rightExpression
+```
+
+## Basic Usage
+
+```javascript
+const value1 = null ?? 'default';
+console.log(value1); // 'default'
+
+const value2 = undefined ?? 'default';
+console.log(value2); // 'default'
+
+const value3 = 'actual value' ?? 'default';
+console.log(value3); // 'actual value'
+
+const value4 = 0 ?? 'default';
+console.log(value4); // 0 (not 'default')
+
+const value5 = '' ?? 'default';
+console.log(value5); // '' (not 'default')
+
+const value6 = false ?? 'default';
+console.log(value6); // false (not 'default')
+```
+
+## Nullish vs Falsy
+
+### The Key Difference
+
+```javascript
+// Falsy values in JavaScript:
+// false, 0, -0, 0n, '', null, undefined, NaN
+
+// OR operator (||) treats ALL falsy values as "no value"
+console.log(0 || 'default');     // 'default'
+console.log('' || 'default');    // 'default'
+console.log(false || 'default'); // 'default'
+console.log(null || 'default');  // 'default'
+
+// Nullish coalescing (??) only treats null and undefined as "no value"
+console.log(0 ?? 'default');     // 0
+console.log('' ?? 'default');    // ''
+console.log(false ?? 'default'); // false
+console.log(null ?? 'default');  // 'default'
+```
+
+### When This Matters
+
+```javascript
+// User settings example
+const userSettings = {
+  notifications: false,  // User explicitly disabled
+  volume: 0,            // User set to mute
+  theme: '',            // User cleared theme
+  language: null        // Not set
+};
+
+// Using OR (||) - WRONG
+const notifications = userSettings.notifications || true;  // true (wrong!)
+const volume = userSettings.volume || 50;                  // 50 (wrong!)
+const theme = userSettings.theme || 'dark';               // 'dark' (wrong!)
+const language = userSettings.language || 'en';           // 'en' (correct)
+
+// Using nullish coalescing (??) - CORRECT
+const notifications2 = userSettings.notifications ?? true;  // false (correct!)
+const volume2 = userSettings.volume ?? 50;                  // 0 (correct!)
+const theme2 = userSettings.theme ?? 'dark';               // '' (correct!)
+const language2 = userSettings.language ?? 'en';           // 'en' (correct)
+```
+
+## Practical Examples
+
+### 1. Configuration with Defaults
+
+```javascript
+function createConfig(options) {
+  return {
+    host: options?.host ?? 'localhost',
+    port: options?.port ?? 3000,
+    debug: options?.debug ?? false,
+    timeout: options?.timeout ?? 5000,
+    retries: options?.retries ?? 3,
+    cache: options?.cache ?? true
+  };
+}
+
+// All defaults
+console.log(createConfig({}));
+// { host: 'localhost', port: 3000, debug: false, ... }
+
+// With explicit false/0 values
+console.log(createConfig({ port: 0, debug: false, cache: false }));
+// { host: 'localhost', port: 0, debug: false, cache: false, ... }
+
+// With OR operator (wrong)
+function createConfigWrong(options) {
+  return {
+    port: options?.port || 3000,  // 0 becomes 3000 (wrong!)
+    debug: options?.debug || false // false stays false (but for wrong reason)
+  };
+}
+```
+
+### 2. API Response Handling
+
+```javascript
+async function fetchUserData(userId) {
+  const response = await fetch(`/api/users/${userId}`);
+  const data = await response.json();
+  
+  return {
+    name: data.name ?? 'Anonymous',
+    age: data.age ?? 0,                    // 0 is valid age
+    email: data.email ?? 'no-email@example.com',
+    isActive: data.isActive ?? true,
+    score: data.score ?? 0,                // 0 is valid score
+    bio: data.bio ?? 'No bio available'
+  };
+}
+```
+
+### 3. Form Input Handling
+
+```javascript
+function processFormData(formData) {
+  // Handle empty strings vs null/undefined
+  const username = formData.username ?? '';
+  const email = formData.email ?? '';
+  const age = formData.age ?? null;
+  const newsletter = formData.newsletter ?? false;
+  
+  // Validate
+  const errors = [];
+  
+  if (username.trim() === '') {
+    errors.push('Username is required');
+  }
+  
+  if (email.trim() === '') {
+    errors.push('Email is required');
+  }
+  
+  return { username, email, age, newsletter, errors };
+}
+
+// Empty form
+console.log(processFormData({}));
+// { username: '', email: '', age: null, newsletter: false, errors: [...] }
+
+// Partial form
+console.log(processFormData({ username: 'john', age: 0 }));
+// { username: 'john', email: '', age: 0, newsletter: false, errors: [...] }
+```
+
+### 4. Database Query Results
+
+```javascript
+function formatUser(dbResult) {
+  return {
+    id: dbResult.id,
+    name: dbResult.name ?? 'Unknown User',
+    email: dbResult.email ?? null,
+    loginCount: dbResult.login_count ?? 0,      // 0 is valid
+    lastLogin: dbResult.last_login ?? null,
+    isVerified: dbResult.is_verified ?? false,  // false is valid
+    role: dbResult.role ?? 'user'
+  };
+}
+```
+
+### 5. Local Storage with Defaults
+
+```javascript
+function getStoredValue(key, defaultValue) {
+  const stored = localStorage.getItem(key);
+  
+  // Parse JSON if it's a string
+  if (stored !== null) {
+    try {
+      return JSON.parse(stored);
+    } catch {
+      return stored;
+    }
+  }
+  
+  return defaultValue;
+}
+
+// Usage
+const theme = getStoredValue('theme', 'light');
+const volume = getStoredValue('volume', 50);
+const autoplay = getStoredValue('autoplay', true);
+
+// Store values
+function setStoredValue(key, value) {
+  const stringValue = typeof value === 'string' 
+    ? value 
+    : JSON.stringify(value);
+  localStorage.setItem(key, stringValue);
+}
+```
+
+## Chaining with Optional Chaining
+
+```javascript
+const user = {
+  profile: {
+    settings: {
+      theme: null,
+      notifications: false
+    }
+  }
+};
+
+// Combine optional chaining with nullish coalescing
+const theme = user?.profile?.settings?.theme ?? 'default';
+const notifications = user?.profile?.settings?.notifications ?? true;
+const language = user?.profile?.settings?.language ?? 'en';
+
+console.log(theme);         // 'default'
+console.log(notifications); // false (not true!)
+console.log(language);      // 'en'
+```
+
+## Multiple Nullish Coalescing
+
+```javascript
+// Chain multiple nullish coalescing operators
+const value = option1 ?? option2 ?? option3 ?? 'default';
+
+// Practical example: fallback chain
+function getConfig(env) {
+  const config = {
+    apiUrl: env.API_URL ?? process.env.API_URL ?? 'http://localhost:3000',
+    apiKey: env.API_KEY ?? process.env.API_KEY ?? null,
+    timeout: env.TIMEOUT ?? process.env.TIMEOUT ?? 5000
+  };
+  
+  return config;
+}
+```
+
+## Assignment with Nullish Coalescing
+
+### Nullish Coalescing Assignment (??=)
+
+```javascript
+let config = {
+  host: 'localhost',
+  port: null
+};
+
+// Only assign if current value is null or undefined
+config.host ??= 'default-host';  // No change (already has value)
+config.port ??= 3000;            // Assigns 3000 (was null)
+config.timeout ??= 5000;         // Assigns 5000 (didn't exist)
+
+console.log(config);
+// { host: 'localhost', port: 3000, timeout: 5000 }
+
+// Compare with OR assignment (||=)
+let settings = {
+  volume: 0,
+  muted: false
+};
+
+settings.volume ||= 50;   // Assigns 50 (0 is falsy)
+settings.muted ||= true;  // Assigns true (false is falsy)
+
+// Better with ??=
+settings.volume ??= 50;   // No change (0 is not null/undefined)
+settings.muted ??= true;  // No change (false is not null/undefined)
+```
+
+## Common Patterns
+
+### 1. Function Parameters with Defaults
+
+```javascript
+function createUser(options = {}) {
+  return {
+    name: options.name ?? 'Anonymous',
+    age: options.age ?? null,
+    isActive: options.isActive ?? true,
+    role: options.role ?? 'user',
+    permissions: options.permissions ?? []
+  };
+}
+
+// Works with explicit false/0 values
+const user1 = createUser({ age: 0, isActive: false });
+console.log(user1);
+// { name: 'Anonymous', age: 0, isActive: false, role: 'user', permissions: [] }
+```
+
+### 2. Pagination Defaults
+
+```javascript
+function getPaginationParams(query) {
+  return {
+    page: parseInt(query.page) || 1,           // Use || for page (0 is invalid)
+    limit: parseInt(query.limit) ?? 10,        // Use ?? for limit (0 might be valid)
+    offset: parseInt(query.offset) ?? 0,       // Use ?? for offset (0 is valid)
+    sortBy: query.sortBy ?? 'createdAt',
+    order: query.order ?? 'desc'
+  };
+}
+```
+
+### 3. Feature Flags
+
+```javascript
+const features = {
+  newUI: null,           // Not decided
+  darkMode: false,       // Explicitly disabled
+  analytics: true,       // Enabled
+  betaFeatures: undefined // Not set
+};
+
+function isFeatureEnabled(featureName) {
+  // Use ?? to respect explicit false values
+  return features[featureName] ?? false;
+}
+
+console.log(isFeatureEnabled('newUI'));        // false (default)
+console.log(isFeatureEnabled('darkMode'));     // false (explicit)
+console.log(isFeatureEnabled('analytics'));    // true
+console.log(isFeatureEnabled('betaFeatures')); // false (default)
+```
+
+### 4. Error Messages
+
+```javascript
+function displayError(error) {
+  const message = error?.message ?? 'An unknown error occurred';
+  const code = error?.code ?? 'UNKNOWN_ERROR';
+  const details = error?.details ?? null;
+  
+  console.error(`[${code}] ${message}`);
+  
+  if (details) {
+    console.error('Details:', details);
+  }
+}
+```
+
+## Edge Cases
+
+### 1. With Numbers
+
+```javascript
+const count = 0;
+const defaultCount = 10;
+
+// Wrong: treats 0 as "no value"
+const result1 = count || defaultCount; // 10
+
+// Correct: 0 is a valid value
+const result2 = count ?? defaultCount; // 0
+```
+
+### 2. With Booleans
+
+```javascript
+const isEnabled = false;
+
+// Wrong: treats false as "no value"
+const result1 = isEnabled || true; // true
+
+// Correct: false is a valid value
+const result2 = isEnabled ?? true; // false
+```
+
+### 3. With Empty Strings
+
+```javascript
+const userInput = '';
+
+// Wrong: treats empty string as "no value"
+const result1 = userInput || 'default'; // 'default'
+
+// Correct: empty string is a valid value
+const result2 = userInput ?? 'default'; // ''
+
+// When you actually want to treat empty string as "no value"
+const result3 = userInput || 'default'; // Use || intentionally
+// Or be explicit
+const result4 = (userInput !== null && userInput !== undefined && userInput !== '') 
+  ? userInput 
+  : 'default';
+```
+
+### 4. Cannot Mix with && or ||
+
+```javascript
+// This is INVALID - causes SyntaxError
+// const result = value1 ?? value2 || value3;
+
+// Must use parentheses
+const result = (value1 ?? value2) || value3;
+// or
+const result2 = value1 ?? (value2 || value3);
+```
+
+## Performance Considerations
+
+```javascript
+// Nullish coalescing is very efficient
+// It short-circuits - right side only evaluated if needed
+
+let expensiveCallCount = 0;
+
+function expensiveOperation() {
+  expensiveCallCount++;
+  return 'expensive result';
+}
+
+const value = 'exists';
+const result = value ?? expensiveOperation();
+
+console.log(result); // 'exists'
+console.log(expensiveCallCount); // 0 (function not called)
+```
+
+## Browser Support
+
+```javascript
+// Nullish coalescing is supported in:
+// - Chrome 80+
+// - Firefox 72+
+// - Safari 13.1+
+// - Edge 80+
+// - Node.js 14+
+
+// Babel transpilation example:
+// Input:
+const value = input ?? 'default';
+
+// Output (simplified):
+const value = input !== null && input !== void 0 ? input : 'default';
+```
+
+## Best Practices
+
+1. **Use ?? for optional values**: When `null`/`undefined` means "no value"
+2. **Use || for validation**: When any falsy value should trigger default
+3. **Be explicit with empty strings**: Decide if `''` is valid or not
+4. **Document your choice**: Make it clear why you chose ?? vs ||
+5. **Combine with optional chaining**: `obj?.prop ?? default`
+6. **Use ??= for lazy initialization**: Only assign if null/undefined
+7. **Consider TypeScript**: Better type safety with nullish coalescing
+
+## Interview Tips
+
+- **Explain the difference** between ?? and ||
+- **Show falsy vs nullish** with concrete examples
+- **Demonstrate practical use cases**: Settings, API responses, form data
+- **Discuss when to use each**: ?? for optional, || for validation
+- **Mention short-circuit evaluation**: Right side only evaluated if needed
+- **Show combination with ?.**: Optional chaining + nullish coalescing
+- **Explain ??= operator**: Nullish coalescing assignment
+- **Discuss edge cases**: Empty strings, 0, false values
+
+## Summary
+
+The nullish coalescing operator (`??`) provides a precise way to handle default values by only treating `null` and `undefined` as "no value", unlike the OR operator (`||`) which treats all falsy values the same way. This is crucial when working with boolean flags, numeric values like 0, or empty strings that are intentionally set by users. Combined with optional chaining (`?.`), it creates a powerful pattern for safely accessing and providing defaults for potentially missing data.

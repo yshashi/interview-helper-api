@@ -1,0 +1,331 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Microservices Deployment Best Practices
+---
+
+# Microservices Deployment Best Practices
+
+## Containerization
+
+```dockerfile
+# Multi-stage build for smaller images
+FROM node:18-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --only=production
+COPY . .
+RUN npm run build
+
+FROM node:18-alpine
+WORKDIR /app
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/node_modules ./node_modules
+EXPOSE 3000
+CMD ["node", "dist/index.js"]
+```
+
+## Blue-Green Deployment
+
+```yaml
+# Blue deployment (current)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-service-blue
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: user-service
+      version: blue
+  template:
+    metadata:
+      labels:
+        app: user-service
+        version: blue
+    spec:
+      containers:
+        - name: user-service
+          image: user-service:v1
+
+---
+# Green deployment (new)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-service-green
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: user-service
+      version: green
+  template:
+    metadata:
+      labels:
+        app: user-service
+        version: green
+    spec:
+      containers:
+        - name: user-service
+          image: user-service:v2
+
+---
+# Service switches between blue and green
+apiVersion: v1
+kind: Service
+metadata:
+  name: user-service
+spec:
+  selector:
+    app: user-service
+    version: blue  # Switch to 'green' when ready
+  ports:
+    - port: 80
+      targetPort: 3000
+```
+
+## Canary Deployment
+
+```yaml
+# Stable version (90% traffic)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-service-stable
+spec:
+  replicas: 9
+  selector:
+    matchLabels:
+      app: user-service
+      track: stable
+  template:
+    metadata:
+      labels:
+        app: user-service
+        track: stable
+    spec:
+      containers:
+        - name: user-service
+          image: user-service:v1
+
+---
+# Canary version (10% traffic)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-service-canary
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: user-service
+      track: canary
+  template:
+    metadata:
+      labels:
+        app: user-service
+        track: canary
+    spec:
+      containers:
+        - name: user-service
+          image: user-service:v2
+
+---
+# Service load balances across both
+apiVersion: v1
+kind: Service
+metadata:
+  name: user-service
+spec:
+  selector:
+    app: user-service
+  ports:
+    - port: 80
+      targetPort: 3000
+```
+
+## Rolling Update
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-service
+spec:
+  replicas: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1        # Max 1 extra pod during update
+      maxUnavailable: 0  # No downtime
+  selector:
+    matchLabels:
+      app: user-service
+  template:
+    metadata:
+      labels:
+        app: user-service
+    spec:
+      containers:
+        - name: user-service
+          image: user-service:v2
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+```
+
+## CI/CD Pipeline
+
+```yaml
+# GitHub Actions
+name: Deploy Microservice
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      
+      - name: Build Docker image
+        run: docker build -t user-service:${{ github.sha }} .
+      
+      - name: Push to registry
+        run: |
+          docker tag user-service:${{ github.sha }} registry.io/user-service:${{ github.sha }}
+          docker push registry.io/user-service:${{ github.sha }}
+      
+      - name: Deploy to Kubernetes
+        run: |
+          kubectl set image deployment/user-service \
+            user-service=registry.io/user-service:${{ github.sha }}
+      
+      - name: Wait for rollout
+        run: kubectl rollout status deployment/user-service
+      
+      - name: Run smoke tests
+        run: npm run test:smoke
+```
+
+## Health Checks
+
+```javascript
+// Liveness probe
+app.get('/health/live', (req, res) => {
+  res.status(200).json({ status: 'alive' });
+});
+
+// Readiness probe
+app.get('/health/ready', async (req, res) => {
+  try {
+    await db.ping();
+    await cache.ping();
+    res.status(200).json({ status: 'ready' });
+  } catch (error) {
+    res.status(503).json({ status: 'not ready' });
+  }
+});
+```
+
+## Configuration Management
+
+```yaml
+# ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: user-service-config
+data:
+  LOG_LEVEL: "info"
+  API_TIMEOUT: "5000"
+  MAX_RETRIES: "3"
+
+---
+# Secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: user-service-secret
+type: Opaque
+data:
+  DATABASE_URL: <base64-encoded>
+  JWT_SECRET: <base64-encoded>
+
+---
+# Deployment using config
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-service
+spec:
+  template:
+    spec:
+      containers:
+        - name: user-service
+          envFrom:
+            - configMapRef:
+                name: user-service-config
+            - secretRef:
+                name: user-service-secret
+```
+
+## Auto-Scaling
+
+```yaml
+# Horizontal Pod Autoscaler
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: user-service-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: user-service
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+```
+
+## Best Practices
+
+1. **Use immutable containers**
+2. **Implement health checks**
+3. **Zero-downtime deployments**
+4. **Automate everything**
+5. **Monitor deployments**
+6. **Have rollback strategy**
+7. **Test in staging first**
+8. **Use semantic versioning**
+
+## Interview Tips
+
+- **Explain strategies**: Blue-green, canary, rolling
+- **Show containerization**: Docker multi-stage builds
+- **Demonstrate CI/CD**: Automated pipelines
+- **Discuss health checks**: Liveness and readiness
+- **Mention scaling**: HPA configuration
+- **Show best practices**: Zero-downtime, monitoring
+
+## Summary
+
+Microservices deployment requires containerization, automated CI/CD pipelines, and zero-downtime strategies. Use blue-green for instant rollback, canary for gradual rollout, and rolling updates for seamless transitions. Implement health checks, auto-scaling, and proper configuration management. Monitor deployments and maintain rollback capabilities.

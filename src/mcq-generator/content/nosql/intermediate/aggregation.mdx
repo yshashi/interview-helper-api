@@ -1,0 +1,442 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Aggregation in MongoDB
+---
+
+# Aggregation in MongoDB
+
+## What is Aggregation?
+
+**Aggregation** processes data records and returns computed results. MongoDB's aggregation framework provides powerful data transformation and analysis capabilities.
+
+## Aggregation Pipeline
+
+```javascript
+// Pipeline stages process documents sequentially
+db.collection.aggregate([
+  { $match: { status: "active" } },      // Stage 1: Filter
+  { $group: { _id: "$category", total: { $sum: "$amount" } } },  // Stage 2: Group
+  { $sort: { total: -1 } },              // Stage 3: Sort
+  { $limit: 10 }                         // Stage 4: Limit
+]);
+```
+
+## Common Pipeline Stages
+
+### $match - Filter Documents
+
+```javascript
+// Filter before processing (like WHERE in SQL)
+db.orders.aggregate([
+  {
+    $match: {
+      status: "completed",
+      total: { $gte: 100 },
+      createdAt: { $gte: new Date("2024-01-01") }
+    }
+  }
+]);
+
+// Use $match early in pipeline for performance
+```
+
+### $group - Group and Aggregate
+
+```javascript
+// Group by field and calculate aggregates
+db.orders.aggregate([
+  {
+    $group: {
+      _id: "$userId",                    // Group by userId
+      totalOrders: { $sum: 1 },          // Count documents
+      totalSpent: { $sum: "$total" },    // Sum field
+      avgOrder: { $avg: "$total" },      // Average
+      maxOrder: { $max: "$total" },      // Maximum
+      minOrder: { $min: "$total" },      // Minimum
+      orders: { $push: "$_id" }          // Collect into array
+    }
+  }
+]);
+
+// Group by multiple fields
+db.sales.aggregate([
+  {
+    $group: {
+      _id: {
+        year: { $year: "$date" },
+        month: { $month: "$date" }
+      },
+      totalSales: { $sum: "$amount" }
+    }
+  }
+]);
+```
+
+### $project - Shape Output
+
+```javascript
+// Select and transform fields
+db.users.aggregate([
+  {
+    $project: {
+      _id: 0,                            // Exclude _id
+      name: 1,                           // Include name
+      email: 1,                          // Include email
+      fullName: {                        // Computed field
+        $concat: ["$firstName", " ", "$lastName"]
+      },
+      year: { $year: "$createdAt" }      // Extract year
+    }
+  }
+]);
+```
+
+### $sort - Sort Documents
+
+```javascript
+// Sort by one or more fields
+db.products.aggregate([
+  { $sort: { price: -1, name: 1 } }  // Descending price, ascending name
+]);
+```
+
+### $limit and $skip - Pagination
+
+```javascript
+// Pagination
+const page = 2;
+const limit = 10;
+
+db.products.aggregate([
+  { $sort: { createdAt: -1 } },
+  { $skip: (page - 1) * limit },
+  { $limit: limit }
+]);
+```
+
+### $lookup - Join Collections
+
+```javascript
+// Left outer join (like SQL JOIN)
+db.orders.aggregate([
+  {
+    $lookup: {
+      from: "users",                     // Collection to join
+      localField: "userId",              // Field in orders
+      foreignField: "_id",               // Field in users
+      as: "user"                         // Output array field
+    }
+  },
+  {
+    $unwind: "$user"                     // Convert array to object
+  }
+]);
+
+// Multiple joins
+db.orders.aggregate([
+  {
+    $lookup: {
+      from: "users",
+      localField: "userId",
+      foreignField: "_id",
+      as: "user"
+    }
+  },
+  {
+    $lookup: {
+      from: "products",
+      localField: "productId",
+      foreignField: "_id",
+      as: "product"
+    }
+  }
+]);
+```
+
+### $unwind - Deconstruct Arrays
+
+```javascript
+// Deconstruct array field
+db.users.aggregate([
+  { $unwind: "$orders" }  // Creates document for each array element
+]);
+
+// Example:
+// Input: { name: "John", orders: [1, 2, 3] }
+// Output: 
+//   { name: "John", orders: 1 }
+//   { name: "John", orders: 2 }
+//   { name: "John", orders: 3 }
+
+// Preserve null and empty arrays
+db.users.aggregate([
+  { $unwind: { path: "$orders", preserveNullAndEmptyArrays: true } }
+]);
+```
+
+### $addFields - Add New Fields
+
+```javascript
+// Add computed fields
+db.products.aggregate([
+  {
+    $addFields: {
+      discountedPrice: { $multiply: ["$price", 0.9] },
+      inStock: { $gt: ["$quantity", 0] }
+    }
+  }
+]);
+```
+
+## Real-World Examples
+
+### Sales Report
+
+```javascript
+// Monthly sales report
+db.orders.aggregate([
+  {
+    $match: {
+      status: "completed",
+      createdAt: { $gte: new Date("2024-01-01") }
+    }
+  },
+  {
+    $group: {
+      _id: {
+        year: { $year: "$createdAt" },
+        month: { $month: "$createdAt" }
+      },
+      totalSales: { $sum: "$total" },
+      orderCount: { $sum: 1 },
+      avgOrderValue: { $avg: "$total" }
+    }
+  },
+  {
+    $sort: { "_id.year": -1, "_id.month": -1 }
+  }
+]);
+```
+
+### Top Customers
+
+```javascript
+// Find top 10 customers by total spent
+db.orders.aggregate([
+  {
+    $match: { status: "completed" }
+  },
+  {
+    $group: {
+      _id: "$userId",
+      totalSpent: { $sum: "$total" },
+      orderCount: { $sum: 1 }
+    }
+  },
+  {
+    $lookup: {
+      from: "users",
+      localField: "_id",
+      foreignField: "_id",
+      as: "user"
+    }
+  },
+  {
+    $unwind: "$user"
+  },
+  {
+    $project: {
+      name: "$user.name",
+      email: "$user.email",
+      totalSpent: 1,
+      orderCount: 1
+    }
+  },
+  {
+    $sort: { totalSpent: -1 }
+  },
+  {
+    $limit: 10
+  }
+]);
+```
+
+### Product Analytics
+
+```javascript
+// Product performance with categories
+db.orderItems.aggregate([
+  {
+    $lookup: {
+      from: "products",
+      localField: "productId",
+      foreignField: "_id",
+      as: "product"
+    }
+  },
+  {
+    $unwind: "$product"
+  },
+  {
+    $group: {
+      _id: "$product.category",
+      totalRevenue: { $sum: { $multiply: ["$quantity", "$price"] } },
+      totalQuantity: { $sum: "$quantity" },
+      uniqueProducts: { $addToSet: "$productId" }
+    }
+  },
+  {
+    $project: {
+      category: "$_id",
+      totalRevenue: 1,
+      totalQuantity: 1,
+      productCount: { $size: "$uniqueProducts" }
+    }
+  },
+  {
+    $sort: { totalRevenue: -1 }
+  }
+]);
+```
+
+## Advanced Operators
+
+### $facet - Multiple Pipelines
+
+```javascript
+// Run multiple aggregations in parallel
+db.products.aggregate([
+  {
+    $facet: {
+      byCategory: [
+        { $group: { _id: "$category", count: { $sum: 1 } } }
+      ],
+      byPriceRange: [
+        {
+          $bucket: {
+            groupBy: "$price",
+            boundaries: [0, 50, 100, 200, 500],
+            default: "500+",
+            output: { count: { $sum: 1 } }
+          }
+        }
+      ],
+      statistics: [
+        {
+          $group: {
+            _id: null,
+            avgPrice: { $avg: "$price" },
+            totalProducts: { $sum: 1 }
+          }
+        }
+      ]
+    }
+  }
+]);
+```
+
+### $bucket - Group by Ranges
+
+```javascript
+// Group documents into buckets
+db.users.aggregate([
+  {
+    $bucket: {
+      groupBy: "$age",
+      boundaries: [0, 18, 30, 50, 100],
+      default: "Other",
+      output: {
+        count: { $sum: 1 },
+        users: { $push: "$name" }
+      }
+    }
+  }
+]);
+```
+
+### $graphLookup - Recursive Lookup
+
+```javascript
+// Find all descendants in hierarchy
+db.employees.aggregate([
+  {
+    $graphLookup: {
+      from: "employees",
+      startWith: "$_id",
+      connectFromField: "_id",
+      connectToField: "managerId",
+      as: "subordinates",
+      maxDepth: 3
+    }
+  }
+]);
+```
+
+## Performance Optimization
+
+```javascript
+const optimizationTips = [
+  'Use $match early to filter documents',
+  'Use indexes for $match and $sort',
+  'Limit fields with $project early',
+  'Use $limit to reduce documents processed',
+  'Avoid $lookup on large collections',
+  'Use allowDiskUse for large datasets'
+];
+
+// Example with optimization
+db.orders.aggregate([
+  { $match: { status: "completed" } },   // Filter early (uses index)
+  { $project: { userId: 1, total: 1 } }, // Limit fields early
+  { $group: { _id: "$userId", total: { $sum: "$total" } } },
+  { $sort: { total: -1 } },
+  { $limit: 10 }
+], { allowDiskUse: true });
+```
+
+## .NET Aggregation
+
+```csharp
+using MongoDB.Driver;
+
+public class AggregationService
+{
+    private readonly IMongoCollection<Order> _orders;
+    
+    public async Task<List<SalesReport>> GetMonthlySales()
+    {
+        var pipeline = _orders.Aggregate()
+            .Match(o => o.Status == "completed")
+            .Group(
+                o => new { 
+                    Year = o.CreatedAt.Year, 
+                    Month = o.CreatedAt.Month 
+                },
+                g => new SalesReport
+                {
+                    Year = g.Key.Year,
+                    Month = g.Key.Month,
+                    TotalSales = g.Sum(o => o.Total),
+                    OrderCount = g.Count()
+                }
+            )
+            .SortByDescending(r => r.Year)
+            .ThenByDescending(r => r.Month);
+        
+        return await pipeline.ToListAsync();
+    }
+}
+```
+
+## Interview Tips
+
+- **Explain aggregation**: Data processing pipeline
+- **Show stages**: $match, $group, $project, $lookup
+- **Demonstrate examples**: Sales reports, analytics
+- **Discuss performance**: Early filtering, indexes
+- **Mention operators**: Sum, avg, max, min
+- **Show .NET**: LINQ-style aggregation
+
+## Summary
+
+MongoDB aggregation framework processes documents through pipeline stages. Common stages: $match (filter), $group (aggregate), $project (shape), $sort, $limit, $lookup (join), $unwind (arrays). Use for analytics, reports, and data transformation. Optimize by filtering early, using indexes, limiting fields. Advanced features: $facet (parallel pipelines), $bucket (ranges), $graphLookup (recursive). Essential for complex data analysis in MongoDB.

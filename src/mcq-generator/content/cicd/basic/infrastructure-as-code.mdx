@@ -1,0 +1,384 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Infrastructure as Code (IaC)
+---
+
+# Infrastructure as Code (IaC)
+
+## What is Infrastructure as Code?
+
+**Infrastructure as Code (IaC)** is the practice of managing and provisioning infrastructure through code instead of manual processes.
+
+## Benefits
+
+1. **Version Control**: Track infrastructure changes
+2. **Repeatability**: Consistent environments
+3. **Automation**: Reduce manual errors
+4. **Documentation**: Code documents infrastructure
+5. **Collaboration**: Team can review changes
+
+## Terraform
+
+### Basic Example
+
+```hcl
+# main.tf
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
+
+provider "aws" {
+  region = "us-east-1"
+}
+
+# VPC
+resource "aws_vpc" "main" {
+  cidr_block = "10.0.0.0/16"
+  
+  tags = {
+    Name = "main-vpc"
+  }
+}
+
+# Subnet
+resource "aws_subnet" "public" {
+  vpc_id     = aws_vpc.main.id
+  cidr_block = "10.0.1.0/24"
+  
+  tags = {
+    Name = "public-subnet"
+  }
+}
+
+# EC2 Instance
+resource "aws_instance" "web" {
+  ami           = "ami-0c55b159cbfafe1f0"
+  instance_type = "t2.micro"
+  subnet_id     = aws_subnet.public.id
+  
+  tags = {
+    Name = "web-server"
+  }
+}
+```
+
+### Multi-Stack Infrastructure
+
+```hcl
+# Angular Frontend (S3 + CloudFront)
+resource "aws_s3_bucket" "frontend" {
+  bucket = "myapp-frontend"
+}
+
+resource "aws_s3_bucket_website_configuration" "frontend" {
+  bucket = aws_s3_bucket.frontend.id
+  
+  index_document {
+    suffix = "index.html"
+  }
+}
+
+resource "aws_cloudfront_distribution" "frontend" {
+  origin {
+    domain_name = aws_s3_bucket.frontend.bucket_regional_domain_name
+    origin_id   = "S3-frontend"
+  }
+  
+  enabled             = true
+  default_root_object = "index.html"
+  
+  default_cache_behavior {
+    allowed_methods  = ["GET", "HEAD"]
+    cached_methods   = ["GET", "HEAD"]
+    target_origin_id = "S3-frontend"
+    
+    forwarded_values {
+      query_string = false
+      cookies {
+        forward = "none"
+      }
+    }
+    
+    viewer_protocol_policy = "redirect-to-https"
+  }
+}
+
+# .NET API (ECS)
+resource "aws_ecs_cluster" "api" {
+  name = "dotnet-api-cluster"
+}
+
+resource "aws_ecs_task_definition" "api" {
+  family                   = "dotnet-api"
+  network_mode             = "awsvpc"
+  requires_compatibilities = ["FARGATE"]
+  cpu                      = "256"
+  memory                   = "512"
+  
+  container_definitions = jsonencode([{
+    name  = "dotnet-api"
+    image = "myapp/dotnet-api:latest"
+    portMappings = [{
+      containerPort = 80
+      protocol      = "tcp"
+    }]
+  }])
+}
+
+# Node.js Service (Lambda)
+resource "aws_lambda_function" "service" {
+  filename      = "function.zip"
+  function_name = "nodejs-service"
+  role          = aws_iam_role.lambda.arn
+  handler       = "index.handler"
+  runtime       = "nodejs18.x"
+  
+  environment {
+    variables = {
+      NODE_ENV = "production"
+    }
+  }
+}
+
+# Database (RDS PostgreSQL)
+resource "aws_db_instance" "postgres" {
+  identifier        = "myapp-db"
+  engine            = "postgres"
+  engine_version    = "15.3"
+  instance_class    = "db.t3.micro"
+  allocated_storage = 20
+  
+  db_name  = "myapp"
+  username = "admin"
+  password = var.db_password
+  
+  skip_final_snapshot = true
+}
+
+# MongoDB Atlas
+resource "mongodbatlas_cluster" "mongodb" {
+  project_id = var.atlas_project_id
+  name       = "myapp-cluster"
+  
+  provider_name               = "AWS"
+  provider_region_name        = "US_EAST_1"
+  provider_instance_size_name = "M10"
+}
+```
+
+## Kubernetes with Terraform
+
+```hcl
+# EKS Cluster
+resource "aws_eks_cluster" "main" {
+  name     = "myapp-cluster"
+  role_arn = aws_iam_role.eks.arn
+  
+  vpc_config {
+    subnet_ids = aws_subnet.private[*].id
+  }
+}
+
+# Node Group
+resource "aws_eks_node_group" "main" {
+  cluster_name    = aws_eks_cluster.main.name
+  node_group_name = "main-nodes"
+  node_role_arn   = aws_iam_role.node.arn
+  subnet_ids      = aws_subnet.private[*].id
+  
+  scaling_config {
+    desired_size = 3
+    max_size     = 5
+    min_size     = 1
+  }
+  
+  instance_types = ["t3.medium"]
+}
+```
+
+## Ansible
+
+```yaml
+# playbook.yml
+---
+- name: Setup web servers
+  hosts: webservers
+  become: yes
+  
+  tasks:
+    - name: Install Node.js
+      apt:
+        name: nodejs
+        state: present
+        update_cache: yes
+    
+    - name: Install npm
+      apt:
+        name: npm
+        state: present
+    
+    - name: Copy application
+      copy:
+        src: /local/app
+        dest: /var/www/app
+    
+    - name: Install dependencies
+      npm:
+        path: /var/www/app
+        state: present
+    
+    - name: Start application
+      systemd:
+        name: myapp
+        state: started
+        enabled: yes
+
+- name: Setup database
+  hosts: dbservers
+  become: yes
+  
+  tasks:
+    - name: Install PostgreSQL
+      apt:
+        name: postgresql
+        state: present
+    
+    - name: Create database
+      postgresql_db:
+        name: myapp
+        state: present
+```
+
+## CloudFormation
+
+```yaml
+# template.yaml
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Multi-stack application infrastructure'
+
+Resources:
+  # VPC
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      Tags:
+        - Key: Name
+          Value: main-vpc
+  
+  # Angular Frontend Bucket
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: myapp-frontend
+      WebsiteConfiguration:
+        IndexDocument: index.html
+  
+  # .NET API ECS Service
+  APITaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: dotnet-api
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: '256'
+      Memory: '512'
+      ContainerDefinitions:
+        - Name: dotnet-api
+          Image: myapp/dotnet-api:latest
+          PortMappings:
+            - ContainerPort: 80
+  
+  # RDS Database
+  Database:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: myapp-db
+      Engine: postgres
+      EngineVersion: '15.3'
+      DBInstanceClass: db.t3.micro
+      AllocatedStorage: '20'
+      MasterUsername: admin
+      MasterUserPassword: !Ref DBPassword
+```
+
+## Pulumi
+
+```typescript
+// index.ts
+import * as pulumi from "@pulumi/pulumi";
+import * as aws from "@pulumi/aws";
+
+// VPC
+const vpc = new aws.ec2.Vpc("main-vpc", {
+    cidrBlock: "10.0.0.0/16",
+});
+
+// Angular Frontend
+const frontendBucket = new aws.s3.Bucket("frontend", {
+    website: {
+        indexDocument: "index.html",
+    },
+});
+
+// .NET API
+const apiCluster = new aws.ecs.Cluster("api-cluster");
+
+const apiTaskDefinition = new aws.ecs.TaskDefinition("api-task", {
+    family: "dotnet-api",
+    networkMode: "awsvpc",
+    requiresCompatibilities: ["FARGATE"],
+    cpu: "256",
+    memory: "512",
+    containerDefinitions: JSON.stringify([{
+        name: "dotnet-api",
+        image: "myapp/dotnet-api:latest",
+        portMappings: [{
+            containerPort: 80,
+        }],
+    }]),
+});
+
+// PostgreSQL Database
+const db = new aws.rds.Instance("postgres", {
+    engine: "postgres",
+    engineVersion: "15.3",
+    instanceClass: "db.t3.micro",
+    allocatedStorage: 20,
+    dbName: "myapp",
+    username: "admin",
+    password: config.requireSecret("dbPassword"),
+});
+
+export const frontendUrl = frontendBucket.websiteEndpoint;
+export const dbEndpoint = db.endpoint;
+```
+
+## Best Practices
+
+1. **Version control**: Store IaC in Git
+2. **Modular code**: Reusable modules
+3. **State management**: Remote state storage
+4. **Secrets**: Use secret management
+5. **Testing**: Validate before apply
+6. **Documentation**: Comment complex logic
+7. **CI/CD integration**: Automate deployment
+
+## Interview Tips
+
+- **Explain IaC**: Infrastructure through code
+- **Show tools**: Terraform, Ansible, CloudFormation
+- **Demonstrate multi-stack**: Angular, .NET, Node.js, databases
+- **Discuss benefits**: Version control, repeatability
+- **Mention best practices**: Modules, state management
+- **Show CI/CD**: Integration with pipelines
+
+## Summary
+
+Infrastructure as Code manages infrastructure through declarative or imperative code. Use Terraform for cloud-agnostic provisioning, Ansible for configuration management, CloudFormation for AWS, or Pulumi for programming languages. Supports all tech stacks and databases. Enables version control, automation, and consistent environments. Essential for modern DevOps practices.

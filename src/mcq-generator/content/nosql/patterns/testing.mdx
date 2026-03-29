@@ -1,0 +1,593 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Testing NoSQL Applications
+---
+
+# Testing NoSQL Applications
+
+## Unit Testing
+
+### Mocking Database Connections
+
+```javascript
+// Jest mock
+jest.mock('mongodb');
+
+const { MongoClient } = require('mongodb');
+
+describe('UserService', () => {
+  let mockDb;
+  let mockCollection;
+  
+  beforeEach(() => {
+    mockCollection = {
+      findOne: jest.fn(),
+      insertOne: jest.fn(),
+      updateOne: jest.fn(),
+      deleteOne: jest.fn()
+    };
+    
+    mockDb = {
+      collection: jest.fn().mockReturnValue(mockCollection)
+    };
+    
+    MongoClient.prototype.db = jest.fn().mockReturnValue(mockDb);
+  });
+  
+  test('should get user by id', async () => {
+    const mockUser = { _id: '123', name: 'John' };
+    mockCollection.findOne.mockResolvedValue(mockUser);
+    
+    const userService = new UserService();
+    const user = await userService.getUser('123');
+    
+    expect(user).toEqual(mockUser);
+    expect(mockCollection.findOne).toHaveBeenCalledWith({ _id: '123' });
+  });
+  
+  test('should create user', async () => {
+    const userData = { name: 'John', email: 'john@example.com' };
+    mockCollection.insertOne.mockResolvedValue({ insertedId: '123' });
+    
+    const userService = new UserService();
+    const result = await userService.createUser(userData);
+    
+    expect(mockCollection.insertOne).toHaveBeenCalledWith(userData);
+  });
+});
+```
+
+### In-Memory Database
+
+```javascript
+const { MongoMemoryServer } = require('mongodb-memory-server');
+const { MongoClient } = require('mongodb');
+
+describe('UserService Integration', () => {
+  let mongod;
+  let client;
+  let db;
+  
+  beforeAll(async () => {
+    mongod = await MongoMemoryServer.create();
+    const uri = mongod.getUri();
+    client = new MongoClient(uri);
+    await client.connect();
+    db = client.db('test');
+  });
+  
+  afterAll(async () => {
+    await client.close();
+    await mongod.stop();
+  });
+  
+  beforeEach(async () => {
+    await db.collection('users').deleteMany({});
+  });
+  
+  test('should create and retrieve user', async () => {
+    const userData = { name: 'John', email: 'john@example.com' };
+    
+    await db.collection('users').insertOne(userData);
+    const user = await db.collection('users').findOne({ name: 'John' });
+    
+    expect(user.name).toBe('John');
+    expect(user.email).toBe('john@example.com');
+  });
+});
+```
+
+## Integration Testing
+
+### Test Containers
+
+```javascript
+const { GenericContainer } = require('testcontainers');
+const { MongoClient } = require('mongodb');
+
+describe('MongoDB Integration Tests', () => {
+  let container;
+  let client;
+  let db;
+  
+  beforeAll(async () => {
+    container = await new GenericContainer('mongo:7')
+      .withExposedPorts(27017)
+      .start();
+    
+    const uri = `mongodb://${container.getHost()}:${container.getMappedPort(27017)}`;
+    client = new MongoClient(uri);
+    await client.connect();
+    db = client.db('test');
+  }, 60000);
+  
+  afterAll(async () => {
+    await client.close();
+    await container.stop();
+  });
+  
+  test('should perform CRUD operations', async () => {
+    const collection = db.collection('users');
+    
+    // Create
+    const result = await collection.insertOne({ name: 'John' });
+    expect(result.insertedId).toBeDefined();
+    
+    // Read
+    const user = await collection.findOne({ name: 'John' });
+    expect(user.name).toBe('John');
+    
+    // Update
+    await collection.updateOne({ name: 'John' }, { $set: { age: 30 } });
+    const updated = await collection.findOne({ name: 'John' });
+    expect(updated.age).toBe(30);
+    
+    // Delete
+    await collection.deleteOne({ name: 'John' });
+    const deleted = await collection.findOne({ name: 'John' });
+    expect(deleted).toBeNull();
+  });
+});
+```
+
+### Redis Testing
+
+```javascript
+const redis = require('redis-mock');
+
+describe('CacheService', () => {
+  let client;
+  
+  beforeEach(() => {
+    client = redis.createClient();
+  });
+  
+  afterEach(() => {
+    client.quit();
+  });
+  
+  test('should cache data', async () => {
+    await client.set('key', 'value');
+    const value = await client.get('key');
+    expect(value).toBe('value');
+  });
+  
+  test('should expire keys', async () => {
+    await client.setEx('key', 1, 'value');
+    
+    // Wait for expiration
+    await new Promise(resolve => setTimeout(resolve, 1100));
+    
+    const value = await client.get('key');
+    expect(value).toBeNull();
+  });
+});
+```
+
+## Performance Testing
+
+### Load Testing
+
+```javascript
+const autocannon = require('autocannon');
+
+async function runLoadTest() {
+  const result = await autocannon({
+    url: 'http://localhost:3000/users',
+    connections: 100,
+    duration: 30,
+    pipelining: 1
+  });
+  
+  console.log({
+    requests: result.requests.total,
+    throughput: result.throughput.total,
+    latency: {
+      mean: result.latency.mean,
+      p50: result.latency.p50,
+      p99: result.latency.p99
+    },
+    errors: result.errors
+  });
+}
+
+// Benchmark queries
+async function benchmarkQuery() {
+  const iterations = 1000;
+  const start = Date.now();
+  
+  for (let i = 0; i < iterations; i++) {
+    await db.collection('users').findOne({ _id: 'user-' + i });
+  }
+  
+  const duration = Date.now() - start;
+  console.log(`${iterations} queries in ${duration}ms`);
+  console.log(`Average: ${duration / iterations}ms per query`);
+}
+```
+
+### Query Performance Testing
+
+```javascript
+describe('Query Performance', () => {
+  beforeAll(async () => {
+    // Insert test data
+    const users = Array.from({ length: 10000 }, (_, i) => ({
+      _id: `user-${i}`,
+      name: `User ${i}`,
+      email: `user${i}@example.com`,
+      age: Math.floor(Math.random() * 50) + 20
+    }));
+    
+    await db.collection('users').insertMany(users);
+  });
+  
+  test('query without index should be slow', async () => {
+    const start = Date.now();
+    await db.collection('users').find({ email: 'user5000@example.com' }).toArray();
+    const duration = Date.now() - start;
+    
+    expect(duration).toBeGreaterThan(10);
+  });
+  
+  test('query with index should be fast', async () => {
+    await db.collection('users').createIndex({ email: 1 });
+    
+    const start = Date.now();
+    await db.collection('users').find({ email: 'user5000@example.com' }).toArray();
+    const duration = Date.now() - start;
+    
+    expect(duration).toBeLessThan(10);
+  });
+});
+```
+
+## Data Validation Testing
+
+```javascript
+describe('Schema Validation', () => {
+  beforeAll(async () => {
+    await db.createCollection('users', {
+      validator: {
+        $jsonSchema: {
+          bsonType: 'object',
+          required: ['name', 'email'],
+          properties: {
+            name: { bsonType: 'string' },
+            email: { bsonType: 'string', pattern: '^.+@.+$' },
+            age: { bsonType: 'int', minimum: 0, maximum: 150 }
+          }
+        }
+      }
+    });
+  });
+  
+  test('should accept valid document', async () => {
+    await expect(
+      db.collection('users').insertOne({
+        name: 'John',
+        email: 'john@example.com',
+        age: 30
+      })
+    ).resolves.toBeDefined();
+  });
+  
+  test('should reject invalid email', async () => {
+    await expect(
+      db.collection('users').insertOne({
+        name: 'John',
+        email: 'invalid-email'
+      })
+    ).rejects.toThrow();
+  });
+  
+  test('should reject missing required field', async () => {
+    await expect(
+      db.collection('users').insertOne({
+        name: 'John'
+      })
+    ).rejects.toThrow();
+  });
+});
+```
+
+## Transaction Testing
+
+```javascript
+describe('Transactions', () => {
+  test('should commit transaction', async () => {
+    const session = client.startSession();
+    
+    try {
+      await session.withTransaction(async () => {
+        await db.collection('accounts').updateOne(
+          { _id: 'account1' },
+          { $inc: { balance: -100 } },
+          { session }
+        );
+        
+        await db.collection('accounts').updateOne(
+          { _id: 'account2' },
+          { $inc: { balance: 100 } },
+          { session }
+        );
+      });
+      
+      const account1 = await db.collection('accounts').findOne({ _id: 'account1' });
+      const account2 = await db.collection('accounts').findOne({ _id: 'account2' });
+      
+      expect(account1.balance).toBe(900);
+      expect(account2.balance).toBe(1100);
+    } finally {
+      await session.endSession();
+    }
+  });
+  
+  test('should rollback on error', async () => {
+    const session = client.startSession();
+    
+    try {
+      await session.withTransaction(async () => {
+        await db.collection('accounts').updateOne(
+          { _id: 'account1' },
+          { $inc: { balance: -100 } },
+          { session }
+        );
+        
+        throw new Error('Simulated error');
+      });
+    } catch (error) {
+      // Expected
+    } finally {
+      await session.endSession();
+    }
+    
+    const account1 = await db.collection('accounts').findOne({ _id: 'account1' });
+    expect(account1.balance).toBe(1000); // Unchanged
+  });
+});
+```
+
+## Replication Testing
+
+```javascript
+describe('Replication', () => {
+  test('should replicate to secondary', async () => {
+    // Write to primary
+    await db.collection('users').insertOne(
+      { name: 'John' },
+      { writeConcern: { w: 'majority' } }
+    );
+    
+    // Wait for replication
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    
+    // Read from secondary
+    const user = await db.collection('users').findOne(
+      { name: 'John' },
+      { readPreference: 'secondary' }
+    );
+    
+    expect(user).toBeDefined();
+    expect(user.name).toBe('John');
+  });
+});
+```
+
+## .NET Testing
+
+```csharp
+using Xunit;
+using MongoDB.Driver;
+using Moq;
+
+public class UserServiceTests
+{
+    [Fact]
+    public async Task GetUser_ShouldReturnUser()
+    {
+        // Arrange
+        var mockCollection = new Mock<IMongoCollection<User>>();
+        var mockCursor = new Mock<IAsyncCursor<User>>();
+        
+        var user = new User { Id = "123", Name = "John" };
+        mockCursor.Setup(c => c.Current).Returns(new[] { user });
+        mockCursor.SetupSequence(c => c.MoveNextAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true)
+            .ReturnsAsync(false);
+        
+        mockCollection.Setup(c => c.FindAsync(
+            It.IsAny<FilterDefinition<User>>(),
+            It.IsAny<FindOptions<User>>(),
+            It.IsAny<CancellationToken>()
+        )).ReturnsAsync(mockCursor.Object);
+        
+        var service = new UserService(mockCollection.Object);
+        
+        // Act
+        var result = await service.GetUser("123");
+        
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal("John", result.Name);
+    }
+}
+
+// Integration test with test container
+public class UserServiceIntegrationTests : IAsyncLifetime
+{
+    private MongoDbContainer _container;
+    private IMongoClient _client;
+    
+    public async Task InitializeAsync()
+    {
+        _container = new MongoDbBuilder().Build();
+        await _container.StartAsync();
+        
+        _client = new MongoClient(_container.GetConnectionString());
+    }
+    
+    public async Task DisposeAsync()
+    {
+        await _container.DisposeAsync();
+    }
+    
+    [Fact]
+    public async Task CreateUser_ShouldPersistUser()
+    {
+        var db = _client.GetDatabase("test");
+        var collection = db.GetCollection<User>("users");
+        
+        var user = new User { Name = "John", Email = "john@example.com" };
+        await collection.InsertOneAsync(user);
+        
+        var retrieved = await collection.Find(u => u.Name == "John").FirstOrDefaultAsync();
+        
+        Assert.NotNull(retrieved);
+        Assert.Equal("john@example.com", retrieved.Email);
+    }
+}
+```
+
+## Test Data Management
+
+```javascript
+class TestDataFactory {
+  static createUser(overrides = {}) {
+    return {
+      _id: new ObjectId(),
+      name: 'Test User',
+      email: 'test@example.com',
+      age: 30,
+      createdAt: new Date(),
+      ...overrides
+    };
+  }
+  
+  static async seedDatabase(db, count = 100) {
+    const users = Array.from({ length: count }, (_, i) => 
+      this.createUser({
+        name: `User ${i}`,
+        email: `user${i}@example.com`
+      })
+    );
+    
+    await db.collection('users').insertMany(users);
+  }
+  
+  static async cleanDatabase(db) {
+    const collections = await db.listCollections().toArray();
+    
+    for (const collection of collections) {
+      await db.collection(collection.name).deleteMany({});
+    }
+  }
+}
+
+// Usage in tests
+beforeEach(async () => {
+  await TestDataFactory.cleanDatabase(db);
+  await TestDataFactory.seedDatabase(db, 50);
+});
+```
+
+## Testing Best Practices
+
+```javascript
+const testingBestPractices = [
+  'Use in-memory databases for unit tests',
+  'Use test containers for integration tests',
+  'Mock external dependencies',
+  'Test edge cases and error conditions',
+  'Validate schema constraints',
+  'Test transaction rollback',
+  'Benchmark query performance',
+  'Test replication lag',
+  'Clean up test data',
+  'Use factories for test data',
+  'Test concurrent operations',
+  'Verify indexes are used',
+  'Test failover scenarios',
+  'Load test before production'
+];
+```
+
+## CI/CD Integration
+
+```yaml
+# .github/workflows/test.yml
+name: Tests
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    services:
+      mongodb:
+        image: mongo:7
+        ports:
+          - 27017:27017
+      
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+    
+    steps:
+      - uses: actions/checkout@v2
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v2
+        with:
+          node-version: '18'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Run unit tests
+        run: npm run test:unit
+      
+      - name: Run integration tests
+        run: npm run test:integration
+        env:
+          MONGODB_URI: mongodb://localhost:27017/test
+          REDIS_URL: redis://localhost:6379
+      
+      - name: Run performance tests
+        run: npm run test:performance
+```
+
+## Interview Tips
+
+- **Explain unit testing**: Mocking vs in-memory databases
+- **Show integration testing**: Test containers, real databases
+- **Demonstrate performance testing**: Load testing, benchmarks
+- **Discuss validation**: Schema validation testing
+- **Mention transactions**: Commit and rollback scenarios
+- **Show CI/CD**: Automated testing pipelines
+
+## Summary
+
+Test NoSQL applications with unit tests (mocks, in-memory databases), integration tests (test containers, real databases), and performance tests (load testing, benchmarks). Use MongoDB Memory Server or redis-mock for fast unit tests. Implement test containers for realistic integration tests. Validate schema constraints and transaction behavior. Test query performance with and without indexes. Clean up test data between tests. Use factories for test data generation. Integrate with CI/CD pipelines. Essential for reliable NoSQL applications.

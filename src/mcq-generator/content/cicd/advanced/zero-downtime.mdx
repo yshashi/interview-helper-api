@@ -1,0 +1,369 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Zero-Downtime Deployments
+---
+
+# Zero-Downtime Deployments
+
+## What is Zero-Downtime Deployment?
+
+**Zero-downtime deployment** ensures applications remain available during updates with no service interruption.
+
+## Rolling Update Strategy
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myapp
+spec:
+  replicas: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1        # Max 1 extra pod during update
+      maxUnavailable: 0  # No pods can be unavailable
+  template:
+    spec:
+      containers:
+        - name: myapp
+          image: myapp:v2
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: 3000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+```
+
+## Health Checks
+
+```javascript
+// Node.js health endpoints
+const express = require('express');
+const app = express();
+
+// Liveness probe
+app.get('/health/live', (req, res) => {
+  res.status(200).json({ status: 'alive' });
+});
+
+// Readiness probe
+app.get('/health/ready', async (req, res) => {
+  try {
+    await db.ping();
+    await cache.ping();
+    res.status(200).json({ status: 'ready' });
+  } catch (error) {
+    res.status(503).json({ status: 'not ready' });
+  }
+});
+```
+
+```csharp
+// .NET health checks
+public class Startup
+{
+    public void ConfigureServices(IServiceCollection services)
+    {
+        services.AddHealthChecks()
+            .AddDbContextCheck<ApplicationDbContext>()
+            .AddRedis(Configuration["Redis:ConnectionString"]);
+    }
+    
+    public void Configure(IApplicationBuilder app)
+    {
+        app.UseHealthChecks("/health/ready");
+        app.UseHealthChecks("/health/live", new HealthCheckOptions
+        {
+            Predicate = _ => false
+        });
+    }
+}
+```
+
+## Graceful Shutdown
+
+```javascript
+// Node.js graceful shutdown
+const server = app.listen(3000);
+
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received, closing server...');
+  
+  server.close(() => {
+    console.log('Server closed');
+    
+    // Close database connections
+    db.close();
+    
+    // Close other connections
+    redis.quit();
+    
+    process.exit(0);
+  });
+  
+  // Force shutdown after 30 seconds
+  setTimeout(() => {
+    console.error('Forced shutdown');
+    process.exit(1);
+  }, 30000);
+});
+```
+
+```yaml
+# Kubernetes termination grace period
+apiVersion: apps/v1
+kind: Deployment
+spec:
+  template:
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: myapp
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep 15"]
+```
+
+## Database Migrations
+
+```javascript
+// Backward-compatible migrations
+async function migrate() {
+  // Phase 1: Add new column (nullable)
+  await db.query(`
+    ALTER TABLE users 
+    ADD COLUMN email_verified BOOLEAN NULL
+  `);
+  
+  // Deploy new code that works with both states
+  
+  // Phase 2: Backfill data
+  await db.query(`
+    UPDATE users 
+    SET email_verified = false 
+    WHERE email_verified IS NULL
+  `);
+  
+  // Phase 3: Make column NOT NULL
+  await db.query(`
+    ALTER TABLE users 
+    ALTER COLUMN email_verified SET NOT NULL
+  `);
+}
+```
+
+## Blue-Green Deployment
+
+```yaml
+# Blue (current)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myapp-blue
+spec:
+  replicas: 5
+  selector:
+    matchLabels:
+      version: blue
+  template:
+    metadata:
+      labels:
+        version: blue
+    spec:
+      containers:
+        - name: myapp
+          image: myapp:v1
+
+---
+# Green (new)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myapp-green
+spec:
+  replicas: 5
+  selector:
+    matchLabels:
+      version: green
+  template:
+    metadata:
+      labels:
+        version: green
+    spec:
+      containers:
+        - name: myapp
+          image: myapp:v2
+
+---
+# Service switches instantly
+apiVersion: v1
+kind: Service
+metadata:
+  name: myapp
+spec:
+  selector:
+    version: blue  # Change to green for instant switch
+```
+
+## Load Balancer Draining
+
+```yaml
+# AWS ALB with connection draining
+apiVersion: v1
+kind: Service
+metadata:
+  name: myapp
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-connection-draining-enabled: "true"
+    service.beta.kubernetes.io/aws-load-balancer-connection-draining-timeout: "60"
+spec:
+  type: LoadBalancer
+  ports:
+    - port: 80
+      targetPort: 3000
+```
+
+## Session Management
+
+```javascript
+// Stateless sessions with Redis
+const session = require('express-session');
+const RedisStore = require('connect-redis')(session);
+
+app.use(session({
+  store: new RedisStore({ client: redisClient }),
+  secret: 'secret',
+  resave: false,
+  saveUninitialized: false
+}));
+```
+
+## Feature Flags
+
+```javascript
+// Deploy code with feature flag disabled
+class FeatureFlags {
+  isEnabled(feature) {
+    return this.flags[feature] || false;
+  }
+}
+
+const features = new FeatureFlags();
+
+app.get('/api/data', async (req, res) => {
+  if (features.isEnabled('new-algorithm')) {
+    return res.json(await newAlgorithm());
+  }
+  return res.json(await oldAlgorithm());
+});
+
+// Enable feature after deployment
+features.enable('new-algorithm');
+```
+
+## Canary Deployment
+
+```yaml
+# Stable (90%)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myapp-stable
+spec:
+  replicas: 9
+
+---
+# Canary (10%)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myapp-canary
+spec:
+  replicas: 1
+```
+
+## Monitoring During Deployment
+
+```javascript
+// Monitor metrics during deployment
+async function monitorDeployment() {
+  const errorRate = await prometheus.query(
+    'rate(http_requests_total{status=~"5.."}[5m])'
+  );
+  
+  const latency = await prometheus.query(
+    'histogram_quantile(0.95, http_request_duration_seconds)'
+  );
+  
+  if (errorRate > 0.01 || latency > 1000) {
+    console.log('Metrics degraded, rolling back');
+    await rollback();
+  }
+}
+```
+
+## CI/CD Pipeline
+
+```yaml
+name: Zero-Downtime Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Deploy with rolling update
+        run: |
+          kubectl set image deployment/myapp myapp=myapp:${{ github.sha }}
+      
+      - name: Wait for rollout
+        run: |
+          kubectl rollout status deployment/myapp
+      
+      - name: Run smoke tests
+        run: ./smoke-tests.sh
+      
+      - name: Monitor metrics
+        run: ./monitor-metrics.sh 300
+      
+      - name: Rollback if needed
+        if: failure()
+        run: kubectl rollout undo deployment/myapp
+```
+
+## Best Practices
+
+1. **Health checks**: Liveness and readiness probes
+2. **Graceful shutdown**: Handle SIGTERM properly
+3. **Rolling updates**: maxUnavailable: 0
+4. **Database migrations**: Backward compatible
+5. **Session management**: Stateless or shared storage
+6. **Monitoring**: Track metrics during deployment
+7. **Rollback plan**: Quick recovery
+
+## Interview Tips
+
+- **Explain zero-downtime**: No service interruption
+- **Show rolling updates**: Kubernetes strategy
+- **Demonstrate health checks**: Readiness and liveness
+- **Discuss graceful shutdown**: Clean termination
+- **Mention migrations**: Backward compatibility
+- **Show monitoring**: Metrics during deployment
+
+## Summary
+
+Zero-downtime deployments keep applications available during updates. Use rolling updates with maxUnavailable: 0. Implement health checks for readiness and liveness. Handle graceful shutdown with SIGTERM. Make database migrations backward compatible. Use stateless sessions or shared storage. Monitor metrics during deployment. Have rollback plan ready. Essential for production applications.

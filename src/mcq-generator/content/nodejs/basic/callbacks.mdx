@@ -1,0 +1,203 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Callbacks in Node.js
+---
+
+# Callbacks in Node.js
+
+## What is a Callback?
+
+A **callback** is a function passed as an argument to another function, which is then invoked inside the outer function to complete an action. Callbacks are fundamental to Node.js's asynchronous nature.
+
+## Basic Callback
+
+```javascript
+function greet(name, callback) {
+  console.log('Hello ' + name);
+  callback();
+}
+
+greet('John', function() {
+  console.log('Callback executed');
+});
+```
+
+## Asynchronous Callbacks
+
+```javascript
+const fs = require('fs');
+
+fs.readFile('file.txt', 'utf8', function(err, data) {
+  if (err) {
+    console.error('Error:', err);
+    return;
+  }
+  console.log('File contents:', data);
+});
+
+console.log('Reading file...'); // Executes first
+```
+
+## Error-First Callbacks
+
+Node.js convention: first parameter is error, second is result.
+
+```javascript
+function readData(filename, callback) {
+  fs.readFile(filename, 'utf8', function(err, data) {
+    if (err) {
+      callback(err, null);
+      return;
+    }
+    callback(null, data);
+  });
+}
+
+readData('file.txt', function(err, data) {
+  if (err) {
+    console.error('Error:', err);
+    return;
+  }
+  console.log('Data:', data);
+});
+```
+
+## Callback Hell
+
+```javascript
+// BAD - Pyramid of Doom
+fs.readFile('file1.txt', 'utf8', (err, data1) => {
+  if (err) throw err;
+  fs.readFile('file2.txt', 'utf8', (err, data2) => {
+    if (err) throw err;
+    fs.readFile('file3.txt', 'utf8', (err, data3) => {
+      if (err) throw err;
+      console.log(data1, data2, data3);
+    });
+  });
+});
+```
+
+## Solutions to Callback Hell
+
+### 1. Named Functions
+
+```javascript
+function readFile1(callback) {
+  fs.readFile('file1.txt', 'utf8', callback);
+}
+
+function readFile2(data1, callback) {
+  fs.readFile('file2.txt', 'utf8', (err, data2) => {
+    callback(err, data1, data2);
+  });
+}
+
+readFile1((err, data1) => {
+  if (err) throw err;
+  readFile2(data1, (err, data1, data2) => {
+    if (err) throw err;
+    console.log(data1, data2);
+  });
+});
+```
+
+### 2. Promises
+
+```javascript
+const { promisify } = require('util');
+const readFile = promisify(fs.readFile);
+
+readFile('file1.txt', 'utf8')
+  .then(data1 => readFile('file2.txt', 'utf8'))
+  .then(data2 => readFile('file3.txt', 'utf8'))
+  .then(data3 => console.log(data3))
+  .catch(err => console.error(err));
+```
+
+### 3. Async/Await
+
+```javascript
+async function readFiles() {
+  try {
+    const data1 = await readFile('file1.txt', 'utf8');
+    const data2 = await readFile('file2.txt', 'utf8');
+    const data3 = await readFile('file3.txt', 'utf8');
+    console.log(data1, data2, data3);
+  } catch (err) {
+    console.error(err);
+  }
+}
+```
+
+## Common Callback Patterns
+
+### Sequential Execution
+
+```javascript
+function task1(callback) {
+  setTimeout(() => {
+    console.log('Task 1');
+    callback(null, 'result1');
+  }, 1000);
+}
+
+function task2(callback) {
+  setTimeout(() => {
+    console.log('Task 2');
+    callback(null, 'result2');
+  }, 500);
+}
+
+task1((err, result1) => {
+  if (err) throw err;
+  task2((err, result2) => {
+    if (err) throw err;
+    console.log('Done:', result1, result2);
+  });
+});
+```
+
+### Parallel Execution
+
+```javascript
+let completed = 0;
+const results = [];
+
+function checkComplete() {
+  completed++;
+  if (completed === 2) {
+    console.log('All done:', results);
+  }
+}
+
+task1((err, result) => {
+  results[0] = result;
+  checkComplete();
+});
+
+task2((err, result) => {
+  results[1] = result;
+  checkComplete();
+});
+```
+
+## Best Practices
+
+1. **Always handle errors** in callbacks
+2. **Use error-first convention**
+3. **Avoid deep nesting**
+4. **Use named functions**
+5. **Consider Promises/async-await**
+
+## Interview Tips
+
+- **Explain callbacks**: Functions passed as arguments
+- **Show error-first pattern**: Node.js convention
+- **Demonstrate callback hell**: Nested callbacks problem
+- **Discuss solutions**: Promises, async/await
+- **Mention asynchronous nature**: Non-blocking operations
+
+## Summary
+
+Callbacks are functions passed to other functions to be executed later. Node.js uses error-first callbacks (err, result). Avoid callback hell by using named functions, Promises, or async/await for better code readability and maintainability.

@@ -1,0 +1,445 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Kubernetes
+---
+
+# Kubernetes
+
+## What is Kubernetes?
+
+**Kubernetes (K8s)** is an open-source container orchestration platform that automates deployment, scaling, and management of containerized applications.
+
+## Core Concepts
+
+### Pod
+Smallest deployable unit, contains one or more containers.
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: myapp-pod
+spec:
+  containers:
+    - name: myapp
+      image: myapp:latest
+      ports:
+        - containerPort: 3000
+```
+
+### Deployment
+Manages replica sets and rolling updates.
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myapp
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: myapp
+  template:
+    metadata:
+      labels:
+        app: myapp
+    spec:
+      containers:
+        - name: myapp
+          image: myapp:latest
+          ports:
+            - containerPort: 3000
+          env:
+            - name: NODE_ENV
+              value: "production"
+```
+
+### Service
+Exposes pods to network traffic.
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: myapp-service
+spec:
+  selector:
+    app: myapp
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 3000
+  type: LoadBalancer
+```
+
+## Multi-Stack Deployments
+
+### Angular Application
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: angular-app
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: angular-app
+  template:
+    metadata:
+      labels:
+        app: angular-app
+    spec:
+      containers:
+        - name: angular-app
+          image: angular-app:latest
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "200m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: angular-app
+spec:
+  selector:
+    app: angular-app
+  ports:
+    - port: 80
+      targetPort: 80
+  type: LoadBalancer
+```
+
+### .NET API
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dotnet-api
+spec:
+  replicas: 5
+  selector:
+    matchLabels:
+      app: dotnet-api
+  template:
+    metadata:
+      labels:
+        app: dotnet-api
+    spec:
+      containers:
+        - name: dotnet-api
+          image: dotnet-api:latest
+          ports:
+            - containerPort: 80
+          env:
+            - name: ASPNETCORE_ENVIRONMENT
+              value: "Production"
+            - name: ConnectionStrings__DefaultConnection
+              valueFrom:
+                secretKeyRef:
+                  name: db-secret
+                  key: connection-string
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "500m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+```
+
+### Node.js Service
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nodejs-service
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: nodejs-service
+  template:
+    metadata:
+      labels:
+        app: nodejs-service
+    spec:
+      containers:
+        - name: nodejs-service
+          image: nodejs-service:latest
+          ports:
+            - containerPort: 3000
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: db-secret
+                  key: url
+```
+
+## ConfigMap & Secrets
+
+```yaml
+# ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+data:
+  API_URL: "https://api.example.com"
+  LOG_LEVEL: "info"
+  MAX_CONNECTIONS: "100"
+
+---
+# Secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: db-secret
+type: Opaque
+data:
+  username: YWRtaW4=  # base64 encoded
+  password: cGFzc3dvcmQxMjM=
+  connection-string: U2VydmVyPWRiO0RhdGFiYXNlPW15YXBwOw==
+
+---
+# Use in Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myapp
+spec:
+  template:
+    spec:
+      containers:
+        - name: myapp
+          envFrom:
+            - configMapRef:
+                name: app-config
+            - secretRef:
+                name: db-secret
+```
+
+## Database Deployments
+
+### PostgreSQL
+
+```yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:15
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: password
+          volumeMounts:
+            - name: postgres-storage
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-storage
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi
+```
+
+### MongoDB
+
+```yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mongodb
+spec:
+  serviceName: mongodb
+  replicas: 3
+  selector:
+    matchLabels:
+      app: mongodb
+  template:
+    metadata:
+      labels:
+        app: mongodb
+    spec:
+      containers:
+        - name: mongodb
+          image: mongo:6
+          ports:
+            - containerPort: 27017
+          volumeMounts:
+            - name: mongo-storage
+              mountPath: /data/db
+  volumeClaimTemplates:
+    - metadata:
+        name: mongo-storage
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 20Gi
+```
+
+## Auto-Scaling
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: myapp-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: myapp
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+```
+
+## Rolling Updates
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myapp
+spec:
+  replicas: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    spec:
+      containers:
+        - name: myapp
+          image: myapp:v2
+```
+
+```bash
+# Update deployment
+kubectl set image deployment/myapp myapp=myapp:v2
+
+# Check rollout status
+kubectl rollout status deployment/myapp
+
+# Rollback
+kubectl rollout undo deployment/myapp
+```
+
+## Health Checks
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myapp
+spec:
+  template:
+    spec:
+      containers:
+        - name: myapp
+          image: myapp:latest
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+```
+
+## Kubectl Commands
+
+```bash
+# Get resources
+kubectl get pods
+kubectl get deployments
+kubectl get services
+
+# Describe resource
+kubectl describe pod myapp-pod
+
+# View logs
+kubectl logs myapp-pod
+kubectl logs -f myapp-pod  # Follow
+
+# Execute command
+kubectl exec -it myapp-pod -- sh
+
+# Apply configuration
+kubectl apply -f deployment.yaml
+
+# Delete resource
+kubectl delete deployment myapp
+
+# Scale deployment
+kubectl scale deployment myapp --replicas=5
+
+# Port forward
+kubectl port-forward pod/myapp-pod 3000:3000
+```
+
+## Interview Tips
+
+- **Explain Kubernetes**: Container orchestration
+- **Show core concepts**: Pods, Deployments, Services
+- **Demonstrate multi-stack**: Angular, .NET, Node.js
+- **Discuss databases**: StatefulSets for persistence
+- **Mention scaling**: HPA for auto-scaling
+- **Show commands**: kubectl basics
+
+## Summary
+
+Kubernetes orchestrates containerized applications with automated deployment, scaling, and management. Use Deployments for stateless apps, StatefulSets for databases. Services expose pods to network. ConfigMaps and Secrets manage configuration. HPA enables auto-scaling. Supports all tech stacks and databases. Essential for modern cloud-native applications.

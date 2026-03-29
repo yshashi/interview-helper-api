@@ -1,0 +1,199 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Streams in Node.js
+---
+
+# Streams in Node.js
+
+## What are Streams?
+
+**Streams** are objects that let you read data from a source or write data to a destination in a continuous manner. They're ideal for handling large amounts of data efficiently.
+
+## Types of Streams
+
+### 1. Readable Streams
+
+```javascript
+const fs = require('fs');
+
+const readStream = fs.createReadStream('large-file.txt', {
+  encoding: 'utf8',
+  highWaterMark: 16 * 1024 // 16KB chunks
+});
+
+readStream.on('data', (chunk) => {
+  console.log('Chunk:', chunk);
+});
+
+readStream.on('end', () => {
+  console.log('Reading complete');
+});
+
+readStream.on('error', (err) => {
+  console.error('Error:', err);
+});
+```
+
+### 2. Writable Streams
+
+```javascript
+const writeStream = fs.createWriteStream('output.txt');
+
+writeStream.write('Hello ');
+writeStream.write('World\n');
+writeStream.end('Goodbye');
+
+writeStream.on('finish', () => {
+  console.log('Writing complete');
+});
+```
+
+### 3. Duplex Streams
+
+```javascript
+const { Duplex } = require('stream');
+
+const duplexStream = new Duplex({
+  read(size) {
+    this.push('data');
+    this.push(null); // End
+  },
+  write(chunk, encoding, callback) {
+    console.log('Writing:', chunk.toString());
+    callback();
+  }
+});
+```
+
+### 4. Transform Streams
+
+```javascript
+const { Transform } = require('stream');
+
+const upperCaseTransform = new Transform({
+  transform(chunk, encoding, callback) {
+    this.push(chunk.toString().toUpperCase());
+    callback();
+  }
+});
+
+process.stdin
+  .pipe(upperCaseTransform)
+  .pipe(process.stdout);
+```
+
+## Piping Streams
+
+```javascript
+const fs = require('fs');
+
+// Copy file using streams
+const readStream = fs.createReadStream('input.txt');
+const writeStream = fs.createWriteStream('output.txt');
+
+readStream.pipe(writeStream);
+
+// Chain multiple streams
+const zlib = require('zlib');
+const gzip = zlib.createGzip();
+
+fs.createReadStream('input.txt')
+  .pipe(gzip)
+  .pipe(fs.createWriteStream('input.txt.gz'));
+```
+
+## Stream Events
+
+```javascript
+const stream = fs.createReadStream('file.txt');
+
+stream.on('data', (chunk) => {
+  console.log('Data:', chunk);
+});
+
+stream.on('end', () => {
+  console.log('End of stream');
+});
+
+stream.on('error', (err) => {
+  console.error('Error:', err);
+});
+
+stream.on('close', () => {
+  console.log('Stream closed');
+});
+```
+
+## Backpressure Handling
+
+```javascript
+const readStream = fs.createReadStream('large-file.txt');
+const writeStream = fs.createWriteStream('output.txt');
+
+readStream.on('data', (chunk) => {
+  const canContinue = writeStream.write(chunk);
+  
+  if (!canContinue) {
+    readStream.pause();
+  }
+});
+
+writeStream.on('drain', () => {
+  readStream.resume();
+});
+```
+
+## Custom Readable Stream
+
+```javascript
+const { Readable } = require('stream');
+
+class NumberStream extends Readable {
+  constructor(max) {
+    super();
+    this.current = 0;
+    this.max = max;
+  }
+  
+  _read() {
+    if (this.current < this.max) {
+      this.push(String(this.current++));
+    } else {
+      this.push(null); // End stream
+    }
+  }
+}
+
+const numberStream = new NumberStream(10);
+numberStream.pipe(process.stdout);
+```
+
+## HTTP Streaming
+
+```javascript
+const http = require('http');
+const fs = require('fs');
+
+http.createServer((req, res) => {
+  const stream = fs.createReadStream('large-file.txt');
+  stream.pipe(res);
+}).listen(3000);
+```
+
+## Advantages
+
+1. **Memory efficient**: Process data in chunks
+2. **Time efficient**: Start processing before all data loaded
+3. **Composable**: Chain operations with pipe()
+
+## Interview Tips
+
+- **Explain streams**: Continuous data handling
+- **Show types**: Readable, Writable, Duplex, Transform
+- **Demonstrate piping**: Chain streams together
+- **Discuss backpressure**: Flow control mechanism
+- **Mention use cases**: Large files, HTTP, compression
+
+## Summary
+
+Streams handle data in chunks rather than loading everything into memory. Four types: Readable, Writable, Duplex, Transform. Use pipe() to chain streams. Efficient for large files and real-time data processing.

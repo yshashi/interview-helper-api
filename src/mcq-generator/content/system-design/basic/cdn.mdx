@@ -1,0 +1,506 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Content Delivery Networks (CDN)
+---
+
+# Content Delivery Networks (CDN)
+
+## What is a CDN?
+
+A Content Delivery Network (CDN) is a geographically distributed network of servers that delivers content to users from the nearest server location, reducing latency and improving performance.
+
+## How CDN Works
+
+```
+User Request → DNS → Nearest Edge Server → Origin Server (if cache miss)
+
+┌─────────┐
+│  User   │ (New York)
+└────┬────┘
+     │ Request: example.com/image.jpg
+     ↓
+┌─────────────┐
+│ CDN Edge    │ (New York)
+│ Server      │ Cache Hit → Return image
+└─────────────┘
+
+If Cache Miss:
+     ↓
+┌─────────────┐
+│ Origin      │ (California)
+│ Server      │ Return image + Cache at edge
+└─────────────┘
+```
+
+## CDN Benefits
+
+```javascript
+const cdnBenefits = {
+  performance: {
+    reducedLatency: 'Serve from nearest location',
+    fasterLoad: '50-60% faster page loads',
+    bandwidth: 'Reduced origin server bandwidth'
+  },
+  
+  reliability: {
+    highAvailability: '99.99% uptime',
+    loadBalancing: 'Distribute traffic across servers',
+    ddosProtection: 'Absorb DDoS attacks'
+  },
+  
+  scalability: {
+    trafficSpikes: 'Handle sudden traffic increases',
+    globalReach: 'Serve users worldwide',
+    edgeComputing: 'Process at edge locations'
+  },
+  
+  cost: {
+    bandwidthSavings: 'Reduce origin bandwidth costs',
+    serverLoad: 'Offload static content',
+    infrastructure: 'No need for global infrastructure'
+  }
+};
+```
+
+## CDN Configuration
+
+### CloudFront (AWS)
+
+```javascript
+const AWS = require('aws-sdk');
+const cloudfront = new AWS.CloudFront();
+
+async function createCDNDistribution() {
+  const params = {
+    DistributionConfig: {
+      CallerReference: Date.now().toString(),
+      Comment: 'My CDN Distribution',
+      Enabled: true,
+      
+      // Origin configuration
+      Origins: {
+        Quantity: 1,
+        Items: [{
+          Id: 'my-origin',
+          DomainName: 'myapp.s3.amazonaws.com',
+          S3OriginConfig: {
+            OriginAccessIdentity: ''
+          }
+        }]
+      },
+      
+      // Default cache behavior
+      DefaultCacheBehavior: {
+        TargetOriginId: 'my-origin',
+        ViewerProtocolPolicy: 'redirect-to-https',
+        AllowedMethods: {
+          Quantity: 2,
+          Items: ['GET', 'HEAD']
+        },
+        ForwardedValues: {
+          QueryString: false,
+          Cookies: { Forward: 'none' }
+        },
+        MinTTL: 0,
+        DefaultTTL: 86400,    // 24 hours
+        MaxTTL: 31536000      // 1 year
+      },
+      
+      // Price class
+      PriceClass: 'PriceClass_100',
+      
+      // SSL certificate
+      ViewerCertificate: {
+        CloudFrontDefaultCertificate: true
+      }
+    }
+  };
+  
+  const distribution = await cloudfront.createDistribution(params).promise();
+  console.log('Distribution created:', distribution.Distribution.DomainName);
+  return distribution;
+}
+```
+
+### Cache Control Headers
+
+```javascript
+// Express.js cache headers
+app.use(express.static('public', {
+  maxAge: '1y',  // Cache for 1 year
+  immutable: true
+}));
+
+// Custom cache headers
+app.get('/api/data', (req, res) => {
+  res.set({
+    'Cache-Control': 'public, max-age=3600',  // 1 hour
+    'ETag': generateETag(data),
+    'Last-Modified': new Date().toUTCString()
+  });
+  res.json(data);
+});
+
+// No cache for dynamic content
+app.get('/api/user/profile', (req, res) => {
+  res.set({
+    'Cache-Control': 'no-store, no-cache, must-revalidate, private',
+    'Pragma': 'no-cache',
+    'Expires': '0'
+  });
+  res.json(userProfile);
+});
+```
+
+## Cache Strategies
+
+```javascript
+const cacheStrategies = {
+  static: {
+    content: 'Images, CSS, JS, fonts',
+    ttl: '1 year',
+    headers: 'Cache-Control: public, max-age=31536000, immutable'
+  },
+  
+  semiStatic: {
+    content: 'HTML pages, API responses',
+    ttl: '1 hour to 1 day',
+    headers: 'Cache-Control: public, max-age=3600, must-revalidate'
+  },
+  
+  dynamic: {
+    content: 'User-specific data, real-time data',
+    ttl: 'No cache or very short',
+    headers: 'Cache-Control: private, max-age=0, no-cache'
+  },
+  
+  staleWhileRevalidate: {
+    content: 'Content that can be slightly stale',
+    ttl: 'Serve stale while fetching fresh',
+    headers: 'Cache-Control: max-age=3600, stale-while-revalidate=86400'
+  }
+};
+```
+
+## Cache Invalidation
+
+```javascript
+class CDNInvalidation {
+  constructor(cloudfront) {
+    this.cloudfront = cloudfront;
+  }
+  
+  // Invalidate specific paths
+  async invalidatePaths(distributionId, paths) {
+    const params = {
+      DistributionId: distributionId,
+      InvalidationBatch: {
+        CallerReference: Date.now().toString(),
+        Paths: {
+          Quantity: paths.length,
+          Items: paths
+        }
+      }
+    };
+    
+    const result = await this.cloudfront.createInvalidation(params).promise();
+    console.log('Invalidation created:', result.Invalidation.Id);
+    return result;
+  }
+  
+  // Invalidate all
+  async invalidateAll(distributionId) {
+    return await this.invalidatePaths(distributionId, ['/*']);
+  }
+  
+  // Invalidate by pattern
+  async invalidatePattern(distributionId, pattern) {
+    // Example: /images/*, /css/*
+    return await this.invalidatePaths(distributionId, [pattern]);
+  }
+}
+
+// Usage
+const invalidation = new CDNInvalidation(cloudfront);
+await invalidation.invalidatePaths('E1234567890', [
+  '/index.html',
+  '/css/styles.css',
+  '/js/app.js'
+]);
+```
+
+## Edge Computing
+
+```javascript
+// CloudFront Functions (lightweight)
+function handler(event) {
+  var request = event.request;
+  var uri = request.uri;
+  
+  // Redirect /old-page to /new-page
+  if (uri === '/old-page') {
+    return {
+      statusCode: 301,
+      statusDescription: 'Moved Permanently',
+      headers: {
+        location: { value: '/new-page' }
+      }
+    };
+  }
+  
+  // Add security headers
+  var response = event.response;
+  response.headers['strict-transport-security'] = {
+    value: 'max-age=31536000; includeSubdomains'
+  };
+  response.headers['x-content-type-options'] = {
+    value: 'nosniff'
+  };
+  
+  return response;
+}
+
+// Lambda@Edge (full Node.js)
+exports.handler = async (event) => {
+  const request = event.Records[0].cf.request;
+  
+  // A/B testing
+  const random = Math.random();
+  if (random < 0.5) {
+    request.uri = '/version-a' + request.uri;
+  } else {
+    request.uri = '/version-b' + request.uri;
+  }
+  
+  // Authentication
+  const headers = request.headers;
+  const authHeader = headers.authorization;
+  
+  if (!authHeader || !validateToken(authHeader[0].value)) {
+    return {
+      status: '401',
+      statusDescription: 'Unauthorized',
+      body: 'Authentication required'
+    };
+  }
+  
+  return request;
+};
+```
+
+## Image Optimization
+
+```javascript
+// Cloudinary configuration
+const cloudinary = require('cloudinary').v2;
+
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET
+});
+
+class ImageCDN {
+  // Upload image
+  async uploadImage(filePath) {
+    const result = await cloudinary.uploader.upload(filePath, {
+      folder: 'products',
+      transformation: [
+        { width: 1000, height: 1000, crop: 'limit' },
+        { quality: 'auto' },
+        { fetch_format: 'auto' }
+      ]
+    });
+    
+    return result.secure_url;
+  }
+  
+  // Generate responsive URLs
+  generateResponsiveURLs(publicId) {
+    return {
+      thumbnail: cloudinary.url(publicId, {
+        width: 150,
+        height: 150,
+        crop: 'thumb',
+        gravity: 'face'
+      }),
+      mobile: cloudinary.url(publicId, {
+        width: 400,
+        crop: 'scale',
+        quality: 'auto',
+        fetch_format: 'auto'
+      }),
+      desktop: cloudinary.url(publicId, {
+        width: 1200,
+        crop: 'scale',
+        quality: 'auto',
+        fetch_format: 'auto'
+      }),
+      webp: cloudinary.url(publicId, {
+        width: 1200,
+        crop: 'scale',
+        quality: 'auto',
+        fetch_format: 'webp'
+      })
+    };
+  }
+}
+```
+
+## CDN Performance Monitoring
+
+```javascript
+class CDNMonitoring {
+  async getCDNMetrics(distributionId) {
+    const cloudwatch = new AWS.CloudWatch();
+    
+    const metrics = await cloudwatch.getMetricStatistics({
+      Namespace: 'AWS/CloudFront',
+      MetricName: 'Requests',
+      Dimensions: [{
+        Name: 'DistributionId',
+        Value: distributionId
+      }],
+      StartTime: new Date(Date.now() - 3600000), // Last hour
+      EndTime: new Date(),
+      Period: 300,
+      Statistics: ['Sum', 'Average']
+    }).promise();
+    
+    return {
+      requests: metrics.Datapoints,
+      cacheHitRate: await this.getCacheHitRate(distributionId),
+      bandwidth: await this.getBandwidth(distributionId),
+      errors: await this.getErrorRate(distributionId)
+    };
+  }
+  
+  async getCacheHitRate(distributionId) {
+    // Calculate cache hit rate
+    const hits = await this.getMetric('CacheHitRate', distributionId);
+    return hits;
+  }
+}
+```
+
+## Multi-CDN Strategy
+
+```javascript
+class MultiCDN {
+  constructor() {
+    this.cdns = [
+      { name: 'CloudFront', url: 'https://d111111abcdef8.cloudfront.net', priority: 1 },
+      { name: 'Cloudflare', url: 'https://example.cloudflare.com', priority: 2 },
+      { name: 'Fastly', url: 'https://example.fastly.net', priority: 3 }
+    ];
+  }
+  
+  // Select CDN based on user location or performance
+  selectCDN(userLocation, performanceMetrics) {
+    // Check CDN health
+    const healthyCDNs = this.cdns.filter(cdn => 
+      performanceMetrics[cdn.name].healthy
+    );
+    
+    // Select based on latency
+    const fastest = healthyCDNs.reduce((min, cdn) => 
+      performanceMetrics[cdn.name].latency < performanceMetrics[min.name].latency ? cdn : min
+    );
+    
+    return fastest.url;
+  }
+  
+  // Generate asset URL with CDN
+  getAssetURL(path) {
+    const cdn = this.selectCDN(userLocation, performanceMetrics);
+    return `${cdn}${path}`;
+  }
+}
+```
+
+## .NET CDN Integration
+
+```csharp
+using Azure.Storage.Blobs;
+using Microsoft.Azure.Management.Cdn;
+
+public class CDNService
+{
+    private readonly BlobServiceClient _blobServiceClient;
+    private readonly string _cdnEndpoint;
+    
+    public CDNService(IConfiguration configuration)
+    {
+        _blobServiceClient = new BlobServiceClient(
+            configuration["Azure:Storage:ConnectionString"]
+        );
+        _cdnEndpoint = configuration["Azure:CDN:Endpoint"];
+    }
+    
+    // Upload file to blob storage (CDN origin)
+    public async Task<string> UploadFile(Stream fileStream, string fileName)
+    {
+        var containerClient = _blobServiceClient.GetBlobContainerClient("assets");
+        await containerClient.CreateIfNotExistsAsync();
+        
+        var blobClient = containerClient.GetBlobClient(fileName);
+        await blobClient.UploadAsync(fileStream, overwrite: true);
+        
+        // Set cache control
+        await blobClient.SetHttpHeadersAsync(new BlobHttpHeaders
+        {
+            CacheControl = "public, max-age=31536000"
+        });
+        
+        // Return CDN URL
+        return $"{_cdnEndpoint}/{fileName}";
+    }
+    
+    // Purge CDN cache
+    public async Task PurgeCDNCache(List<string> paths)
+    {
+        var cdnManagementClient = new CdnManagementClient(credentials);
+        
+        await cdnManagementClient.Endpoints.PurgeContentAsync(
+            resourceGroupName: "myResourceGroup",
+            profileName: "myCDNProfile",
+            endpointName: "myEndpoint",
+            contentPaths: paths
+        );
+    }
+}
+```
+
+## CDN Best Practices
+
+```javascript
+const cdnBestPractices = [
+  'Use CDN for all static assets',
+  'Set appropriate cache headers',
+  'Enable compression (gzip/brotli)',
+  'Use versioned URLs for cache busting',
+  'Implement cache invalidation strategy',
+  'Enable HTTPS',
+  'Use HTTP/2 or HTTP/3',
+  'Optimize images (WebP, AVIF)',
+  'Implement lazy loading',
+  'Use responsive images',
+  'Monitor CDN performance',
+  'Consider multi-CDN for redundancy',
+  'Use edge computing for dynamic content',
+  'Implement security headers at edge'
+];
+```
+
+## Interview Tips
+
+- **Explain CDN purpose**: Reduce latency, improve performance
+- **Show cache strategies**: Static, semi-static, dynamic
+- **Demonstrate invalidation**: How to update cached content
+- **Discuss edge computing**: Lambda@Edge, CloudFront Functions
+- **Mention providers**: CloudFront, Cloudflare, Fastly
+- **Show configuration**: Cache headers, TTL
+
+## Summary
+
+CDN delivers content from geographically distributed edge servers closest to users, reducing latency. Configure cache headers with appropriate TTL: long for static assets (1 year), short for dynamic content. Use cache invalidation to update content. Implement edge computing for request manipulation and authentication. Optimize images with automatic format selection and compression. Monitor cache hit rates and performance. Use multi-CDN for redundancy. Essential for global application performance.

@@ -1,0 +1,309 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Blue-Green Deployment
+---
+
+# Blue-Green Deployment
+
+## What is Blue-Green Deployment?
+
+**Blue-Green Deployment** runs two identical production environments (Blue and Green). Traffic switches from one to the other for zero-downtime deployments.
+
+## Architecture
+
+```
+┌─────────────┐
+│Load Balancer│
+└──────┬──────┘
+       │
+   ┌───┴────┐
+   │        │
+┌──▼──┐  ┌──▼──┐
+│Blue │  │Green│
+│(v1) │  │(v2) │
+└─────┘  └─────┘
+
+Switch traffic → Green becomes active
+```
+
+## Kubernetes Implementation
+
+```yaml
+# Blue deployment (current)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myapp-blue
+  labels:
+    app: myapp
+    version: blue
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: myapp
+      version: blue
+  template:
+    metadata:
+      labels:
+        app: myapp
+        version: blue
+    spec:
+      containers:
+        - name: myapp
+          image: myapp:v1.0.0
+          ports:
+            - containerPort: 3000
+
+---
+# Green deployment (new)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myapp-green
+  labels:
+    app: myapp
+    version: green
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: myapp
+      version: green
+  template:
+    metadata:
+      labels:
+        app: myapp
+        version: green
+    spec:
+      containers:
+        - name: myapp
+          image: myapp:v2.0.0
+          ports:
+            - containerPort: 3000
+
+---
+# Service (switches between blue and green)
+apiVersion: v1
+kind: Service
+metadata:
+  name: myapp
+spec:
+  selector:
+    app: myapp
+    version: blue  # Change to 'green' to switch
+  ports:
+    - port: 80
+      targetPort: 3000
+  type: LoadBalancer
+```
+
+## Deployment Script
+
+```bash
+#!/bin/bash
+
+# Deploy green version
+kubectl apply -f deployment-green.yaml
+
+# Wait for green to be ready
+kubectl wait --for=condition=available --timeout=300s deployment/myapp-green
+
+# Run smoke tests on green
+./smoke-tests.sh http://myapp-green:3000
+
+if [ $? -eq 0 ]; then
+  echo "Smoke tests passed. Switching traffic to green..."
+  
+  # Switch service to green
+  kubectl patch service myapp -p '{"spec":{"selector":{"version":"green"}}}'
+  
+  echo "Traffic switched to green"
+  
+  # Wait and monitor
+  sleep 300
+  
+  # If all good, remove blue
+  kubectl delete deployment myapp-blue
+  
+  # Rename green to blue for next deployment
+  kubectl label deployment myapp-green version=blue --overwrite
+  kubectl label deployment myapp-green app=myapp-blue --overwrite
+else
+  echo "Smoke tests failed. Keeping blue active."
+  kubectl delete deployment myapp-green
+  exit 1
+fi
+```
+
+## AWS Implementation
+
+```yaml
+# GitHub Actions with AWS
+name: Blue-Green Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Configure AWS
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+      
+      - name: Deploy to Green
+        run: |
+          # Deploy new version to green environment
+          aws deploy create-deployment \
+            --application-name myapp \
+            --deployment-group-name green \
+            --s3-location bucket=myapp-deploys,key=v2.zip,bundleType=zip
+      
+      - name: Wait for deployment
+        run: |
+          aws deploy wait deployment-successful \
+            --deployment-id $DEPLOYMENT_ID
+      
+      - name: Run smoke tests
+        run: ./smoke-tests.sh https://green.example.com
+      
+      - name: Switch traffic
+        run: |
+          # Update load balancer to point to green
+          aws elbv2 modify-listener \
+            --listener-arn $LISTENER_ARN \
+            --default-actions Type=forward,TargetGroupArn=$GREEN_TARGET_GROUP
+      
+      - name: Monitor metrics
+        run: |
+          # Monitor for 5 minutes
+          ./monitor-metrics.sh 300
+      
+      - name: Cleanup blue
+        if: success()
+        run: |
+          # Terminate blue instances
+          aws autoscaling update-auto-scaling-group \
+            --auto-scaling-group-name blue \
+            --desired-capacity 0
+```
+
+## Azure Implementation
+
+```yaml
+# Azure DevOps Pipeline
+trigger:
+  - main
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+stages:
+  - stage: DeployGreen
+    jobs:
+      - job: Deploy
+        steps:
+          - task: AzureWebApp@1
+            inputs:
+              azureSubscription: 'MySubscription'
+              appName: 'myapp-green'
+              package: '$(Build.ArtifactStagingDirectory)/**/*.zip'
+  
+  - stage: SmokeTest
+    dependsOn: DeployGreen
+    jobs:
+      - job: Test
+        steps:
+          - script: ./smoke-tests.sh https://myapp-green.azurewebsites.net
+  
+  - stage: SwitchTraffic
+    dependsOn: SmokeTest
+    jobs:
+      - job: Switch
+        steps:
+          - task: AzureCLI@2
+            inputs:
+              azureSubscription: 'MySubscription'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                # Swap slots
+                az webapp deployment slot swap \
+                  --resource-group myapp-rg \
+                  --name myapp \
+                  --slot green \
+                  --target-slot production
+```
+
+## Database Migrations
+
+```javascript
+// Handle database migrations carefully
+async function blueGreenMigration() {
+  // 1. Make schema changes backward compatible
+  await db.query(`
+    ALTER TABLE users 
+    ADD COLUMN new_field VARCHAR(255) NULL
+  `);
+  
+  // 2. Deploy green with code that works with both schemas
+  // 3. Migrate data
+  await db.query(`
+    UPDATE users 
+    SET new_field = old_field 
+    WHERE new_field IS NULL
+  `);
+  
+  // 4. After traffic switch, remove old column
+  await db.query(`
+    ALTER TABLE users 
+    DROP COLUMN old_field
+  `);
+}
+```
+
+## Rollback
+
+```bash
+#!/bin/bash
+
+# Quick rollback - switch back to blue
+kubectl patch service myapp -p '{"spec":{"selector":{"version":"blue"}}}'
+
+echo "Rolled back to blue version"
+```
+
+## Benefits
+
+1. **Zero downtime**: Instant switch
+2. **Easy rollback**: Switch back quickly
+3. **Testing**: Test green before switch
+4. **Reduced risk**: Validate before production
+
+## Challenges
+
+1. **Double resources**: Run two environments
+2. **Database complexity**: Schema compatibility
+3. **Stateful applications**: Session management
+4. **Cost**: Higher infrastructure cost
+
+## Interview Tips
+
+- **Explain pattern**: Two identical environments
+- **Show implementation**: Kubernetes, AWS, Azure
+- **Demonstrate switch**: Traffic routing
+- **Discuss databases**: Backward compatible migrations
+- **Mention rollback**: Quick recovery
+- **Show benefits**: Zero downtime
+
+## Summary
+
+Blue-Green Deployment eliminates downtime by running two identical environments. Deploy new version to green, test thoroughly, then switch traffic. Easy rollback by switching back to blue. Requires double resources. Handle database migrations carefully with backward compatibility. Works across Kubernetes, AWS, and Azure.

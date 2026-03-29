@@ -1,0 +1,705 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Design Rate Limiter
+---
+
+# Design Rate Limiter
+
+## Requirements
+
+### Functional Requirements
+
+- Limit requests per user/IP/API key
+- Support multiple time windows (second, minute, hour, day)
+- Different limits for different endpoints
+- Different limits for different user tiers
+- Return remaining quota in response headers
+- Configurable limits without code changes
+
+### Non-Functional Requirements
+
+**Performance:**
+- Low latency (< 10ms overhead)
+- High throughput (100K requests/second)
+
+**Accuracy:**
+- Acceptable to be slightly inaccurate (distributed system)
+- No false positives (don't block legitimate requests)
+
+**Scalability:**
+- Distributed rate limiting across servers
+- Handle millions of users
+
+## Rate Limiting Algorithms
+
+### 1. Token Bucket
+
+**Concept:** Bucket holds tokens, each request consumes token, tokens refill at fixed rate
+
+**Characteristics:**
+- Allows bursts up to bucket capacity
+- Smooth rate limiting
+- Memory efficient
+
+**Implementation:**
+
+```javascript
+class TokenBucket {
+  constructor(capacity, refillRate) {
+    this.capacity = capacity;
+    this.tokens = capacity;
+    this.refillRate = refillRate; // tokens per second
+    this.lastRefill = Date.now();
+  }
+  
+  refill() {
+    const now = Date.now();
+    const timePassed = (now - this.lastRefill) / 1000;
+    const tokensToAdd = timePassed * this.refillRate;
+    
+    this.tokens = Math.min(this.capacity, this.tokens + tokensToAdd);
+    this.lastRefill = now;
+  }
+  
+  consume(tokens = 1) {
+    this.refill();
+    
+    if (this.tokens >= tokens) {
+      this.tokens -= tokens;
+      return {
+        allowed: true,
+        remaining: Math.floor(this.tokens)
+      };
+    }
+    
+    return {
+      allowed: false,
+      remaining: 0,
+      retryAfter: Math.ceil((tokens - this.tokens) / this.refillRate)
+    };
+  }
+}
+```
+
+### 2. Leaky Bucket
+
+**Concept:** Requests enter bucket, processed at fixed rate, excess overflow (rejected)
+
+**Characteristics:**
+- Smooth output rate
+- Queue-based
+- Good for traffic shaping
+
+**Implementation:**
+
+```javascript
+class LeakyBucket {
+  constructor(capacity, leakRate) {
+    this.capacity = capacity;
+    this.queue = [];
+    this.leakRate = leakRate; // requests per second
+    this.lastLeak = Date.now();
+    
+    this.startLeaking();
+  }
+  
+  startLeaking() {
+    setInterval(() => {
+      if (this.queue.length > 0) {
+        this.queue.shift(); // Process one request
+      }
+    }, 1000 / this.leakRate);
+  }
+  
+  addRequest(request) {
+    if (this.queue.length < this.capacity) {
+      this.queue.push(request);
+      return {
+        allowed: true,
+        queueSize: this.queue.length
+      };
+    }
+    
+    return {
+      allowed: false,
+      reason: 'Queue full'
+    };
+  }
+}
+```
+
+### 3. Fixed Window Counter
+
+**Concept:** Count requests in fixed time windows
+
+**Characteristics:**
+- Simple to implement
+- Boundary burst issue
+- Memory efficient
+
+**Implementation:**
+
+```javascript
+class FixedWindowCounter {
+  constructor(redis) {
+    this.redis = redis;
+  }
+  
+  async isAllowed(key, limit, windowSeconds) {
+    const now = Date.now();
+    const windowKey = `${key}:${Math.floor(now / (windowSeconds * 1000))}`;
+    
+    const count = await this.redis.incr(windowKey);
+    
+    if (count === 1) {
+      await this.redis.expire(windowKey, windowSeconds);
+    }
+    
+    return {
+      allowed: count <= limit,
+      current: count,
+      limit,
+      resetAt: Math.ceil(now / (windowSeconds * 1000)) * windowSeconds * 1000
+    };
+  }
+}
+```
+
+### 4. Sliding Window Log
+
+**Concept:** Store timestamp of each request, count in sliding window
+
+**Characteristics:**
+- Most accurate
+- High memory usage
+- Expensive computation
+
+**Implementation:**
+
+```javascript
+class SlidingWindowLog {
+  constructor(redis) {
+    this.redis = redis;
+  }
+  
+  async isAllowed(key, limit, windowSeconds) {
+    const now = Date.now();
+    const windowStart = now - (windowSeconds * 1000);
+    
+    // Remove old entries
+    await this.redis.zremrangebyscore(key, 0, windowStart);
+    
+    // Count current entries
+    const count = await this.redis.zcard(key);
+    
+    if (count < limit) {
+      // Add current request
+      await this.redis.zadd(key, now, `${now}-${Math.random()}`);
+      await this.redis.expire(key, windowSeconds);
+      
+      return {
+        allowed: true,
+        current: count + 1,
+        limit,
+        remaining: limit - count - 1
+      };
+    }
+    
+    return {
+      allowed: false,
+      current: count,
+      limit,
+      remaining: 0
+    };
+  }
+}
+```
+
+### 5. Sliding Window Counter
+
+**Concept:** Weighted count from current and previous windows
+
+**Characteristics:**
+- Good balance of accuracy and efficiency
+- Less memory than sliding log
+- Prevents boundary bursts
+
+**Implementation:**
+
+```javascript
+class SlidingWindowCounter {
+  constructor(redis) {
+    this.redis = redis;
+  }
+  
+  async isAllowed(key, limit, windowSeconds) {
+    const now = Date.now();
+    const currentWindow = Math.floor(now / (windowSeconds * 1000));
+    const previousWindow = currentWindow - 1;
+    
+    const currentKey = `${key}:${currentWindow}`;
+    const previousKey = `${key}:${previousWindow}`;
+    
+    // Get counts
+    const currentCount = parseInt(await this.redis.get(currentKey) || '0');
+    const previousCount = parseInt(await this.redis.get(previousKey) || '0');
+    
+    // Calculate position in current window (0 to 1)
+    const windowPosition = (now % (windowSeconds * 1000)) / (windowSeconds * 1000);
+    
+    // Weighted count
+    const estimatedCount = previousCount * (1 - windowPosition) + currentCount;
+    
+    if (estimatedCount < limit) {
+      await this.redis.incr(currentKey);
+      await this.redis.expire(currentKey, windowSeconds * 2);
+      
+      return {
+        allowed: true,
+        current: Math.ceil(estimatedCount) + 1,
+        limit,
+        remaining: Math.floor(limit - estimatedCount - 1)
+      };
+    }
+    
+    return {
+      allowed: false,
+      current: Math.ceil(estimatedCount),
+      limit,
+      remaining: 0
+    };
+  }
+}
+```
+
+## Distributed Rate Limiter
+
+```javascript
+class DistributedRateLimiter {
+  constructor(redis) {
+    this.redis = redis;
+  }
+  
+  async checkLimit(identifier, rules) {
+    const results = [];
+    
+    for (const rule of rules) {
+      const result = await this.checkSingleRule(identifier, rule);
+      results.push(result);
+      
+      if (!result.allowed) {
+        return {
+          allowed: false,
+          rule: rule.name,
+          ...result
+        };
+      }
+    }
+    
+    return {
+      allowed: true,
+      limits: results
+    };
+  }
+  
+  async checkSingleRule(identifier, rule) {
+    const key = `rate_limit:${rule.name}:${identifier}`;
+    
+    switch (rule.algorithm) {
+      case 'fixed_window':
+        return await this.fixedWindow(key, rule.limit, rule.window);
+      case 'sliding_window':
+        return await this.slidingWindow(key, rule.limit, rule.window);
+      case 'token_bucket':
+        return await this.tokenBucket(key, rule.capacity, rule.refillRate);
+      default:
+        throw new Error(`Unknown algorithm: ${rule.algorithm}`);
+    }
+  }
+  
+  async fixedWindow(key, limit, windowSeconds) {
+    const now = Date.now();
+    const windowKey = `${key}:${Math.floor(now / (windowSeconds * 1000))}`;
+    
+    const multi = this.redis.multi();
+    multi.incr(windowKey);
+    multi.expire(windowKey, windowSeconds);
+    
+    const results = await multi.exec();
+    const count = results[0][1];
+    
+    return {
+      allowed: count <= limit,
+      current: count,
+      limit,
+      remaining: Math.max(0, limit - count),
+      resetAt: Math.ceil(now / (windowSeconds * 1000)) * windowSeconds * 1000
+    };
+  }
+  
+  async slidingWindow(key, limit, windowSeconds) {
+    const now = Date.now();
+    const currentWindow = Math.floor(now / (windowSeconds * 1000));
+    const previousWindow = currentWindow - 1;
+    
+    const currentKey = `${key}:${currentWindow}`;
+    const previousKey = `${key}:${previousWindow}`;
+    
+    const multi = this.redis.multi();
+    multi.get(currentKey);
+    multi.get(previousKey);
+    
+    const results = await multi.exec();
+    const currentCount = parseInt(results[0][1] || '0');
+    const previousCount = parseInt(results[1][1] || '0');
+    
+    const windowPosition = (now % (windowSeconds * 1000)) / (windowSeconds * 1000);
+    const estimatedCount = previousCount * (1 - windowPosition) + currentCount;
+    
+    if (estimatedCount < limit) {
+      await this.redis.incr(currentKey);
+      await this.redis.expire(currentKey, windowSeconds * 2);
+      
+      return {
+        allowed: true,
+        current: Math.ceil(estimatedCount) + 1,
+        limit,
+        remaining: Math.floor(limit - estimatedCount - 1)
+      };
+    }
+    
+    return {
+      allowed: false,
+      current: Math.ceil(estimatedCount),
+      limit,
+      remaining: 0
+    };
+  }
+  
+  async tokenBucket(key, capacity, refillRate) {
+    const script = `
+      local key = KEYS[1]
+      local capacity = tonumber(ARGV[1])
+      local refillRate = tonumber(ARGV[2])
+      local now = tonumber(ARGV[3])
+      local requested = tonumber(ARGV[4])
+      
+      local bucket = redis.call('HMGET', key, 'tokens', 'lastRefill')
+      local tokens = tonumber(bucket[1]) or capacity
+      local lastRefill = tonumber(bucket[2]) or now
+      
+      local timePassed = (now - lastRefill) / 1000
+      local tokensToAdd = timePassed * refillRate
+      tokens = math.min(capacity, tokens + tokensToAdd)
+      
+      if tokens >= requested then
+        tokens = tokens - requested
+        redis.call('HMSET', key, 'tokens', tokens, 'lastRefill', now)
+        redis.call('EXPIRE', key, 3600)
+        return {1, math.floor(tokens)}
+      else
+        return {0, 0}
+      end
+    `;
+    
+    const result = await this.redis.eval(
+      script,
+      1,
+      key,
+      capacity,
+      refillRate,
+      Date.now(),
+      1
+    );
+    
+    return {
+      allowed: result[0] === 1,
+      remaining: result[1]
+    };
+  }
+}
+```
+
+## Rate Limiter Middleware
+
+```javascript
+const express = require('express');
+const app = express();
+
+class RateLimiterMiddleware {
+  constructor(limiter, config) {
+    this.limiter = limiter;
+    this.config = config;
+  }
+  
+  middleware() {
+    return async (req, res, next) => {
+      try {
+        // Get identifier (user ID, API key, or IP)
+        const identifier = this.getIdentifier(req);
+        
+        // Get rules for this endpoint
+        const rules = this.getRulesForEndpoint(req.path, req.user);
+        
+        // Check rate limit
+        const result = await this.limiter.checkLimit(identifier, rules);
+        
+        // Set response headers
+        this.setHeaders(res, result);
+        
+        if (!result.allowed) {
+          return res.status(429).json({
+            error: 'Too Many Requests',
+            message: `Rate limit exceeded for ${result.rule}`,
+            retryAfter: result.resetAt ? Math.ceil((result.resetAt - Date.now()) / 1000) : 60
+          });
+        }
+        
+        next();
+      } catch (error) {
+        console.error('Rate limiter error:', error);
+        // Fail open - allow request if rate limiter fails
+        next();
+      }
+    };
+  }
+  
+  getIdentifier(req) {
+    if (req.user) {
+      return `user:${req.user.id}`;
+    }
+    
+    if (req.headers['x-api-key']) {
+      return `api_key:${req.headers['x-api-key']}`;
+    }
+    
+    return `ip:${req.ip}`;
+  }
+  
+  getRulesForEndpoint(path, user) {
+    const rules = [];
+    
+    // Global rate limit
+    rules.push({
+      name: 'global',
+      algorithm: 'sliding_window',
+      limit: 1000,
+      window: 3600 // 1 hour
+    });
+    
+    // Per-endpoint limits
+    if (path.startsWith('/api/search')) {
+      rules.push({
+        name: 'search',
+        algorithm: 'token_bucket',
+        capacity: 10,
+        refillRate: 1 // 1 per second
+      });
+    }
+    
+    // User tier limits
+    if (user) {
+      const tierLimits = {
+        free: { limit: 100, window: 3600 },
+        basic: { limit: 1000, window: 3600 },
+        premium: { limit: 10000, window: 3600 }
+      };
+      
+      const tierLimit = tierLimits[user.tier] || tierLimits.free;
+      
+      rules.push({
+        name: 'user_tier',
+        algorithm: 'sliding_window',
+        ...tierLimit
+      });
+    }
+    
+    return rules;
+  }
+  
+  setHeaders(res, result) {
+    if (result.limits && result.limits.length > 0) {
+      const mostRestrictive = result.limits.reduce((min, curr) => 
+        curr.remaining < min.remaining ? curr : min
+      );
+      
+      res.set({
+        'X-RateLimit-Limit': mostRestrictive.limit,
+        'X-RateLimit-Remaining': mostRestrictive.remaining,
+        'X-RateLimit-Reset': mostRestrictive.resetAt || ''
+      });
+    }
+    
+    if (!result.allowed && result.resetAt) {
+      res.set('Retry-After', Math.ceil((result.resetAt - Date.now()) / 1000));
+    }
+  }
+}
+
+// Usage
+const limiter = new DistributedRateLimiter(redis);
+const rateLimiterMiddleware = new RateLimiterMiddleware(limiter, config);
+
+app.use(rateLimiterMiddleware.middleware());
+```
+
+## Configuration Management
+
+```javascript
+class RateLimitConfig {
+  constructor(redis) {
+    this.redis = redis;
+    this.cache = new Map();
+  }
+  
+  async getRules(endpoint, userTier) {
+    const cacheKey = `${endpoint}:${userTier}`;
+    
+    // Check cache
+    if (this.cache.has(cacheKey)) {
+      return this.cache.get(cacheKey);
+    }
+    
+    // Load from Redis
+    const rules = await this.redis.get(`rate_limit_config:${cacheKey}`);
+    
+    if (rules) {
+      const parsed = JSON.parse(rules);
+      this.cache.set(cacheKey, parsed);
+      return parsed;
+    }
+    
+    // Default rules
+    return this.getDefaultRules(endpoint, userTier);
+  }
+  
+  async updateRules(endpoint, userTier, rules) {
+    const cacheKey = `${endpoint}:${userTier}`;
+    
+    // Save to Redis
+    await this.redis.set(
+      `rate_limit_config:${cacheKey}`,
+      JSON.stringify(rules)
+    );
+    
+    // Update cache
+    this.cache.set(cacheKey, rules);
+    
+    // Publish update event
+    await this.redis.publish('rate_limit_config_update', cacheKey);
+  }
+}
+```
+
+## .NET Implementation
+
+```csharp
+using StackExchange.Redis;
+
+public class RateLimiter
+{
+    private readonly IConnectionMultiplexer _redis;
+    
+    public async Task<RateLimitResult> CheckLimitAsync(
+        string identifier,
+        int limit,
+        TimeSpan window)
+    {
+        var db = _redis.GetDatabase();
+        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var windowMs = (long)window.TotalMilliseconds;
+        var currentWindow = now / windowMs;
+        var previousWindow = currentWindow - 1;
+        
+        var currentKey = $"rate_limit:{identifier}:{currentWindow}";
+        var previousKey = $"rate_limit:{identifier}:{previousWindow}";
+        
+        // Get counts
+        var currentCount = (int)(await db.StringGetAsync(currentKey));
+        var previousCount = (int)(await db.StringGetAsync(previousKey));
+        
+        // Calculate weighted count
+        var windowPosition = (double)(now % windowMs) / windowMs;
+        var estimatedCount = previousCount * (1 - windowPosition) + currentCount;
+        
+        if (estimatedCount < limit)
+        {
+            await db.StringIncrementAsync(currentKey);
+            await db.KeyExpireAsync(currentKey, window * 2);
+            
+            return new RateLimitResult
+            {
+                Allowed = true,
+                Current = (int)Math.Ceiling(estimatedCount) + 1,
+                Limit = limit,
+                Remaining = (int)Math.Floor(limit - estimatedCount - 1)
+            };
+        }
+        
+        return new RateLimitResult
+        {
+            Allowed = false,
+            Current = (int)Math.Ceiling(estimatedCount),
+            Limit = limit,
+            Remaining = 0
+        };
+    }
+}
+
+// Middleware
+public class RateLimitMiddleware
+{
+    private readonly RequestDelegate _next;
+    private readonly RateLimiter _rateLimiter;
+    
+    public async Task InvokeAsync(HttpContext context)
+    {
+        var identifier = GetIdentifier(context);
+        var result = await _rateLimiter.CheckLimitAsync(
+            identifier,
+            limit: 100,
+            window: TimeSpan.FromHours(1)
+        );
+        
+        context.Response.Headers.Add("X-RateLimit-Limit", result.Limit.ToString());
+        context.Response.Headers.Add("X-RateLimit-Remaining", result.Remaining.ToString());
+        
+        if (!result.Allowed)
+        {
+            context.Response.StatusCode = 429;
+            await context.Response.WriteAsJsonAsync(new
+            {
+                error = "Too Many Requests"
+            });
+            return;
+        }
+        
+        await _next(context);
+    }
+}
+```
+
+## Best Practices
+
+- **Choose appropriate algorithm** - Token bucket for bursts, sliding window for accuracy
+- **Fail open** - Allow requests if rate limiter fails
+- **Use Redis** - Distributed state management
+- **Set response headers** - X-RateLimit-* headers
+- **Different limits per tier** - Monetization strategy
+- **Monitor violations** - Detect abuse patterns
+- **Graceful degradation** - Don't break system if Redis down
+- **Cache configuration** - Reduce Redis load
+- **Use Lua scripts** - Atomic operations in Redis
+
+## Interview Tips
+
+- **Explain algorithms** - Token bucket, sliding window
+- **Show distributed implementation** - Redis-based
+- **Demonstrate middleware** - Express/ASP.NET
+- **Discuss trade-offs** - Accuracy vs performance
+- **Mention headers** - Standard rate limit headers
+- **Address failure modes** - Fail open, Redis unavailable
+
+## Summary
+
+Rate limiter controls request frequency to prevent abuse. Token bucket allows bursts with fixed refill rate. Sliding window counter balances accuracy and efficiency using weighted counts. Fixed window is simple but has boundary burst issue. Implement with Redis for distributed systems. Use Lua scripts for atomic operations. Return standard headers (X-RateLimit-Limit, Remaining, Reset). Support multiple rules (global, per-endpoint, per-tier). Fail open if rate limiter unavailable. Handle 100K requests/second with < 10ms overhead. Essential for API protection and fair usage enforcement.

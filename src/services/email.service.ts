@@ -5,6 +5,7 @@ import {
   getSubmissionConfirmationEmail,
   getApprovedEmail,
   getRejectedEmail,
+  getAnnouncementEmail,
   type EmailTemplate
 } from '../utils/email-templates.js';
 
@@ -118,6 +119,16 @@ class EmailService {
     reviewNotes?: string
   ): Promise<boolean> {
     const template = getRejectedEmail(userName, question, techStack, reviewNotes);
+    return this.sendEmail(to, template);
+  }
+
+  async sendAnnouncement(
+    to: string,
+    userName: string,
+    subject: string,
+    message: string
+  ): Promise<boolean> {
+    const template = getAnnouncementEmail(userName, subject, message);
     return this.sendEmail(to, template);
   }
 

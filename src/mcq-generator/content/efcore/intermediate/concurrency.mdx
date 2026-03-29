@@ -1,0 +1,134 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Handling Concurrency in EF Core
+---
+
+# Handling Concurrency in EF Core
+
+## What is Concurrency?
+
+**Concurrency** handling prevents conflicts when multiple users try to update the same data simultaneously. EF Core uses optimistic concurrency by default.
+
+## Concurrency Tokens
+
+### Using Timestamp
+
+```csharp
+public class Product
+{
+    public int Id { get; set; }
+    public string Name { get; set; }
+    public decimal Price { get; set; }
+    
+    [Timestamp]
+    public byte[] RowVersion { get; set; }
+}
+
+// Fluent API
+modelBuilder.Entity<Product>()
+    .Property(p => p.RowVersion)
+    .IsRowVersion();
+```
+
+### Using ConcurrencyCheck
+
+```csharp
+public class Product
+{
+    public int Id { get; set; }
+    
+    [ConcurrencyCheck]
+    public string Name { get; set; }
+    
+    [ConcurrencyCheck]
+    public decimal Price { get; set; }
+}
+```
+
+## Handling Concurrency Conflicts
+
+```csharp
+try
+{
+    var product = await context.Products.FindAsync(id);
+    product.Price = newPrice;
+    await context.SaveChangesAsync();
+}
+catch (DbUpdateConcurrencyException ex)
+{
+    var entry = ex.Entries.Single();
+    var databaseValues = await entry.GetDatabaseValuesAsync();
+    
+    if (databaseValues == null)
+    {
+        // Entity was deleted
+        Console.WriteLine("Entity was deleted by another user");
+    }
+    else
+    {
+        // Entity was modified
+        var databaseEntity = (Product)databaseValues.ToObject();
+        Console.WriteLine($"Database value: {databaseEntity.Price}");
+        
+        // Resolve conflict
+        entry.OriginalValues.SetValues(databaseValues);
+        await context.SaveChangesAsync();
+    }
+}
+```
+
+## Conflict Resolution Strategies
+
+### Client Wins
+
+```csharp
+catch (DbUpdateConcurrencyException ex)
+{
+    var entry = ex.Entries.Single();
+    var databaseValues = await entry.GetDatabaseValuesAsync();
+    entry.OriginalValues.SetValues(databaseValues);
+    await context.SaveChangesAsync();
+}
+```
+
+### Database Wins
+
+```csharp
+catch (DbUpdateConcurrencyException ex)
+{
+    var entry = ex.Entries.Single();
+    await entry.ReloadAsync();
+}
+```
+
+### Merge Values
+
+```csharp
+catch (DbUpdateConcurrencyException ex)
+{
+    var entry = ex.Entries.Single();
+    var proposedValues = entry.CurrentValues;
+    var databaseValues = await entry.GetDatabaseValuesAsync();
+    
+    foreach (var property in proposedValues.Properties)
+    {
+        var proposedValue = proposedValues[property];
+        var databaseValue = databaseValues[property];
+        
+        // Custom merge logic
+        if (property.Name == "Price")
+        {
+            proposedValues[property] = Math.Max(
+                (decimal)proposedValue, 
+                (decimal)databaseValue);
+        }
+    }
+    
+    entry.OriginalValues.SetValues(databaseValues);
+    await context.SaveChangesAsync();
+}
+```
+
+## Summary
+
+EF Core uses optimistic concurrency with tokens like Timestamp or ConcurrencyCheck. Handle DbUpdateConcurrencyException to resolve conflicts using client wins, database wins, or merge strategies.

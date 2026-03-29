@@ -1,0 +1,462 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Partitioning Strategies
+---
+
+# Partitioning Strategies
+
+## What is Partitioning?
+
+**Partitioning** (also called sharding) divides data across multiple nodes to achieve horizontal scalability.
+
+## Partitioning Strategies
+
+### 1. Range Partitioning
+
+```javascript
+// Partition by value ranges
+const rangePartitioning = {
+  shard1: { range: 'A-F', users: ['Alice', 'Bob', 'Charlie'] },
+  shard2: { range: 'G-M', users: ['George', 'Helen', 'Mike'] },
+  shard3: { range: 'N-Z', users: ['Nancy', 'Oscar', 'Zoe'] }
+};
+
+// MongoDB range-based sharding
+sh.shardCollection("mydb.users", { lastName: 1 });
+
+// Pros: Range queries efficient
+// Cons: Uneven distribution (hotspots)
+```
+
+### 2. Hash Partitioning
+
+```javascript
+// Partition by hash of key
+function getPartition(key, numPartitions) {
+  const hash = hashFunction(key);
+  return hash % numPartitions;
+}
+
+// MongoDB hashed sharding
+sh.shardCollection("mydb.users", { userId: "hashed" });
+
+// Pros: Even distribution
+// Cons: Range queries require scatter-gather
+```
+
+### 3. List Partitioning
+
+```javascript
+// Partition by discrete values
+const listPartitioning = {
+  shard1: { countries: ['US', 'CA', 'MX'] },
+  shard2: { countries: ['UK', 'FR', 'DE'] },
+  shard3: { countries: ['JP', 'CN', 'IN'] }
+};
+
+// Cassandra with list partitioning
+CREATE TABLE users_by_country (
+  country TEXT,
+  user_id UUID,
+  name TEXT,
+  PRIMARY KEY (country, user_id)
+);
+
+// Pros: Logical grouping
+// Cons: Uneven distribution
+```
+
+### 4. Composite Partitioning
+
+```javascript
+// Combine multiple strategies
+sh.shardCollection("mydb.orders", {
+  customerId: "hashed",
+  orderDate: 1
+});
+
+// First hash customerId, then range on orderDate
+// Pros: Balanced distribution + range queries
+// Cons: More complex
+```
+
+## MongoDB Partitioning
+
+### Chunk-Based Sharding
+
+```javascript
+// MongoDB divides data into chunks
+const chunkExample = {
+  chunk1: { min: { userId: MinKey }, max: { userId: 'user-1000' } },
+  chunk2: { min: { userId: 'user-1000' }, max: { userId: 'user-2000' } },
+  chunk3: { min: { userId: 'user-2000' }, max: { userId: MaxKey } }
+};
+
+// View chunks
+db.getSiblingDB('config').chunks.find({ ns: "mydb.users" });
+
+// Split chunk
+sh.splitAt("mydb.users", { userId: "user-1500" });
+
+// Move chunk
+sh.moveChunk("mydb.users", { userId: "user-1000" }, "shard02");
+```
+
+### Zone Sharding
+
+```javascript
+// Partition by geographic zones
+sh.addShardToZone("shard01", "US");
+sh.addShardToZone("shard02", "EU");
+sh.addShardToZone("shard03", "ASIA");
+
+sh.updateZoneKeyRange(
+  "mydb.users",
+  { country: "US" },
+  { country: "US\uffff" },
+  "US"
+);
+
+sh.updateZoneKeyRange(
+  "mydb.users",
+  { country: "UK" },
+  { country: "UK\uffff" },
+  "EU"
+);
+
+// Users automatically routed to correct zone
+```
+
+## Cassandra Partitioning
+
+### Token-Based Partitioning
+
+```javascript
+// Cassandra uses consistent hashing
+const cassandraPartitioning = {
+  node1: { tokenRange: '-9223372036854775808 to -3074457345618258603' },
+  node2: { tokenRange: '-3074457345618258602 to 3074457345618258602' },
+  node3: { tokenRange: '3074457345618258603 to 9223372036854775807' }
+};
+
+// Partition key determines token
+CREATE TABLE users (
+  user_id UUID PRIMARY KEY,
+  name TEXT,
+  email TEXT
+);
+
+// Token = hash(user_id) % total_tokens
+```
+
+### Compound Partition Keys
+
+```javascript
+// Multiple columns in partition key
+CREATE TABLE user_events (
+  user_id UUID,
+  event_type TEXT,
+  timestamp TIMESTAMP,
+  data TEXT,
+  PRIMARY KEY ((user_id, event_type), timestamp)
+);
+
+// Both user_id and event_type determine partition
+// Better distribution than single column
+```
+
+## DynamoDB Partitioning
+
+### Partition Key Design
+
+```javascript
+// Good partition key (high cardinality)
+const goodDesign = {
+  TableName: 'Orders',
+  KeySchema: [
+    { AttributeName: 'orderId', KeyType: 'HASH' }  // UUID
+  ]
+};
+
+// Bad partition key (low cardinality)
+const badDesign = {
+  TableName: 'Orders',
+  KeySchema: [
+    { AttributeName: 'status', KeyType: 'HASH' }  // Only 3-4 values
+  ]
+};
+
+// Composite key for better queries
+const compositeDesign = {
+  TableName: 'Orders',
+  KeySchema: [
+    { AttributeName: 'customerId', KeyType: 'HASH' },
+    { AttributeName: 'orderDate', KeyType: 'RANGE' }
+  ]
+};
+```
+
+### Write Sharding Pattern
+
+```javascript
+// Add random suffix to distribute writes
+async function createOrder(customerId, orderData) {
+  const suffix = Math.floor(Math.random() * 100);
+  const partitionKey = `${customerId}#${suffix}`;
+  
+  await docClient.send(new PutCommand({
+    TableName: 'Orders',
+    Item: {
+      pk: partitionKey,
+      sk: orderData.orderId,
+      customerId,
+      ...orderData
+    }
+  }));
+}
+
+// Query all partitions
+async function getCustomerOrders(customerId) {
+  const promises = [];
+  for (let i = 0; i < 100; i++) {
+    promises.push(
+      docClient.send(new QueryCommand({
+        TableName: 'Orders',
+        KeyConditionExpression: 'pk = :pk',
+        ExpressionAttributeValues: {
+          ':pk': `${customerId}#${i}`
+        }
+      }))
+    );
+  }
+  
+  const results = await Promise.all(promises);
+  return results.flatMap(r => r.Items);
+}
+```
+
+## Redis Cluster Partitioning
+
+### Hash Slot Partitioning
+
+```javascript
+// Redis Cluster uses 16384 hash slots
+const Redis = require('ioredis');
+
+const cluster = new Redis.Cluster([
+  { host: '127.0.0.1', port: 7000 },
+  { host: '127.0.0.1', port: 7001 },
+  { host: '127.0.0.1', port: 7002 }
+]);
+
+// Key mapped to slot: CRC16(key) % 16384
+const slot = cluster.keySlot('user:123');
+console.log(`Key maps to slot: ${slot}`);
+
+// Hash tags for multi-key operations
+await cluster.set('{user:123}:profile', 'data1');
+await cluster.set('{user:123}:settings', 'data2');
+// Both keys on same node due to {user:123} tag
+```
+
+## Hotspot Prevention
+
+```javascript
+// Avoid monotonically increasing keys
+const hotspotExamples = {
+  bad: {
+    key: 'timestamp',
+    problem: 'All new writes go to same partition',
+    example: '2024-01-01-12:00:00'
+  },
+  
+  good: {
+    key: 'hash(timestamp)',
+    solution: 'Distribute writes evenly',
+    example: 'abc123-2024-01-01-12:00:00'
+  }
+};
+
+// Add random prefix
+function generateKey(timestamp) {
+  const prefix = Math.random().toString(36).substring(7);
+  return `${prefix}-${timestamp}`;
+}
+
+// Use hash of natural key
+function generateHashedKey(userId) {
+  const hash = crypto.createHash('md5').update(userId).digest('hex');
+  return `${hash.substring(0, 8)}-${userId}`;
+}
+```
+
+## Rebalancing
+
+```javascript
+// MongoDB automatic balancing
+sh.startBalancer();
+sh.setBalancerState(true);
+
+// Check balancer status
+sh.isBalancerRunning();
+sh.getBalancerState();
+
+// Manual chunk migration
+sh.moveChunk("mydb.users", 
+  { userId: "user-1000" }, 
+  "shard02"
+);
+
+// Cassandra rebalancing (add node)
+// nodetool status
+// nodetool cleanup
+
+// DynamoDB auto-scaling
+const autoScaling = {
+  MinCapacity: 5,
+  MaxCapacity: 100,
+  TargetValue: 70.0,  // 70% utilization
+  ScaleInCooldown: 60,
+  ScaleOutCooldown: 60
+};
+```
+
+## Cross-Partition Queries
+
+```javascript
+// Targeted query (single partition)
+db.users.find({ userId: "123" });  // Fast
+
+// Scatter-gather query (all partitions)
+db.users.find({ email: "john@example.com" });  // Slow
+
+// Minimize scatter-gather
+// 1. Include shard key in query
+db.users.find({ 
+  userId: "123",  // Shard key
+  email: "john@example.com" 
+});
+
+// 2. Use secondary index
+db.users.createIndex({ email: 1 });
+
+// 3. Denormalize data
+{
+  userId: "123",
+  email: "john@example.com",
+  userIdByEmail: {
+    "john@example.com": "123"
+  }
+}
+```
+
+## Partition Key Selection
+
+```javascript
+const partitionKeyGuidelines = {
+  good: [
+    'High cardinality (many unique values)',
+    'Even distribution of data',
+    'Even distribution of queries',
+    'Frequently used in queries',
+    'Immutable or rarely changes',
+    'Natural to application logic'
+  ],
+  
+  bad: [
+    'Low cardinality (few unique values)',
+    'Monotonically increasing (timestamps)',
+    'Rarely queried',
+    'Frequently updated',
+    'Creates hotspots'
+  ],
+  
+  examples: {
+    good: ['userId (UUID)', 'email (hashed)', 'orderId', 'deviceId'],
+    bad: ['status', 'createdAt', 'country', 'boolean flags']
+  }
+};
+```
+
+## Multi-Tenancy Partitioning
+
+```javascript
+// Partition by tenant
+sh.shardCollection("mydb.data", { tenantId: "hashed", _id: 1 });
+
+// All tenant data on same shard
+db.data.find({ tenantId: "tenant-123" });
+
+// Tenant isolation
+sh.addShardToZone("shard01", "premium");
+sh.addShardToZone("shard02", "standard");
+
+sh.updateZoneKeyRange(
+  "mydb.data",
+  { tenantId: "premium-tenant-1" },
+  { tenantId: "premium-tenant-1\uffff" },
+  "premium"
+);
+```
+
+## .NET Partitioning
+
+```csharp
+using MongoDB.Driver;
+
+public class PartitioningService
+{
+    private readonly IMongoClient _client;
+    
+    // Targeted query (uses shard key)
+    public async Task<User> GetUser(string userId)
+    {
+        var db = _client.GetDatabase("mydb");
+        var collection = db.GetCollection<User>("users");
+        
+        return await collection.Find(u => u.UserId == userId).FirstOrDefaultAsync();
+    }
+    
+    // Scatter-gather query (no shard key)
+    public async Task<List<User>> GetUsersByEmail(string email)
+    {
+        var db = _client.GetDatabase("mydb");
+        var collection = db.GetCollection<User>("users");
+        
+        // Queries all shards
+        return await collection.Find(u => u.Email == email).ToListAsync();
+    }
+}
+```
+
+## Monitoring Partitions
+
+```javascript
+// Check shard distribution
+db.users.getShardDistribution();
+
+// Check chunk distribution
+sh.status();
+
+// Identify hotspots
+db.getSiblingDB('config').chunks.aggregate([
+  { $group: { _id: "$shard", count: { $sum: 1 } } },
+  { $sort: { count: -1 } }
+]);
+
+// Monitor query patterns
+db.currentOp({ "command.find": "users" });
+```
+
+## Interview Tips
+
+- **Explain strategies**: Range, hash, list, composite
+- **Show MongoDB**: Chunk-based sharding, zones
+- **Demonstrate Cassandra**: Token-based, consistent hashing
+- **Discuss hotspots**: Prevention and detection
+- **Mention rebalancing**: Automatic and manual
+- **Show examples**: Good vs bad partition keys
+
+## Summary
+
+Partitioning strategies include range (value ranges), hash (even distribution), list (discrete values), and composite (combination). MongoDB uses chunk-based sharding with zones. Cassandra uses token-based consistent hashing. DynamoDB auto-partitions by partition key. Redis Cluster uses 16384 hash slots. Choose high-cardinality partition keys. Avoid hotspots from monotonic keys. Minimize cross-partition queries. Monitor and rebalance as needed. Essential for horizontal scalability in NoSQL.

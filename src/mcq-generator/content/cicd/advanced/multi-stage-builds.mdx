@@ -1,0 +1,315 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Multi-Stage Docker Builds
+---
+
+# Multi-Stage Docker Builds
+
+## What are Multi-Stage Builds?
+
+**Multi-stage builds** use multiple FROM statements in a Dockerfile to create optimized, smaller final images by separating build and runtime environments.
+
+## Benefits
+
+1. **Smaller images**: Only runtime dependencies
+2. **Security**: No build tools in production
+3. **Faster deployments**: Smaller image size
+4. **Clean separation**: Build vs runtime
+
+## Angular Multi-Stage Build
+
+```dockerfile
+# Stage 1: Build
+FROM node:18-alpine AS build
+WORKDIR /app
+
+# Install dependencies
+COPY package*.json ./
+RUN npm ci
+
+# Build application
+COPY . .
+RUN npm run build --configuration production
+
+# Stage 2: Production
+FROM nginx:alpine
+COPY --from=build /app/dist/my-app /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/nginx.conf
+
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]
+
+# Result: ~25MB (vs ~1GB with build tools)
+```
+
+## .NET Multi-Stage Build
+
+```dockerfile
+# Stage 1: Build
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+WORKDIR /src
+
+# Restore dependencies
+COPY ["MyApp.csproj", "./"]
+RUN dotnet restore
+
+# Build and publish
+COPY . .
+RUN dotnet publish -c Release -o /app/publish
+
+# Stage 2: Production
+FROM mcr.microsoft.com/dotnet/aspnet:8.0
+WORKDIR /app
+COPY --from=build /app/publish .
+
+EXPOSE 80
+EXPOSE 443
+ENTRYPOINT ["dotnet", "MyApp.dll"]
+
+# Result: ~200MB (vs ~700MB with SDK)
+```
+
+## Node.js Multi-Stage Build
+
+```dockerfile
+# Stage 1: Dependencies
+FROM node:18-alpine AS dependencies
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --only=production
+
+# Stage 2: Build
+FROM node:18-alpine AS build
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+# Stage 3: Production
+FROM node:18-alpine
+WORKDIR /app
+
+# Copy production dependencies
+COPY --from=dependencies /app/node_modules ./node_modules
+
+# Copy built application
+COPY --from=build /app/dist ./dist
+COPY package*.json ./
+
+USER node
+EXPOSE 3000
+CMD ["node", "dist/index.js"]
+
+# Result: ~150MB (vs ~500MB with dev dependencies)
+```
+
+## Advanced Multi-Stage
+
+```dockerfile
+# Stage 1: Base
+FROM node:18-alpine AS base
+WORKDIR /app
+COPY package*.json ./
+
+# Stage 2: Development dependencies
+FROM base AS dev-dependencies
+RUN npm ci
+
+# Stage 3: Production dependencies
+FROM base AS prod-dependencies
+RUN npm ci --only=production
+
+# Stage 4: Build
+FROM dev-dependencies AS build
+COPY . .
+RUN npm run build
+RUN npm run test
+
+# Stage 5: Production
+FROM node:18-alpine AS production
+WORKDIR /app
+COPY --from=prod-dependencies /app/node_modules ./node_modules
+COPY --from=build /app/dist ./dist
+COPY package*.json ./
+
+USER node
+CMD ["node", "dist/index.js"]
+```
+
+## Build Arguments
+
+```dockerfile
+FROM node:18-alpine AS build
+ARG NODE_ENV=production
+ARG API_URL
+
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+
+COPY . .
+RUN npm run build
+
+FROM nginx:alpine
+COPY --from=build /app/dist /usr/share/nginx/html
+```
+
+```bash
+# Build with arguments
+docker build \
+  --build-arg NODE_ENV=production \
+  --build-arg API_URL=https://api.example.com \
+  -t myapp:latest .
+```
+
+## Target Stages
+
+```dockerfile
+# Development stage
+FROM node:18 AS development
+WORKDIR /app
+COPY package*.json ./
+RUN npm install
+COPY . .
+CMD ["npm", "run", "dev"]
+
+# Production stage
+FROM node:18-alpine AS production
+WORKDIR /app
+COPY --from=development /app/dist ./dist
+CMD ["node", "dist/index.js"]
+```
+
+```bash
+# Build development image
+docker build --target development -t myapp:dev .
+
+# Build production image
+docker build --target production -t myapp:prod .
+```
+
+## Caching Optimization
+
+```dockerfile
+# Optimize layer caching
+FROM node:18-alpine AS build
+WORKDIR /app
+
+# Cache dependencies (changes less frequently)
+COPY package*.json ./
+RUN npm ci
+
+# Copy source code (changes more frequently)
+COPY . .
+RUN npm run build
+
+FROM node:18-alpine
+WORKDIR /app
+COPY --from=build /app/dist ./dist
+CMD ["node", "dist/index.js"]
+```
+
+## Full-Stack Example
+
+```dockerfile
+# Frontend (Angular)
+FROM node:18-alpine AS frontend-build
+WORKDIR /app/frontend
+COPY frontend/package*.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build --prod
+
+# Backend (.NET)
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS backend-build
+WORKDIR /src
+COPY backend/*.csproj ./
+RUN dotnet restore
+COPY backend/ ./
+RUN dotnet publish -c Release -o /app
+
+# Service (Node.js)
+FROM node:18-alpine AS service-build
+WORKDIR /app/service
+COPY service/package*.json ./
+RUN npm ci --only=production
+COPY service/ ./
+RUN npm run build
+
+# Final image with all components
+FROM nginx:alpine
+COPY --from=frontend-build /app/frontend/dist /usr/share/nginx/html
+COPY --from=backend-build /app /app/backend
+COPY --from=service-build /app/service/dist /app/service
+```
+
+## CI/CD Integration
+
+```yaml
+# GitHub Actions
+name: Multi-Stage Build
+
+on: [push]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Build production image
+        run: |
+          docker build \
+            --target production \
+            --build-arg NODE_ENV=production \
+            -t myapp:${{ github.sha }} \
+            -t myapp:latest \
+            .
+      
+      - name: Push to registry
+        run: |
+          docker push myapp:${{ github.sha }}
+          docker push myapp:latest
+```
+
+## Size Comparison
+
+```bash
+# Without multi-stage
+FROM node:18
+WORKDIR /app
+COPY . .
+RUN npm install
+RUN npm run build
+CMD ["node", "dist/index.js"]
+# Size: ~1.2GB
+
+# With multi-stage
+FROM node:18-alpine AS build
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+FROM node:18-alpine
+WORKDIR /app
+COPY --from=build /app/dist ./dist
+COPY --from=build /app/node_modules ./node_modules
+CMD ["node", "dist/index.js"]
+# Size: ~150MB
+```
+
+## Interview Tips
+
+- **Explain multi-stage**: Separate build and runtime
+- **Show examples**: Angular, .NET, Node.js
+- **Demonstrate benefits**: Smaller images, security
+- **Discuss caching**: Layer optimization
+- **Mention targets**: Development vs production
+- **Show size comparison**: Before and after
+
+## Summary
+
+Multi-stage Docker builds create optimized images by separating build and runtime stages. Use build stage for compilation and dependencies, production stage for runtime only. Reduces image size by 80-90%. Improves security by excluding build tools. Supports build arguments and target stages. Essential for production Docker images.

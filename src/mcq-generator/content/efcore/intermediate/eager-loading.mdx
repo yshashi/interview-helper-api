@@ -1,0 +1,234 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Eager Loading in EF Core
+---
+
+# Eager Loading in EF Core
+
+## What is Eager Loading?
+
+**Eager loading** is the process of loading related entities as part of the initial query using the `Include()` and `ThenInclude()` methods. All data is retrieved in a single database roundtrip or minimal queries.
+
+## Basic Eager Loading
+
+```csharp
+// Load blogs with their posts
+var blogs = context.Blogs
+    .Include(b => b.Posts)
+    .ToList();
+
+// Single query with JOIN
+// SELECT b.*, p.* FROM Blogs b LEFT JOIN Posts p ON b.Id = p.BlogId
+```
+
+## Include Method
+
+```csharp
+// Include single navigation property
+var products = context.Products
+    .Include(p => p.Category)
+    .ToList();
+
+// Include multiple navigation properties
+var orders = context.Orders
+    .Include(o => o.Customer)
+    .Include(o => o.OrderItems)
+    .ToList();
+```
+
+## ThenInclude for Nested Loading
+
+```csharp
+// Load multiple levels
+var blogs = context.Blogs
+    .Include(b => b.Posts)
+        .ThenInclude(p => p.Author)
+    .Include(b => b.Posts)
+        .ThenInclude(p => p.Comments)
+            .ThenInclude(c => c.User)
+    .ToList();
+
+// Load orders with items and products
+var orders = context.Orders
+    .Include(o => o.OrderItems)
+        .ThenInclude(oi => oi.Product)
+            .ThenInclude(p => p.Category)
+    .ToList();
+```
+
+## Filtered Include (.NET 5+)
+
+```csharp
+// Include with filtering
+var blogs = context.Blogs
+    .Include(b => b.Posts.Where(p => p.IsPublished))
+    .ToList();
+
+// Include with ordering
+var blogs = context.Blogs
+    .Include(b => b.Posts.OrderByDescending(p => p.PublishedDate).Take(5))
+    .ToList();
+
+// Include with complex filter
+var customers = context.Customers
+    .Include(c => c.Orders.Where(o => o.OrderDate >= DateTime.Now.AddMonths(-1)))
+        .ThenInclude(o => o.OrderItems)
+    .ToList();
+```
+
+## Multiple Levels Example
+
+```csharp
+public class Blog
+{
+    public int Id { get; set; }
+    public string Name { get; set; }
+    public ICollection<Post> Posts { get; set; }
+}
+
+public class Post
+{
+    public int Id { get; set; }
+    public string Title { get; set; }
+    public int BlogId { get; set; }
+    public Blog Blog { get; set; }
+    public int AuthorId { get; set; }
+    public Author Author { get; set; }
+    public ICollection<Comment> Comments { get; set; }
+}
+
+public class Comment
+{
+    public int Id { get; set; }
+    public string Text { get; set; }
+    public int PostId { get; set; }
+    public Post Post { get; set; }
+    public int UserId { get; set; }
+    public User User { get; set; }
+}
+
+// Load everything
+var blogs = context.Blogs
+    .Include(b => b.Posts)
+        .ThenInclude(p => p.Author)
+    .Include(b => b.Posts)
+        .ThenInclude(p => p.Comments)
+            .ThenInclude(c => c.User)
+    .ToList();
+```
+
+## String-Based Include
+
+```csharp
+// Using string navigation paths
+var blogs = context.Blogs
+    .Include("Posts")
+    .Include("Posts.Author")
+    .Include("Posts.Comments")
+    .ToList();
+
+// Not recommended - no compile-time checking
+```
+
+## Performance Considerations
+
+```csharp
+// Efficient - single query
+var products = context.Products
+    .Include(p => p.Category)
+    .Where(p => p.IsActive)
+    .ToList();
+
+// Less efficient - loads all then filters
+var products = context.Products
+    .Include(p => p.Category)
+    .ToList()
+    .Where(p => p.IsActive)
+    .ToList();
+```
+
+## Split Queries (.NET 5+)
+
+```csharp
+// Single query (default) - may cause cartesian explosion
+var blogs = context.Blogs
+    .Include(b => b.Posts)
+    .Include(b => b.Contributors)
+    .ToList();
+
+// Split into multiple queries
+var blogs = context.Blogs
+    .AsSplitQuery()
+    .Include(b => b.Posts)
+    .Include(b => b.Contributors)
+    .ToList();
+
+// Configure globally
+optionsBuilder.UseSqlServer(
+    connectionString,
+    o => o.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery));
+```
+
+## Projection vs Include
+
+```csharp
+// Include - loads full entities
+var blogs = context.Blogs
+    .Include(b => b.Posts)
+    .ToList();
+
+// Projection - loads only needed data
+var blogData = context.Blogs
+    .Select(b => new
+    {
+        b.Name,
+        PostCount = b.Posts.Count,
+        RecentPosts = b.Posts
+            .OrderByDescending(p => p.PublishedDate)
+            .Take(5)
+            .Select(p => new { p.Title, p.PublishedDate })
+    })
+    .ToList();
+```
+
+## Best Practices
+
+```csharp
+// 1. Load only what you need
+var orders = context.Orders
+    .Where(o => o.CustomerId == customerId)
+    .Include(o => o.OrderItems)
+    .ToList();
+
+// 2. Use filtered includes
+var blogs = context.Blogs
+    .Include(b => b.Posts.Where(p => p.IsPublished))
+    .ToList();
+
+// 3. Consider split queries for multiple collections
+var blogs = context.Blogs
+    .AsSplitQuery()
+    .Include(b => b.Posts)
+    .Include(b => b.Contributors)
+    .ToList();
+
+// 4. Use AsNoTracking for read-only scenarios
+var products = context.Products
+    .AsNoTracking()
+    .Include(p => p.Category)
+    .ToList();
+```
+
+## Interview Tips
+
+- **Explain eager loading**: Load related data upfront with Include
+- **Show ThenInclude**: Load nested relationships
+- **Discuss filtered includes**: Filter related data in query
+- **Mention split queries**: Avoid cartesian explosion
+- **Compare with lazy loading**: Upfront vs on-demand
+- **Show performance benefits**: Fewer database roundtrips
+- **Demonstrate best practices**: Load only needed data
+
+## Summary
+
+Eager loading in EF Core uses `Include()` and `ThenInclude()` to load related entities in the initial query, reducing database roundtrips. Filtered includes allow filtering related data, and split queries prevent cartesian explosion when loading multiple collections. Prefer eager loading over lazy loading for better performance and predictability.

@@ -1,0 +1,366 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Terraform
+---
+
+# Terraform
+
+## What is Terraform?
+
+**Terraform** is an infrastructure as code tool that lets you define and provision infrastructure using declarative configuration files.
+
+## Basic Example
+
+```hcl
+# main.tf
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
+
+provider "aws" {
+  region = "us-east-1"
+}
+
+resource "aws_instance" "web" {
+  ami           = "ami-0c55b159cbfafe1f0"
+  instance_type = "t2.micro"
+  
+  tags = {
+    Name = "WebServer"
+  }
+}
+```
+
+## Multi-Stack Infrastructure
+
+```hcl
+# Angular Frontend (S3 + CloudFront)
+resource "aws_s3_bucket" "frontend" {
+  bucket = "myapp-frontend"
+}
+
+resource "aws_s3_bucket_website_configuration" "frontend" {
+  bucket = aws_s3_bucket.frontend.id
+  
+  index_document {
+    suffix = "index.html"
+  }
+}
+
+resource "aws_cloudfront_distribution" "frontend" {
+  origin {
+    domain_name = aws_s3_bucket.frontend.bucket_regional_domain_name
+    origin_id   = "S3-frontend"
+  }
+  
+  enabled             = true
+  default_root_object = "index.html"
+  
+  default_cache_behavior {
+    allowed_methods  = ["GET", "HEAD"]
+    cached_methods   = ["GET", "HEAD"]
+    target_origin_id = "S3-frontend"
+    
+    forwarded_values {
+      query_string = false
+      cookies {
+        forward = "none"
+      }
+    }
+    
+    viewer_protocol_policy = "redirect-to-https"
+  }
+  
+  restrictions {
+    geo_restriction {
+      restriction_type = "none"
+    }
+  }
+  
+  viewer_certificate {
+    cloudfront_default_certificate = true
+  }
+}
+
+# .NET API (ECS Fargate)
+resource "aws_ecs_cluster" "api" {
+  name = "dotnet-api-cluster"
+}
+
+resource "aws_ecs_task_definition" "api" {
+  family                   = "dotnet-api"
+  network_mode             = "awsvpc"
+  requires_compatibilities = ["FARGATE"]
+  cpu                      = "256"
+  memory                   = "512"
+  
+  container_definitions = jsonencode([{
+    name  = "dotnet-api"
+    image = "myapp/dotnet-api:latest"
+    portMappings = [{
+      containerPort = 80
+      protocol      = "tcp"
+    }]
+    environment = [
+      {
+        name  = "ASPNETCORE_ENVIRONMENT"
+        value = "Production"
+      }
+    ]
+  }])
+}
+
+resource "aws_ecs_service" "api" {
+  name            = "dotnet-api"
+  cluster         = aws_ecs_cluster.api.id
+  task_definition = aws_ecs_task_definition.api.arn
+  desired_count   = 3
+  launch_type     = "FARGATE"
+  
+  network_configuration {
+    subnets         = aws_subnet.private[*].id
+    security_groups = [aws_security_group.api.id]
+  }
+}
+
+# Node.js Service (Lambda)
+resource "aws_lambda_function" "service" {
+  filename      = "function.zip"
+  function_name = "nodejs-service"
+  role          = aws_iam_role.lambda.arn
+  handler       = "index.handler"
+  runtime       = "nodejs18.x"
+  
+  environment {
+    variables = {
+      NODE_ENV     = "production"
+      DATABASE_URL = aws_db_instance.postgres.endpoint
+      REDIS_URL    = aws_elasticache_cluster.redis.cache_nodes[0].address
+    }
+  }
+}
+
+# PostgreSQL (RDS)
+resource "aws_db_instance" "postgres" {
+  identifier        = "myapp-db"
+  engine            = "postgres"
+  engine_version    = "15.3"
+  instance_class    = "db.t3.micro"
+  allocated_storage = 20
+  
+  db_name  = "myapp"
+  username = "admin"
+  password = var.db_password
+  
+  vpc_security_group_ids = [aws_security_group.db.id]
+  db_subnet_group_name   = aws_db_subnet_group.main.name
+  
+  skip_final_snapshot = true
+}
+
+# MongoDB (DocumentDB)
+resource "aws_docdb_cluster" "mongodb" {
+  cluster_identifier      = "myapp-mongodb"
+  engine                  = "docdb"
+  master_username         = "admin"
+  master_password         = var.mongodb_password
+  backup_retention_period = 5
+  preferred_backup_window = "07:00-09:00"
+  skip_final_snapshot     = true
+}
+
+# Redis (ElastiCache)
+resource "aws_elasticache_cluster" "redis" {
+  cluster_id           = "myapp-redis"
+  engine               = "redis"
+  node_type            = "cache.t3.micro"
+  num_cache_nodes      = 1
+  parameter_group_name = "default.redis7"
+  port                 = 6379
+}
+```
+
+## Variables
+
+```hcl
+# variables.tf
+variable "environment" {
+  description = "Environment name"
+  type        = string
+  default     = "production"
+}
+
+variable "db_password" {
+  description = "Database password"
+  type        = string
+  sensitive   = true
+}
+
+variable "region" {
+  description = "AWS region"
+  type        = string
+  default     = "us-east-1"
+}
+```
+
+```hcl
+# terraform.tfvars
+environment = "production"
+region      = "us-east-1"
+```
+
+## Modules
+
+```hcl
+# modules/app/main.tf
+variable "app_name" {}
+variable "image" {}
+variable "replicas" {}
+
+resource "aws_ecs_task_definition" "app" {
+  family = var.app_name
+  # ... configuration
+}
+
+resource "aws_ecs_service" "app" {
+  name          = var.app_name
+  desired_count = var.replicas
+  # ... configuration
+}
+```
+
+```hcl
+# main.tf
+module "api" {
+  source   = "./modules/app"
+  app_name = "dotnet-api"
+  image    = "myapp/api:latest"
+  replicas = 5
+}
+
+module "service" {
+  source   = "./modules/app"
+  app_name = "nodejs-service"
+  image    = "myapp/service:latest"
+  replicas = 3
+}
+```
+
+## State Management
+
+```hcl
+# backend.tf
+terraform {
+  backend "s3" {
+    bucket         = "myapp-terraform-state"
+    key            = "production/terraform.tfstate"
+    region         = "us-east-1"
+    encrypt        = true
+    dynamodb_table = "terraform-lock"
+  }
+}
+```
+
+## Workspaces
+
+```bash
+# Create workspaces
+terraform workspace new dev
+terraform workspace new staging
+terraform workspace new production
+
+# Switch workspace
+terraform workspace select production
+
+# List workspaces
+terraform workspace list
+```
+
+## CI/CD Integration
+
+```yaml
+# GitHub Actions
+name: Terraform
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+      
+      - name: Terraform Init
+        run: terraform init
+      
+      - name: Terraform Plan
+        run: terraform plan -out=tfplan
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      
+      - name: Terraform Apply
+        if: github.ref == 'refs/heads/main'
+        run: terraform apply -auto-approve tfplan
+```
+
+## Commands
+
+```bash
+# Initialize
+terraform init
+
+# Plan changes
+terraform plan
+
+# Apply changes
+terraform apply
+
+# Destroy infrastructure
+terraform destroy
+
+# Format code
+terraform fmt
+
+# Validate configuration
+terraform validate
+
+# Show current state
+terraform show
+
+# Import existing resource
+terraform import aws_instance.web i-1234567890abcdef0
+```
+
+## Best Practices
+
+1. **Use modules**: Reusable components
+2. **Remote state**: S3 backend with locking
+3. **Variables**: Parameterize configurations
+4. **Workspaces**: Separate environments
+5. **Version control**: Track infrastructure changes
+6. **Plan before apply**: Review changes
+7. **State locking**: Prevent concurrent modifications
+
+## Interview Tips
+
+- **Explain Terraform**: Infrastructure as code tool
+- **Show multi-stack**: Frontend, API, databases
+- **Demonstrate modules**: Reusable components
+- **Discuss state**: Remote backend, locking
+- **Mention workspaces**: Environment separation
+- **Show CI/CD**: Automated infrastructure deployment
+
+## Summary
+
+Terraform provisions infrastructure using declarative configuration. Supports multi-stack applications including Angular (S3/CloudFront), .NET (ECS), Node.js (Lambda), and databases (RDS, DocumentDB, ElastiCache). Use modules for reusability. Store state remotely with locking. Separate environments with workspaces. Integrate with CI/CD for automated infrastructure deployment.

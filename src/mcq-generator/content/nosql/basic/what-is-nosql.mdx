@@ -1,0 +1,331 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: What is NoSQL?
+---
+
+# What is NoSQL?
+
+## Definition
+
+**NoSQL** (Not Only SQL) databases are non-relational databases designed for distributed data storage, high scalability, and flexible schemas.
+
+## Key Characteristics
+
+**Flexible Schema:** No fixed structure required. Add or remove fields without migrations.
+
+**Horizontal Scalability:** Scale by adding more servers (scale-out) rather than upgrading hardware (scale-up).
+
+**Multiple Data Models:** Choose the right model for your use case:
+- **Document:** MongoDB, Couchbase
+- **Key-Value:** Redis, DynamoDB
+- **Column-Family:** Cassandra, HBase
+- **Graph:** Neo4j, Amazon Neptune
+
+**Eventual Consistency:** Prioritizes availability and partition tolerance over immediate consistency (CAP theorem).
+
+**Limited ACID:** Some NoSQL databases sacrifice full ACID transactions for performance and scalability.
+
+**Optimized Performance:** Designed for specific access patterns and use cases.
+
+## Why NoSQL?
+
+### 1. Scalability
+
+**Traditional SQL (Vertical Scaling):**
+- Add more CPU, RAM to single server
+- Limited by hardware constraints
+- Expensive at scale
+- Downtime during upgrades
+
+**NoSQL (Horizontal Scaling):**
+- Add more commodity servers to cluster
+- Nearly unlimited scaling potential
+- Cost-effective with commodity hardware
+- No downtime when adding nodes
+
+**Example:** Handle millions of requests by adding more servers instead of buying expensive enterprise hardware.
+
+### 2. Flexible Schema
+
+**No Migrations Required:** Add new fields without altering existing documents or running migrations.
+
+**Evolving Data Models:** Adapt to changing requirements quickly without downtime.
+
+**Polymorphic Data:** Store different document structures in the same collection.
+
+**Developer Productivity:** Faster iteration and development cycles.
+
+```javascript
+// MongoDB - Different documents, same collection
+db.users.insertOne({
+  name: "John Doe",
+  email: "john@example.com",
+  age: 30
+});
+
+db.users.insertOne({
+  name: "Jane Smith",
+  email: "jane@example.com",
+  preferences: { theme: "dark", notifications: true }
+  // Different fields - no problem!
+});
+```
+
+### 3. Performance
+
+**Optimized Data Access:** Designed for specific read/write patterns.
+
+**Denormalization:** Store related data together for faster reads (trade-off: data duplication).
+
+**In-Memory Options:** Redis provides sub-millisecond response times.
+
+**Indexing:** Flexible indexing strategies for different query patterns.
+
+```javascript
+// MongoDB - Fast document retrieval by ID
+const user = await db.users.findOne({ _id: userId });
+
+// Redis - Sub-millisecond cache access
+const cached = await redis.get(`user:${userId}`);
+```
+
+## NoSQL Use Cases
+
+### Real-Time Analytics
+**Databases:** MongoDB, Cassandra
+**Use Cases:** User behavior tracking, IoT sensor data, clickstream analysis
+**Why:** Handle high write throughput and flexible schemas for evolving data
+
+### Caching Layer
+**Databases:** Redis, Memcached
+**Use Cases:** Session storage, API response caching, rate limiting
+**Why:** Sub-millisecond latency, automatic expiration, distributed caching
+
+### Content Management
+**Databases:** MongoDB, Couchbase
+**Use Cases:** Blogs, product catalogs, user profiles, CMS platforms
+**Why:** Flexible schemas for varied content types, easy to query and update
+
+### Social Networks
+**Databases:** Neo4j (graph), MongoDB
+**Use Cases:** Friend connections, recommendations, activity feeds
+**Why:** Graph databases excel at relationship queries, document stores handle user data
+
+### Time-Series Data
+**Databases:** InfluxDB, TimescaleDB
+**Use Cases:** Application metrics, sensor data, financial data
+**Why:** Optimized for time-based queries and aggregations
+
+## MongoDB Example
+
+```javascript
+// Node.js with MongoDB
+const { MongoClient } = require('mongodb');
+
+const client = new MongoClient('mongodb://localhost:27017');
+
+async function run() {
+  await client.connect();
+  const db = client.db('myapp');
+  
+  // Insert document
+  await db.collection('users').insertOne({
+    name: 'John Doe',
+    email: 'john@example.com',
+    createdAt: new Date()
+  });
+  
+  // Query documents
+  const users = await db.collection('users').find({
+    email: /gmail.com$/
+  }).toArray();
+  
+  // Update document
+  await db.collection('users').updateOne(
+    { email: 'john@example.com' },
+    { $set: { age: 30 } }
+  );
+  
+  // Delete document
+  await db.collection('users').deleteOne({
+    email: 'john@example.com'
+  });
+}
+```
+
+## Redis Example
+
+```javascript
+// Node.js with Redis
+const redis = require('redis');
+const client = redis.createClient();
+
+await client.connect();
+
+// Set key-value
+await client.set('user:1', JSON.stringify({
+  name: 'John Doe',
+  email: 'john@example.com'
+}));
+
+// Get value
+const user = JSON.parse(await client.get('user:1'));
+
+// Set with expiration
+await client.setEx('session:abc123', 3600, 'user-data');
+
+// Hash operations
+await client.hSet('user:1', {
+  name: 'John Doe',
+  email: 'john@example.com'
+});
+
+const name = await client.hGet('user:1', 'name');
+```
+
+## .NET with MongoDB
+
+```csharp
+using MongoDB.Driver;
+using MongoDB.Bson;
+
+public class User
+{
+    public ObjectId Id { get; set; }
+    public string Name { get; set; }
+    public string Email { get; set; }
+    public DateTime CreatedAt { get; set; }
+}
+
+public class MongoService
+{
+    private readonly IMongoCollection<User> _users;
+    
+    public MongoService()
+    {
+        var client = new MongoClient("mongodb://localhost:27017");
+        var database = client.GetDatabase("myapp");
+        _users = database.GetCollection<User>("users");
+    }
+    
+    public async Task<User> CreateUser(User user)
+    {
+        await _users.InsertOneAsync(user);
+        return user;
+    }
+    
+    public async Task<List<User>> GetUsers()
+    {
+        return await _users.Find(_ => true).ToListAsync();
+    }
+    
+    public async Task<User> GetUserByEmail(string email)
+    {
+        return await _users.Find(u => u.Email == email).FirstOrDefaultAsync();
+    }
+}
+```
+
+## Angular with MongoDB API
+
+```typescript
+import { Injectable } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
+import { Observable } from 'rxjs';
+
+interface User {
+  _id?: string;
+  name: string;
+  email: string;
+  createdAt?: Date;
+}
+
+@Injectable({ providedIn: 'root' })
+export class UserService {
+  private apiUrl = 'http://localhost:3000/api';
+  
+  constructor(private http: HttpClient) {}
+  
+  getUsers(): Observable<User[]> {
+    return this.http.get<User[]>(`${this.apiUrl}/users`);
+  }
+  
+  createUser(user: User): Observable<User> {
+    return this.http.post<User>(`${this.apiUrl}/users`, user);
+  }
+  
+  updateUser(id: string, user: Partial<User>): Observable<User> {
+    return this.http.patch<User>(`${this.apiUrl}/users/${id}`, user);
+  }
+  
+  deleteUser(id: string): Observable<void> {
+    return this.http.delete<void>(`${this.apiUrl}/users/${id}`);
+  }
+}
+```
+
+## Advantages
+
+```javascript
+const advantages = [
+  'Horizontal scalability',
+  'Flexible schema',
+  'High performance for specific use cases',
+  'Built for distributed systems',
+  'Handle large volumes of data',
+  'Fast development iteration',
+  'Cost-effective scaling'
+];
+```
+
+## Disadvantages
+
+```javascript
+const disadvantages = [
+  'Limited ACID transactions',
+  'Eventual consistency',
+  'Less mature than SQL',
+  'Fewer tools and expertise',
+  'No standardized query language',
+  'Complex joins',
+  'Data duplication'
+];
+```
+
+## When to Use NoSQL
+
+```javascript
+// ✅ Use NoSQL when:
+const useNoSQL = [
+  'Need horizontal scalability',
+  'Schema changes frequently',
+  'Handling large volumes of data',
+  'Need high write throughput',
+  'Working with unstructured data',
+  'Building real-time applications',
+  'Distributed architecture'
+];
+
+// ❌ Use SQL when:
+const useSQL = [
+  'Need complex joins',
+  'Require strong ACID guarantees',
+  'Schema is stable',
+  'Need complex queries',
+  'Data has many relationships',
+  'Regulatory compliance requires ACID'
+];
+```
+
+## Interview Tips
+
+- **Explain NoSQL**: Not Only SQL, non-relational databases
+- **Show types**: Document, key-value, column-family, graph
+- **Demonstrate examples**: MongoDB, Redis, Cassandra
+- **Discuss use cases**: When to use NoSQL vs SQL
+- **Mention scaling**: Horizontal vs vertical
+- **Show code**: Node.js, .NET, Angular examples
+
+## Summary
+
+NoSQL databases are non-relational databases designed for distributed data storage and horizontal scalability. Main types include document (MongoDB), key-value (Redis), column-family (Cassandra), and graph (Neo4j). Offer flexible schemas, high performance, and cost-effective scaling. Trade ACID guarantees for scalability and performance. Use for large-scale, distributed applications with flexible data models. Essential for modern web applications.

@@ -1,0 +1,346 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Service Mesh in DevOps
+---
+
+# Service Mesh in DevOps
+
+## What is a Service Mesh?
+
+A **Service Mesh** is an infrastructure layer that handles service-to-service communication, providing traffic management, security, and observability without changing application code.
+
+## Architecture
+
+```
+┌─────────┐     ┌─────────┐     ┌─────────┐
+│ Service │     │ Service │     │ Service │
+│    A    │     │    B    │     │    C    │
+└────┬────┘     └────┬────┘     └────┬────┘
+     │               │               │
+┌────▼────┐     ┌───▼─────┐     ┌───▼─────┐
+│ Sidecar │────▶│ Sidecar │────▶│ Sidecar │
+│  Proxy  │     │  Proxy  │     │  Proxy  │
+└─────────┘     └─────────┘     └─────────┘
+     │               │               │
+     └───────────────┴───────────────┘
+              Control Plane
+```
+
+## Istio Installation
+
+```bash
+# Install Istio
+curl -L https://istio.io/downloadIstio | sh -
+cd istio-*
+export PATH=$PWD/bin:$PATH
+
+# Install Istio on Kubernetes
+istioctl install --set profile=demo -y
+
+# Enable sidecar injection
+kubectl label namespace default istio-injection=enabled
+```
+
+## Traffic Management
+
+```yaml
+# VirtualService for routing
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: myapp
+spec:
+  hosts:
+    - myapp
+  http:
+    # Route to v2 for beta users
+    - match:
+        - headers:
+            user-type:
+              exact: beta
+      route:
+        - destination:
+            host: myapp
+            subset: v2
+    # 90% to v1, 10% to v2 (canary)
+    - route:
+        - destination:
+            host: myapp
+            subset: v1
+          weight: 90
+        - destination:
+            host: myapp
+            subset: v2
+          weight: 10
+
+---
+# DestinationRule for subsets
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: myapp
+spec:
+  host: myapp
+  subsets:
+    - name: v1
+      labels:
+        version: v1
+    - name: v2
+      labels:
+        version: v2
+```
+
+## mTLS (Mutual TLS)
+
+```yaml
+# Enable mTLS for all services
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: default
+  namespace: default
+spec:
+  mtls:
+    mode: STRICT
+
+---
+# Authorization policy
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: api-policy
+spec:
+  selector:
+    matchLabels:
+      app: api
+  rules:
+    - from:
+        - source:
+            principals: ["cluster.local/ns/default/sa/frontend"]
+      to:
+        - operation:
+            methods: ["GET", "POST"]
+```
+
+## Circuit Breaking
+
+```yaml
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: api
+spec:
+  host: api
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 100
+      http:
+        http1MaxPendingRequests: 50
+        http2MaxRequests: 100
+        maxRequestsPerConnection: 2
+    outlierDetection:
+      consecutiveErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+```
+
+## Retry and Timeout
+
+```yaml
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: api
+spec:
+  hosts:
+    - api
+  http:
+    - route:
+        - destination:
+            host: api
+      timeout: 10s
+      retries:
+        attempts: 3
+        perTryTimeout: 2s
+        retryOn: 5xx,reset,connect-failure
+```
+
+## Observability
+
+```yaml
+# Telemetry for metrics
+apiVersion: telemetry.istio.io/v1alpha1
+kind: Telemetry
+metadata:
+  name: default
+spec:
+  metrics:
+    - providers:
+        - name: prometheus
+      overrides:
+        - match:
+            metric: ALL_METRICS
+          tagOverrides:
+            request_protocol:
+              value: "request.protocol"
+```
+
+## Distributed Tracing
+
+```yaml
+# Enable Jaeger tracing
+apiVersion: install.istio.io/v1alpha1
+kind: IstioOperator
+spec:
+  meshConfig:
+    enableTracing: true
+    defaultConfig:
+      tracing:
+        sampling: 100.0
+        zipkin:
+          address: jaeger-collector.istio-system:9411
+```
+
+## Multi-Stack Example
+
+```yaml
+# Angular Frontend
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+spec:
+  template:
+    metadata:
+      labels:
+        app: frontend
+        version: v1
+    spec:
+      containers:
+        - name: frontend
+          image: frontend:v1
+
+---
+# .NET API
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+spec:
+  template:
+    metadata:
+      labels:
+        app: api
+        version: v1
+    spec:
+      containers:
+        - name: api
+          image: api:v1
+
+---
+# Node.js Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: service
+spec:
+  template:
+    metadata:
+      labels:
+        app: service
+        version: v1
+    spec:
+      containers:
+        - name: service
+          image: service:v1
+
+---
+# VirtualService for all
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: app-routing
+spec:
+  hosts:
+    - "*"
+  gateways:
+    - app-gateway
+  http:
+    - match:
+        - uri:
+            prefix: /api
+      route:
+        - destination:
+            host: api
+    - match:
+        - uri:
+            prefix: /service
+      route:
+        - destination:
+            host: service
+    - route:
+        - destination:
+            host: frontend
+```
+
+## Gateway
+
+```yaml
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: app-gateway
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+    - port:
+        number: 80
+        name: http
+        protocol: HTTP
+      hosts:
+        - "*"
+    - port:
+        number: 443
+        name: https
+        protocol: HTTPS
+      tls:
+        mode: SIMPLE
+        credentialName: app-tls-cert
+      hosts:
+        - "example.com"
+```
+
+## Linkerd Alternative
+
+```bash
+# Install Linkerd
+curl -sL https://run.linkerd.io/install | sh
+linkerd install | kubectl apply -f -
+
+# Inject sidecar
+kubectl get deploy -o yaml | linkerd inject - | kubectl apply -f -
+```
+
+## Benefits
+
+1. **Traffic management**: Routing, load balancing
+2. **Security**: mTLS, authorization
+3. **Observability**: Metrics, tracing, logs
+4. **Resilience**: Circuit breaking, retries
+5. **No code changes**: Sidecar handles everything
+
+## Interview Tips
+
+- **Explain service mesh**: Infrastructure layer for service communication
+- **Show Istio**: Traffic management, security
+- **Demonstrate mTLS**: Automatic encryption
+- **Discuss observability**: Metrics and tracing
+- **Mention resilience**: Circuit breaking, retries
+- **Show multi-stack**: Angular, .NET, Node.js
+
+## Summary
+
+Service Mesh provides infrastructure layer for service-to-service communication. Istio and Linkerd inject sidecar proxies for traffic management, security, and observability. Implement mTLS for encryption, circuit breaking for resilience, and distributed tracing for debugging. No application code changes required. Essential for complex microservices architectures.

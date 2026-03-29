@@ -1,0 +1,402 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Monitoring Microservices
+---
+
+# Monitoring Microservices
+
+## The Three Pillars
+
+### 1. Metrics
+
+```javascript
+const prometheus = require('prom-client');
+
+// Create registry
+const register = new prometheus.Registry();
+
+// Counter
+const httpRequests = new prometheus.Counter({
+  name: 'http_requests_total',
+  help: 'Total HTTP requests',
+  labelNames: ['method', 'path', 'status']
+});
+
+// Histogram
+const httpDuration = new prometheus.Histogram({
+  name: 'http_request_duration_seconds',
+  help: 'HTTP request duration',
+  labelNames: ['method', 'path']
+});
+
+// Gauge
+const activeConnections = new prometheus.Gauge({
+  name: 'active_connections',
+  help: 'Number of active connections'
+});
+
+register.registerMetric(httpRequests);
+register.registerMetric(httpDuration);
+register.registerMetric(activeConnections);
+
+// Middleware
+app.use((req, res, next) => {
+  const start = Date.now();
+  
+  res.on('finish', () => {
+    const duration = (Date.now() - start) / 1000;
+    
+    httpRequests.inc({
+      method: req.method,
+      path: req.path,
+      status: res.statusCode
+    });
+    
+    httpDuration.observe({
+      method: req.method,
+      path: req.path
+    }, duration);
+  });
+  
+  next();
+});
+
+// Metrics endpoint
+app.get('/metrics', async (req, res) => {
+  res.set('Content-Type', register.contentType);
+  res.end(await register.metrics());
+});
+```
+
+### 2. Logs
+
+```javascript
+const winston = require('winston');
+
+const logger = winston.createLogger({
+  format: winston.format.combine(
+    winston.format.timestamp(),
+    winston.format.json()
+  ),
+  transports: [
+    new winston.transports.Console(),
+    new winston.transports.File({ filename: 'app.log' })
+  ]
+});
+
+// Structured logging
+app.use((req, res, next) => {
+  logger.info('Request received', {
+    method: req.method,
+    path: req.path,
+    correlationId: req.headers['x-correlation-id'],
+    userId: req.user?.id
+  });
+  
+  next();
+});
+
+// Error logging
+app.use((err, req, res, next) => {
+  logger.error('Error occurred', {
+    error: err.message,
+    stack: err.stack,
+    correlationId: req.headers['x-correlation-id']
+  });
+  
+  next(err);
+});
+```
+
+### 3. Traces
+
+```javascript
+const { trace } = require('@opentelemetry/api');
+const tracer = trace.getTracer('user-service');
+
+app.post('/users', async (req, res) => {
+  const span = tracer.startSpan('create-user');
+  
+  try {
+    span.setAttribute('user.email', req.body.email);
+    
+    const user = await User.create(req.body);
+    
+    span.setStatus({ code: SpanStatusCode.OK });
+    res.json(user);
+  } catch (error) {
+    span.recordException(error);
+    span.setStatus({ code: SpanStatusCode.ERROR });
+    res.status(500).json({ error: error.message });
+  } finally {
+    span.end();
+  }
+});
+```
+
+## Application Performance Monitoring (APM)
+
+```javascript
+// New Relic
+require('newrelic');
+
+// Datadog
+const tracer = require('dd-trace').init();
+
+// Elastic APM
+const apm = require('elastic-apm-node').start({
+  serviceName: 'user-service',
+  serverUrl: 'http://apm-server:8200'
+});
+```
+
+## Health Checks
+
+```javascript
+class HealthCheck {
+  constructor() {
+    this.checks = new Map();
+  }
+  
+  register(name, checkFn) {
+    this.checks.set(name, checkFn);
+  }
+  
+  async execute() {
+    const results = {};
+    let healthy = true;
+    
+    for (const [name, checkFn] of this.checks.entries()) {
+      try {
+        await checkFn();
+        results[name] = { status: 'UP' };
+      } catch (error) {
+        results[name] = {
+          status: 'DOWN',
+          error: error.message
+        };
+        healthy = false;
+      }
+    }
+    
+    return {
+      status: healthy ? 'UP' : 'DOWN',
+      checks: results
+    };
+  }
+}
+
+const healthCheck = new HealthCheck();
+
+healthCheck.register('database', async () => {
+  await db.ping();
+});
+
+healthCheck.register('cache', async () => {
+  await redis.ping();
+});
+
+healthCheck.register('external-api', async () => {
+  await axios.get('http://external-api/health');
+});
+
+app.get('/health', async (req, res) => {
+  const result = await healthCheck.execute();
+  const status = result.status === 'UP' ? 200 : 503;
+  res.status(status).json(result);
+});
+```
+
+## Alerting
+
+```javascript
+class AlertManager {
+  constructor() {
+    this.thresholds = new Map();
+    this.alerts = [];
+  }
+  
+  setThreshold(metric, threshold) {
+    this.thresholds.set(metric, threshold);
+  }
+  
+  check(metric, value) {
+    const threshold = this.thresholds.get(metric);
+    
+    if (threshold && value > threshold) {
+      this.alert(metric, value, threshold);
+    }
+  }
+  
+  alert(metric, value, threshold) {
+    const alert = {
+      metric,
+      value,
+      threshold,
+      timestamp: new Date()
+    };
+    
+    this.alerts.push(alert);
+    
+    // Send to alerting system
+    this.sendAlert(alert);
+  }
+  
+  async sendAlert(alert) {
+    // PagerDuty, Slack, email, etc.
+    await axios.post('http://alerting-service/alerts', alert);
+  }
+}
+
+const alertManager = new AlertManager();
+alertManager.setThreshold('error_rate', 0.05);
+alertManager.setThreshold('response_time', 1000);
+
+// Check metrics
+setInterval(async () => {
+  const errorRate = await getErrorRate();
+  alertManager.check('error_rate', errorRate);
+  
+  const responseTime = await getAvgResponseTime();
+  alertManager.check('response_time', responseTime);
+}, 60000);
+```
+
+## Dashboards
+
+```yaml
+# Grafana dashboard config
+apiVersion: 1
+providers:
+  - name: 'Microservices'
+    folder: 'Services'
+    type: file
+    options:
+      path: /var/lib/grafana/dashboards
+
+# Dashboard JSON
+{
+  "dashboard": {
+    "title": "User Service",
+    "panels": [
+      {
+        "title": "Request Rate",
+        "targets": [
+          {
+            "expr": "rate(http_requests_total[5m])"
+          }
+        ]
+      },
+      {
+        "title": "Error Rate",
+        "targets": [
+          {
+            "expr": "rate(http_requests_total{status=~\"5..\"}[5m])"
+          }
+        ]
+      },
+      {
+        "title": "Response Time",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, http_request_duration_seconds)"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+## Service Level Objectives (SLOs)
+
+```javascript
+class SLOMonitor {
+  constructor() {
+    this.slos = new Map();
+  }
+  
+  define(name, target, window) {
+    this.slos.set(name, { target, window });
+  }
+  
+  async check(name) {
+    const slo = this.slos.get(name);
+    const actual = await this.measure(name, slo.window);
+    
+    return {
+      name,
+      target: slo.target,
+      actual,
+      met: actual >= slo.target
+    };
+  }
+  
+  async measure(name, window) {
+    // Query metrics for the window
+    const query = `avg_over_time(${name}[${window}])`;
+    const result = await prometheus.query(query);
+    return result.value;
+  }
+}
+
+const sloMonitor = new SLOMonitor();
+
+// 99.9% availability
+sloMonitor.define('availability', 0.999, '30d');
+
+// 95th percentile < 200ms
+sloMonitor.define('latency_p95', 200, '30d');
+
+// Error rate < 0.1%
+sloMonitor.define('error_rate', 0.001, '30d');
+```
+
+## Distributed Tracing
+
+```javascript
+// Correlation ID middleware
+app.use((req, res, next) => {
+  const correlationId = req.headers['x-correlation-id'] || generateId();
+  req.correlationId = correlationId;
+  res.setHeader('x-correlation-id', correlationId);
+  next();
+});
+
+// Propagate to downstream services
+async function callService(url, data, req) {
+  return axios.post(url, data, {
+    headers: {
+      'x-correlation-id': req.correlationId
+    }
+  });
+}
+```
+
+## Best Practices
+
+1. **Monitor the Four Golden Signals**:
+   - Latency
+   - Traffic
+   - Errors
+   - Saturation
+
+2. **Use structured logging**
+3. **Implement distributed tracing**
+4. **Set up alerts for SLOs**
+5. **Create dashboards**
+6. **Monitor dependencies**
+7. **Track business metrics**
+
+## Interview Tips
+
+- **Explain pillars**: Metrics, logs, traces
+- **Show implementation**: Prometheus, Winston, OpenTelemetry
+- **Demonstrate health checks**: Liveness and readiness
+- **Discuss alerting**: Thresholds and notifications
+- **Mention SLOs**: Service level objectives
+- **Show dashboards**: Grafana visualization
+
+## Summary
+
+Monitoring microservices requires metrics (Prometheus), logs (Winston/ELK), and traces (OpenTelemetry). Implement health checks, alerting, and dashboards. Track the four golden signals: latency, traffic, errors, and saturation. Use distributed tracing with correlation IDs. Define and monitor SLOs. Essential for maintaining reliable microservices.

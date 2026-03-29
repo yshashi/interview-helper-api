@@ -1,0 +1,725 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Design Search Engine
+---
+
+# Design Search Engine
+
+## Requirements
+
+### Functional Requirements
+
+- Index billions of web pages
+- Search by keywords
+- Rank results by relevance
+- Support autocomplete
+- Handle typos and synonyms
+- Return results in < 500ms
+
+### Non-Functional Requirements
+
+**Scale:**
+- 10 billion web pages indexed
+- 100 million searches per day
+- 1,000 searches per second average
+
+**Performance:**
+- Search latency < 500ms
+- Index updates within 24 hours
+
+**Availability:**
+- 99.99% uptime
+- Distributed across regions
+
+## High-Level Design
+
+```
+┌─────────────┐
+│ Web Crawler │
+└──────┬──────┘
+       │
+┌──────▼──────────┐
+│ Document        │
+│ Processor       │
+└──────┬──────────┘
+       │
+┌──────▼──────────┐
+│ Indexer         │
+└──────┬──────────┘
+       │
+┌──────▼──────────┐
+│ Inverted Index  │
+│ (Elasticsearch) │
+└──────┬──────────┘
+       │
+┌──────▼──────────┐
+│ Query Processor │
+└──────┬──────────┘
+       │
+┌──────▼──────────┐
+│ Ranker          │
+└──────┬──────────┘
+       │
+┌──────▼──────────┐
+│ Search Results  │
+└─────────────────┘
+```
+
+## Inverted Index
+
+**Concept:** Map from words to documents containing those words
+
+**Example:**
+```
+Document 1: "The quick brown fox"
+Document 2: "The lazy dog"
+Document 3: "Quick brown dogs"
+
+Inverted Index:
+"the"    → [1, 2]
+"quick"  → [1, 3]
+"brown"  → [1, 3]
+"fox"    → [1]
+"lazy"   → [2]
+"dog"    → [2]
+"dogs"   → [3]
+```
+
+## Document Processing
+
+```javascript
+class DocumentProcessor {
+  async processDocument(doc) {
+    const { url, content, title } = doc;
+    
+    // 1. Extract text
+    const text = this.extractText(content);
+    
+    // 2. Tokenize
+    const tokens = this.tokenize(text);
+    
+    // 3. Normalize
+    const normalized = tokens.map(t => this.normalize(t));
+    
+    // 4. Remove stop words
+    const filtered = this.removeStopWords(normalized);
+    
+    // 5. Stem words
+    const stemmed = filtered.map(t => this.stem(t));
+    
+    // 6. Calculate term frequency
+    const termFrequency = this.calculateTF(stemmed);
+    
+    // 7. Extract metadata
+    const metadata = {
+      url,
+      title,
+      wordCount: tokens.length,
+      processedAt: new Date()
+    };
+    
+    return {
+      docId: this.generateDocId(url),
+      terms: stemmed,
+      termFrequency,
+      metadata
+    };
+  }
+  
+  extractText(html) {
+    const cheerio = require('cheerio');
+    const $ = cheerio.load(html);
+    
+    // Remove script and style tags
+    $('script, style').remove();
+    
+    // Get text content
+    return $('body').text();
+  }
+  
+  tokenize(text) {
+    // Split on whitespace and punctuation
+    return text.toLowerCase()
+      .split(/[\s\.,!?;:()\[\]{}]+/)
+      .filter(t => t.length > 0);
+  }
+  
+  normalize(token) {
+    // Convert to lowercase, remove special characters
+    return token.toLowerCase().replace(/[^a-z0-9]/g, '');
+  }
+  
+  removeStopWords(tokens) {
+    const stopWords = new Set(['the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for']);
+    return tokens.filter(t => !stopWords.has(t));
+  }
+  
+  stem(word) {
+    // Simple stemming (production would use Porter Stemmer)
+    if (word.endsWith('ing')) return word.slice(0, -3);
+    if (word.endsWith('ed')) return word.slice(0, -2);
+    if (word.endsWith('s')) return word.slice(0, -1);
+    return word;
+  }
+  
+  calculateTF(terms) {
+    const frequency = {};
+    
+    for (const term of terms) {
+      frequency[term] = (frequency[term] || 0) + 1;
+    }
+    
+    // Normalize by document length
+    const total = terms.length;
+    for (const term in frequency) {
+      frequency[term] = frequency[term] / total;
+    }
+    
+    return frequency;
+  }
+  
+  generateDocId(url) {
+    const crypto = require('crypto');
+    return crypto.createHash('md5').update(url).digest('hex');
+  }
+}
+```
+
+## Indexer
+
+```javascript
+const { Client } = require('@elastic/elasticsearch');
+
+class Indexer {
+  constructor() {
+    this.es = new Client({ node: 'http://localhost:9200' });
+  }
+  
+  async indexDocument(doc) {
+    const { docId, terms, termFrequency, metadata } = doc;
+    
+    // Create document for Elasticsearch
+    const esDoc = {
+      url: metadata.url,
+      title: metadata.title,
+      content: terms.join(' '),
+      term_frequency: termFrequency,
+      word_count: metadata.wordCount,
+      indexed_at: metadata.processedAt
+    };
+    
+    // Index document
+    await this.es.index({
+      index: 'web_pages',
+      id: docId,
+      body: esDoc
+    });
+  }
+  
+  async bulkIndex(docs) {
+    const body = docs.flatMap(doc => [
+      { index: { _index: 'web_pages', _id: doc.docId } },
+      {
+        url: doc.metadata.url,
+        title: doc.metadata.title,
+        content: doc.terms.join(' '),
+        term_frequency: doc.termFrequency,
+        word_count: doc.metadata.wordCount,
+        indexed_at: doc.metadata.processedAt
+      }
+    ]);
+    
+    await this.es.bulk({ body });
+  }
+  
+  async createIndex() {
+    await this.es.indices.create({
+      index: 'web_pages',
+      body: {
+        settings: {
+          number_of_shards: 5,
+          number_of_replicas: 2,
+          analysis: {
+            analyzer: {
+              custom_analyzer: {
+                type: 'custom',
+                tokenizer: 'standard',
+                filter: ['lowercase', 'stop', 'porter_stem']
+              }
+            }
+          }
+        },
+        mappings: {
+          properties: {
+            url: { type: 'keyword' },
+            title: { type: 'text', analyzer: 'custom_analyzer' },
+            content: { type: 'text', analyzer: 'custom_analyzer' },
+            term_frequency: { type: 'object' },
+            word_count: { type: 'integer' },
+            indexed_at: { type: 'date' }
+          }
+        }
+      }
+    });
+  }
+}
+```
+
+## Query Processor
+
+```javascript
+class QueryProcessor {
+  processQuery(query) {
+    // 1. Tokenize
+    const tokens = this.tokenize(query);
+    
+    // 2. Normalize
+    const normalized = tokens.map(t => this.normalize(t));
+    
+    // 3. Remove stop words
+    const filtered = this.removeStopWords(normalized);
+    
+    // 4. Stem
+    const stemmed = filtered.map(t => this.stem(t));
+    
+    // 5. Handle typos (spell correction)
+    const corrected = stemmed.map(t => this.correctSpelling(t));
+    
+    // 6. Expand with synonyms
+    const expanded = this.expandSynonyms(corrected);
+    
+    return {
+      original: query,
+      processed: corrected,
+      expanded
+    };
+  }
+  
+  correctSpelling(word) {
+    // Simple Levenshtein distance-based correction
+    // Production would use more sophisticated algorithms
+    const dictionary = ['search', 'engine', 'query', 'result'];
+    
+    let closest = word;
+    let minDistance = Infinity;
+    
+    for (const dictWord of dictionary) {
+      const distance = this.levenshteinDistance(word, dictWord);
+      if (distance < minDistance && distance <= 2) {
+        minDistance = distance;
+        closest = dictWord;
+      }
+    }
+    
+    return closest;
+  }
+  
+  levenshteinDistance(a, b) {
+    const matrix = [];
+    
+    for (let i = 0; i <= b.length; i++) {
+      matrix[i] = [i];
+    }
+    
+    for (let j = 0; j <= a.length; j++) {
+      matrix[0][j] = j;
+    }
+    
+    for (let i = 1; i <= b.length; i++) {
+      for (let j = 1; j <= a.length; j++) {
+        if (b.charAt(i - 1) === a.charAt(j - 1)) {
+          matrix[i][j] = matrix[i - 1][j - 1];
+        } else {
+          matrix[i][j] = Math.min(
+            matrix[i - 1][j - 1] + 1,
+            matrix[i][j - 1] + 1,
+            matrix[i - 1][j] + 1
+          );
+        }
+      }
+    }
+    
+    return matrix[b.length][a.length];
+  }
+  
+  expandSynonyms(terms) {
+    const synonyms = {
+      'quick': ['fast', 'rapid', 'swift'],
+      'search': ['find', 'lookup', 'query']
+    };
+    
+    const expanded = new Set(terms);
+    
+    for (const term of terms) {
+      if (synonyms[term]) {
+        synonyms[term].forEach(syn => expanded.add(syn));
+      }
+    }
+    
+    return Array.from(expanded);
+  }
+  
+  tokenize(text) {
+    return text.toLowerCase().split(/\s+/).filter(t => t.length > 0);
+  }
+  
+  normalize(token) {
+    return token.replace(/[^a-z0-9]/g, '');
+  }
+  
+  removeStopWords(tokens) {
+    const stopWords = new Set(['the', 'a', 'an', 'and', 'or']);
+    return tokens.filter(t => !stopWords.has(t));
+  }
+  
+  stem(word) {
+    if (word.endsWith('ing')) return word.slice(0, -3);
+    if (word.endsWith('ed')) return word.slice(0, -2);
+    if (word.endsWith('s')) return word.slice(0, -1);
+    return word;
+  }
+}
+```
+
+## Ranking (TF-IDF)
+
+```javascript
+class Ranker {
+  constructor(es) {
+    this.es = es;
+  }
+  
+  async search(query, limit = 10) {
+    const processed = new QueryProcessor().processQuery(query);
+    
+    // Search with Elasticsearch
+    const response = await this.es.search({
+      index: 'web_pages',
+      body: {
+        query: {
+          bool: {
+            should: [
+              // Match in title (higher weight)
+              {
+                match: {
+                  title: {
+                    query: processed.processed.join(' '),
+                    boost: 3.0
+                  }
+                }
+              },
+              // Match in content
+              {
+                match: {
+                  content: {
+                    query: processed.processed.join(' '),
+                    boost: 1.0
+                  }
+                }
+              },
+              // Match synonyms
+              {
+                match: {
+                  content: {
+                    query: processed.expanded.join(' '),
+                    boost: 0.5
+                  }
+                }
+              }
+            ],
+            minimum_should_match: 1
+          }
+        },
+        size: limit,
+        _source: ['url', 'title', 'word_count'],
+        highlight: {
+          fields: {
+            title: {},
+            content: { fragment_size: 150, number_of_fragments: 3 }
+          }
+        }
+      }
+    });
+    
+    // Format results
+    return response.hits.hits.map(hit => ({
+      url: hit._source.url,
+      title: hit._source.title,
+      score: hit._score,
+      snippet: hit.highlight?.content?.[0] || '',
+      wordCount: hit._source.word_count
+    }));
+  }
+  
+  // PageRank-like algorithm for additional ranking
+  calculatePageRank(docId, incomingLinks) {
+    // Simplified PageRank
+    const dampingFactor = 0.85;
+    const numDocs = 10000000000; // 10 billion
+    
+    let rank = (1 - dampingFactor) / numDocs;
+    
+    for (const link of incomingLinks) {
+      rank += dampingFactor * (link.sourceRank / link.sourceOutgoingLinks);
+    }
+    
+    return rank;
+  }
+}
+```
+
+## Autocomplete
+
+```javascript
+class Autocomplete {
+  constructor(redis) {
+    this.redis = redis;
+  }
+  
+  async suggest(prefix, limit = 10) {
+    // Use Redis sorted set for autocomplete
+    const key = 'autocomplete';
+    
+    // Get suggestions
+    const suggestions = await this.redis.zrangebylex(
+      key,
+      `[${prefix}`,
+      `[${prefix}\xff`,
+      'LIMIT', 0, limit
+    );
+    
+    return suggestions;
+  }
+  
+  async addQuery(query, score = 1) {
+    // Add query to autocomplete index
+    const key = 'autocomplete';
+    
+    // Increment score (popularity)
+    await this.redis.zincrby(key, score, query);
+    
+    // Add all prefixes
+    for (let i = 1; i <= query.length; i++) {
+      const prefix = query.substring(0, i);
+      await this.redis.zadd(`autocomplete:${prefix}`, score, query);
+    }
+  }
+  
+  async getPopularQueries(limit = 10) {
+    return await this.redis.zrevrange('autocomplete', 0, limit - 1, 'WITHSCORES');
+  }
+}
+```
+
+## Search API
+
+```javascript
+const express = require('express');
+const app = express();
+
+class SearchAPI {
+  constructor(ranker, autocomplete) {
+    this.ranker = ranker;
+    this.autocomplete = autocomplete;
+  }
+  
+  setupRoutes(app) {
+    // Search endpoint
+    app.get('/api/search', async (req, res) => {
+      try {
+        const { q, page = 1, size = 10 } = req.query;
+        
+        if (!q) {
+          return res.status(400).json({ error: 'Query required' });
+        }
+        
+        // Track query for autocomplete
+        await this.autocomplete.addQuery(q);
+        
+        // Search
+        const results = await this.ranker.search(q, size);
+        
+        res.json({
+          query: q,
+          results,
+          total: results.length,
+          page: parseInt(page)
+        });
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+    
+    // Autocomplete endpoint
+    app.get('/api/suggest', async (req, res) => {
+      try {
+        const { q } = req.query;
+        
+        if (!q) {
+          return res.status(400).json({ error: 'Query required' });
+        }
+        
+        const suggestions = await this.autocomplete.suggest(q);
+        
+        res.json({ suggestions });
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+  }
+}
+```
+
+## Caching
+
+```javascript
+class SearchCache {
+  constructor(redis) {
+    this.redis = redis;
+  }
+  
+  async get(query) {
+    const key = `search:${query}`;
+    const cached = await this.redis.get(key);
+    
+    if (cached) {
+      return JSON.parse(cached);
+    }
+    
+    return null;
+  }
+  
+  async set(query, results, ttl = 3600) {
+    const key = `search:${query}`;
+    await this.redis.setEx(key, ttl, JSON.stringify(results));
+  }
+}
+```
+
+## .NET Implementation
+
+```csharp
+using Nest;
+
+public class SearchService
+{
+    private readonly IElasticClient _elasticClient;
+    
+    public async Task<SearchResults> SearchAsync(string query, int size = 10)
+    {
+        var searchResponse = await _elasticClient.SearchAsync<WebPage>(s => s
+            .Index("web_pages")
+            .Size(size)
+            .Query(q => q
+                .Bool(b => b
+                    .Should(
+                        sh => sh.Match(m => m
+                            .Field(f => f.Title)
+                            .Query(query)
+                            .Boost(3.0)
+                        ),
+                        sh => sh.Match(m => m
+                            .Field(f => f.Content)
+                            .Query(query)
+                            .Boost(1.0)
+                        )
+                    )
+                    .MinimumShouldMatch(1)
+                )
+            )
+            .Highlight(h => h
+                .Fields(
+                    f => f.Field(p => p.Title),
+                    f => f.Field(p => p.Content).FragmentSize(150).NumberOfFragments(3)
+                )
+            )
+        );
+        
+        return new SearchResults
+        {
+            Query = query,
+            Results = searchResponse.Documents.Select(doc => new SearchResult
+            {
+                Url = doc.Url,
+                Title = doc.Title,
+                Score = searchResponse.Hits.First(h => h.Source == doc).Score ?? 0,
+                Snippet = searchResponse.Hits.First(h => h.Source == doc)
+                    .Highlight?.Values.FirstOrDefault()?.FirstOrDefault() ?? ""
+            }).ToList()
+        };
+    }
+}
+```
+
+## Distributed Search
+
+```javascript
+class DistributedSearch {
+  constructor(shards) {
+    this.shards = shards; // Array of Elasticsearch nodes
+  }
+  
+  async search(query, limit = 10) {
+    // Search all shards in parallel
+    const promises = this.shards.map(shard => 
+      this.searchShard(shard, query, limit)
+    );
+    
+    const results = await Promise.all(promises);
+    
+    // Merge and re-rank results
+    const merged = this.mergeResults(results, limit);
+    
+    return merged;
+  }
+  
+  async searchShard(shard, query, limit) {
+    const es = new Client({ node: shard.url });
+    return await es.search({
+      index: 'web_pages',
+      body: {
+        query: { match: { content: query } },
+        size: limit
+      }
+    });
+  }
+  
+  mergeResults(shardResults, limit) {
+    // Combine all results
+    const allResults = shardResults.flatMap(r => r.hits.hits);
+    
+    // Sort by score
+    allResults.sort((a, b) => b._score - a._score);
+    
+    // Return top N
+    return allResults.slice(0, limit);
+  }
+}
+```
+
+## Best Practices
+
+- **Use inverted index** - Efficient term lookup
+- **Implement TF-IDF** - Relevance ranking
+- **Cache popular queries** - Reduce load
+- **Shard index** - Distribute across nodes
+- **Implement autocomplete** - Better UX
+- **Handle typos** - Spell correction
+- **Expand with synonyms** - Better recall
+- **Highlight matches** - Show context
+- **Track query analytics** - Improve ranking
+- **Update index incrementally** - Fresh results
+
+## Interview Tips
+
+- **Start with requirements** - Scale, latency, features
+- **Explain inverted index** - Core data structure
+- **Show document processing** - Tokenize, stem, TF-IDF
+- **Demonstrate ranking** - TF-IDF, PageRank
+- **Implement autocomplete** - Redis sorted sets
+- **Discuss distribution** - Sharding, replication
+- **Address challenges** - Typos, synonyms, freshness
+
+## Summary
+
+Search engine indexes billions of web pages using inverted index. Process documents: tokenize, normalize, remove stop words, stem. Calculate TF-IDF for ranking. Use Elasticsearch for distributed indexing and search. Implement query processing with spell correction and synonym expansion. Rank results by relevance (TF-IDF) and popularity (PageRank). Cache popular queries in Redis. Implement autocomplete with sorted sets. Shard index across nodes for scalability. Return results in < 500ms. Handle 1,000 searches/second. Essential pattern for information retrieval systems.

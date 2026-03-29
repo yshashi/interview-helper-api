@@ -1,0 +1,340 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Strangler Fig Pattern
+---
+
+# Strangler Fig Pattern
+
+## What is Strangler Fig Pattern?
+
+The **Strangler Fig Pattern** gradually migrates a monolithic application to microservices by incrementally replacing functionality without a complete rewrite.
+
+## Migration Strategy
+
+```
+Phase 1: Monolith Only
+┌─────────────────┐
+│   Monolith      │
+│  All Features   │
+└─────────────────┘
+
+Phase 2: Hybrid
+┌─────────────────┐     ┌──────────────┐
+│   Monolith      │     │ User Service │
+│  (Most Features)│     │   (New)      │
+└─────────────────┘     └──────────────┘
+
+Phase 3: More Services
+┌─────────────────┐     ┌──────────────┐
+│   Monolith      │     │ User Service │
+│ (Some Features) │     │Order Service │
+└─────────────────┘     │Product Svc   │
+                        └──────────────┘
+
+Phase 4: Microservices
+┌──────────────┐
+│ User Service │
+│Order Service │
+│Product Svc   │
+│Payment Svc   │
+└──────────────┘
+(Monolith retired)
+```
+
+## Routing Layer
+
+```javascript
+// API Gateway routes requests
+const express = require('express');
+const proxy = require('http-proxy-middleware');
+
+const app = express();
+
+// Feature flags for gradual migration
+const features = {
+  userServiceEnabled: true,
+  orderServiceEnabled: false,
+  productServiceEnabled: false
+};
+
+// Route to new services or monolith
+app.use('/api/users', (req, res, next) => {
+  if (features.userServiceEnabled) {
+    // Route to new microservice
+    proxy.createProxyMiddleware({
+      target: 'http://user-service:3001',
+      changeOrigin: true
+    })(req, res, next);
+  } else {
+    // Route to monolith
+    proxy.createProxyMiddleware({
+      target: 'http://monolith:8080',
+      changeOrigin: true
+    })(req, res, next);
+  }
+});
+
+app.use('/api/orders', (req, res, next) => {
+  if (features.orderServiceEnabled) {
+    proxy.createProxyMiddleware({
+      target: 'http://order-service:3002',
+      changeOrigin: true
+    })(req, res, next);
+  } else {
+    proxy.createProxyMiddleware({
+      target: 'http://monolith:8080',
+      changeOrigin: true
+    })(req, res, next);
+  }
+});
+```
+
+## Canary Deployment
+
+```javascript
+// Gradually route traffic to new service
+app.use('/api/users', (req, res, next) => {
+  const rolloutPercentage = 20; // 20% to new service
+  
+  if (Math.random() * 100 < rolloutPercentage) {
+    // Route to new service
+    proxy.createProxyMiddleware({
+      target: 'http://user-service:3001'
+    })(req, res, next);
+  } else {
+    // Route to monolith
+    proxy.createProxyMiddleware({
+      target: 'http://monolith:8080'
+    })(req, res, next);
+  }
+});
+```
+
+## Data Migration
+
+```javascript
+// Dual write pattern
+class UserService {
+  async createUser(userData) {
+    // Write to new database
+    const newUser = await NewUserDB.create(userData);
+    
+    // Also write to old database (for rollback)
+    await OldUserDB.create(userData);
+    
+    return newUser;
+  }
+  
+  async getUser(userId) {
+    // Read from new database
+    let user = await NewUserDB.findById(userId);
+    
+    if (!user) {
+      // Fallback to old database
+      user = await OldUserDB.findById(userId);
+      
+      if (user) {
+        // Migrate on read
+        await NewUserDB.create(user);
+      }
+    }
+    
+    return user;
+  }
+}
+```
+
+## Anti-Corruption Layer
+
+```javascript
+// Adapter to translate between old and new models
+class UserAdapter {
+  // Convert monolith model to microservice model
+  toMicroserviceModel(monolithUser) {
+    return {
+      id: monolithUser.user_id,
+      email: monolithUser.email_address,
+      name: `${monolithUser.first_name} ${monolithUser.last_name}`,
+      createdAt: new Date(monolithUser.created_timestamp)
+    };
+  }
+  
+  // Convert microservice model to monolith model
+  toMonolithModel(microserviceUser) {
+    const [firstName, ...lastNameParts] = microserviceUser.name.split(' ');
+    
+    return {
+      user_id: microserviceUser.id,
+      email_address: microserviceUser.email,
+      first_name: firstName,
+      last_name: lastNameParts.join(' '),
+      created_timestamp: microserviceUser.createdAt.getTime()
+    };
+  }
+}
+
+// Use adapter
+const adapter = new UserAdapter();
+
+app.get('/api/users/:id', async (req, res) => {
+  if (features.userServiceEnabled) {
+    const user = await newUserService.getUser(req.params.id);
+    res.json(user);
+  } else {
+    const monolithUser = await monolith.getUser(req.params.id);
+    const user = adapter.toMicroserviceModel(monolithUser);
+    res.json(user);
+  }
+});
+```
+
+## Feature Toggle
+
+```javascript
+class FeatureToggle {
+  constructor() {
+    this.features = new Map();
+  }
+  
+  enable(feature, percentage = 100) {
+    this.features.set(feature, percentage);
+  }
+  
+  isEnabled(feature, userId = null) {
+    const percentage = this.features.get(feature) || 0;
+    
+    if (percentage === 100) return true;
+    if (percentage === 0) return false;
+    
+    // Consistent hashing for same user
+    if (userId) {
+      const hash = this.hash(userId);
+      return (hash % 100) < percentage;
+    }
+    
+    return Math.random() * 100 < percentage;
+  }
+  
+  hash(str) {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      hash = ((hash << 5) - hash) + str.charCodeAt(i);
+      hash = hash & hash;
+    }
+    return Math.abs(hash);
+  }
+}
+
+const toggle = new FeatureToggle();
+toggle.enable('user-service', 25); // 25% rollout
+
+app.use('/api/users', (req, res, next) => {
+  if (toggle.isEnabled('user-service', req.user?.id)) {
+    proxy.createProxyMiddleware({
+      target: 'http://user-service:3001'
+    })(req, res, next);
+  } else {
+    proxy.createProxyMiddleware({
+      target: 'http://monolith:8080'
+    })(req, res, next);
+  }
+});
+```
+
+## Migration Steps
+
+### Step 1: Extract User Service
+
+```javascript
+// 1. Create new User Service
+// 2. Migrate user data
+// 3. Enable feature flag at 0%
+toggle.enable('user-service', 0);
+
+// 4. Gradually increase percentage
+toggle.enable('user-service', 10);  // Week 1
+toggle.enable('user-service', 25);  // Week 2
+toggle.enable('user-service', 50);  // Week 3
+toggle.enable('user-service', 100); // Week 4
+
+// 5. Remove user code from monolith
+```
+
+### Step 2: Extract Order Service
+
+```javascript
+// Repeat process for orders
+toggle.enable('order-service', 0);
+// ... gradual rollout
+toggle.enable('order-service', 100);
+```
+
+## Monitoring
+
+```javascript
+// Track which version handles requests
+app.use((req, res, next) => {
+  const version = features.userServiceEnabled ? 'microservice' : 'monolith';
+  
+  metrics.increment('requests', {
+    path: req.path,
+    version
+  });
+  
+  next();
+});
+
+// Compare error rates
+app.use((err, req, res, next) => {
+  const version = features.userServiceEnabled ? 'microservice' : 'monolith';
+  
+  metrics.increment('errors', {
+    path: req.path,
+    version
+  });
+  
+  next(err);
+});
+```
+
+## Rollback Strategy
+
+```javascript
+// Quick rollback if issues detected
+if (errorRate > threshold) {
+  toggle.enable('user-service', 0); // Rollback to monolith
+  
+  logger.error('High error rate detected, rolling back to monolith');
+}
+```
+
+## Benefits
+
+1. **Incremental Migration**: No big bang rewrite
+2. **Risk Reduction**: Gradual rollout
+3. **Easy Rollback**: Disable feature flag
+4. **Continuous Delivery**: Deploy while migrating
+5. **Learn and Adapt**: Adjust based on feedback
+
+## Best Practices
+
+1. **Start with independent features**
+2. **Use feature flags**
+3. **Implement dual writes**
+4. **Monitor both versions**
+5. **Plan data migration**
+6. **Test thoroughly**
+7. **Have rollback plan**
+
+## Interview Tips
+
+- **Explain pattern**: Gradual migration strategy
+- **Show routing**: API Gateway with feature flags
+- **Demonstrate data**: Dual write and migration
+- **Discuss rollout**: Canary deployment
+- **Mention monitoring**: Compare versions
+- **Show rollback**: Quick disable via flags
+
+## Summary
+
+Strangler Fig Pattern enables gradual migration from monolith to microservices. Use API Gateway with feature flags to route traffic. Implement dual writes for data migration. Use canary deployment for gradual rollout. Monitor both versions and enable quick rollback. Reduces risk compared to big bang rewrites.

@@ -1,0 +1,181 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Environment Variables in Node.js
+---
+
+# Environment Variables in Node.js
+
+## What are Environment Variables?
+
+**Environment variables** are dynamic values that affect the behavior of running processes. They're used to store configuration settings, API keys, and other sensitive data.
+
+## Accessing Environment Variables
+
+```javascript
+// Access via process.env
+const port = process.env.PORT || 3000;
+const dbUrl = process.env.DATABASE_URL;
+const apiKey = process.env.API_KEY;
+
+console.log(process.env.NODE_ENV); // development, production, test
+```
+
+## Setting Environment Variables
+
+### Command Line
+
+```bash
+# Linux/Mac
+PORT=3000 node app.js
+NODE_ENV=production node app.js
+
+# Windows
+set PORT=3000 && node app.js
+```
+
+### .env File
+
+```bash
+# .env
+PORT=3000
+DATABASE_URL=mongodb://localhost:27017/mydb
+API_KEY=your-api-key-here
+NODE_ENV=development
+```
+
+### Using dotenv Package
+
+```javascript
+// Install: npm install dotenv
+require('dotenv').config();
+
+const port = process.env.PORT;
+const dbUrl = process.env.DATABASE_URL;
+```
+
+## Configuration Example
+
+```javascript
+// config.js
+require('dotenv').config();
+
+module.exports = {
+  port: process.env.PORT || 3000,
+  database: {
+    url: process.env.DATABASE_URL,
+    name: process.env.DB_NAME
+  },
+  jwt: {
+    secret: process.env.JWT_SECRET,
+    expiresIn: process.env.JWT_EXPIRES_IN || '1h'
+  },
+  email: {
+    host: process.env.EMAIL_HOST,
+    port: process.env.EMAIL_PORT,
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS
+  }
+};
+
+// app.js
+const config = require('./config');
+
+app.listen(config.port, () => {
+  console.log(`Server running on port ${config.port}`);
+});
+```
+
+## Environment-Specific Configuration
+
+```javascript
+const env = process.env.NODE_ENV || 'development';
+
+const config = {
+  development: {
+    port: 3000,
+    database: 'mongodb://localhost:27017/dev'
+  },
+  production: {
+    port: process.env.PORT,
+    database: process.env.DATABASE_URL
+  },
+  test: {
+    port: 3001,
+    database: 'mongodb://localhost:27017/test'
+  }
+};
+
+module.exports = config[env];
+```
+
+## Best Practices
+
+### 1. Never Commit .env Files
+
+```bash
+# .gitignore
+.env
+.env.local
+.env.*.local
+```
+
+### 2. Provide .env.example
+
+```bash
+# .env.example
+PORT=3000
+DATABASE_URL=your_database_url
+API_KEY=your_api_key
+JWT_SECRET=your_jwt_secret
+```
+
+### 3. Validate Environment Variables
+
+```javascript
+const requiredEnvVars = [
+  'DATABASE_URL',
+  'JWT_SECRET',
+  'API_KEY'
+];
+
+requiredEnvVars.forEach(varName => {
+  if (!process.env[varName]) {
+    throw new Error(`Missing required environment variable: ${varName}`);
+  }
+});
+```
+
+### 4. Use Type Conversion
+
+```javascript
+const port = parseInt(process.env.PORT, 10);
+const enableCache = process.env.ENABLE_CACHE === 'true';
+const maxConnections = Number(process.env.MAX_CONNECTIONS);
+```
+
+## Cross-Platform Support
+
+```javascript
+// Use cross-env for cross-platform compatibility
+// Install: npm install --save-dev cross-env
+
+// package.json
+{
+  "scripts": {
+    "start": "cross-env NODE_ENV=production node app.js",
+    "dev": "cross-env NODE_ENV=development nodemon app.js"
+  }
+}
+```
+
+## Interview Tips
+
+- **Explain purpose**: Configuration and secrets management
+- **Show access**: process.env object
+- **Demonstrate dotenv**: Loading from .env files
+- **Discuss security**: Never commit sensitive data
+- **Mention validation**: Check required variables
+
+## Summary
+
+Environment variables configure applications without changing code. Access via process.env. Use dotenv package to load from .env files. Never commit .env files to version control. Validate required variables on startup.

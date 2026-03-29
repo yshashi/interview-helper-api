@@ -1,0 +1,217 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Worker Threads in Node.js
+---
+
+# Worker Threads in Node.js
+
+## What are Worker Threads?
+
+**Worker threads** enable parallel execution of JavaScript code in separate threads, ideal for CPU-intensive operations without blocking the main thread.
+
+## Basic Usage
+
+```javascript
+const { Worker, isMainThread, parentPort, workerData } = require('worker_threads');
+
+if (isMainThread) {
+  // Main thread
+  const worker = new Worker(__filename, {
+    workerData: { num: 5 }
+  });
+  
+  worker.on('message', (result) => {
+    console.log('Result:', result);
+  });
+  
+  worker.on('error', (error) => {
+    console.error('Worker error:', error);
+  });
+  
+  worker.on('exit', (code) => {
+    console.log(`Worker exited with code ${code}`);
+  });
+} else {
+  // Worker thread
+  const result = workerData.num * 2;
+  parentPort.postMessage(result);
+}
+```
+
+## Separate Worker File
+
+```javascript
+// worker.js
+const { parentPort, workerData } = require('worker_threads');
+
+function fibonacci(n) {
+  if (n <= 1) return n;
+  return fibonacci(n - 1) + fibonacci(n - 2);
+}
+
+const result = fibonacci(workerData.num);
+parentPort.postMessage(result);
+
+// main.js
+const { Worker } = require('worker_threads');
+
+function runWorker(num) {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker('./worker.js', {
+      workerData: { num }
+    });
+    
+    worker.on('message', resolve);
+    worker.on('error', reject);
+    worker.on('exit', (code) => {
+      if (code !== 0) {
+        reject(new Error(`Worker stopped with exit code ${code}`));
+      }
+    });
+  });
+}
+
+const result = await runWorker(40);
+console.log(result);
+```
+
+## Worker Pool
+
+```javascript
+class WorkerPool {
+  constructor(workerScript, poolSize) {
+    this.workerScript = workerScript;
+    this.poolSize = poolSize;
+    this.workers = [];
+    this.queue = [];
+    
+    for (let i = 0; i < poolSize; i++) {
+      this.workers.push({ worker: null, busy: false });
+    }
+  }
+  
+  async execute(data) {
+    return new Promise((resolve, reject) => {
+      const task = { data, resolve, reject };
+      
+      const availableWorker = this.workers.find(w => !w.busy);
+      
+      if (availableWorker) {
+        this.runTask(availableWorker, task);
+      } else {
+        this.queue.push(task);
+      }
+    });
+  }
+  
+  runTask(workerSlot, task) {
+    workerSlot.busy = true;
+    
+    const worker = new Worker(this.workerScript, {
+      workerData: task.data
+    });
+    
+    worker.on('message', (result) => {
+      task.resolve(result);
+      worker.terminate();
+      workerSlot.busy = false;
+      
+      if (this.queue.length > 0) {
+        const nextTask = this.queue.shift();
+        this.runTask(workerSlot, nextTask);
+      }
+    });
+    
+    worker.on('error', (error) => {
+      task.reject(error);
+      worker.terminate();
+      workerSlot.busy = false;
+    });
+  }
+}
+
+// Usage
+const pool = new WorkerPool('./worker.js', 4);
+
+const tasks = [10, 20, 30, 40, 50];
+const results = await Promise.all(
+  tasks.map(num => pool.execute({ num }))
+);
+```
+
+## Shared Memory
+
+```javascript
+const { Worker, isMainThread, parentPort, workerData } = require('worker_threads');
+
+if (isMainThread) {
+  const sharedBuffer = new SharedArrayBuffer(4);
+  const sharedArray = new Int32Array(sharedBuffer);
+  
+  const worker = new Worker(__filename, {
+    workerData: { sharedBuffer }
+  });
+  
+  // Atomic operations
+  Atomics.add(sharedArray, 0, 5);
+  console.log('Main:', sharedArray[0]);
+  
+  worker.on('message', () => {
+    console.log('After worker:', sharedArray[0]);
+  });
+} else {
+  const sharedArray = new Int32Array(workerData.sharedBuffer);
+  Atomics.add(sharedArray, 0, 10);
+  parentPort.postMessage('done');
+}
+```
+
+## Message Passing
+
+```javascript
+// Two-way communication
+if (isMainThread) {
+  const worker = new Worker(__filename);
+  
+  worker.on('message', (msg) => {
+    console.log('From worker:', msg);
+    worker.postMessage('Hello from main');
+  });
+  
+  worker.postMessage('Start');
+} else {
+  parentPort.on('message', (msg) => {
+    console.log('From main:', msg);
+    parentPort.postMessage('Hello from worker');
+  });
+}
+```
+
+## Worker Threads vs Child Processes
+
+| Feature | Worker Threads | Child Processes |
+|---------|---------------|-----------------|
+| **Memory** | Shared | Separate |
+| **Startup** | Faster | Slower |
+| **Communication** | Faster | Slower |
+| **Use Case** | CPU-intensive | I/O, isolation |
+
+## Best Practices
+
+1. **Use for CPU-intensive tasks**
+2. **Limit number of workers**
+3. **Implement worker pool**
+4. **Handle errors properly**
+5. **Terminate workers when done**
+
+## Interview Tips
+
+- **Explain worker threads**: Parallel JavaScript execution
+- **Show basic usage**: Worker creation and communication
+- **Demonstrate worker pool**: Manage multiple workers
+- **Discuss shared memory**: SharedArrayBuffer, Atomics
+- **Compare with child processes**: Different use cases
+
+## Summary
+
+Worker threads enable parallel JavaScript execution in separate threads. Use for CPU-intensive tasks. Create workers with new Worker(), communicate via postMessage/on('message'). Implement worker pools for efficiency. Share memory with SharedArrayBuffer.

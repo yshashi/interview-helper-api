@@ -1,0 +1,89 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Implementing Soft Delete in EF Core
+---
+
+# Implementing Soft Delete in EF Core
+
+## What is Soft Delete?
+
+**Soft delete** marks records as deleted without physically removing them from the database. This preserves data for audit trails, recovery, and historical analysis.
+
+## Implementation
+
+```csharp
+public interface ISoftDeletable
+{
+    bool IsDeleted { get; set; }
+    DateTime? DeletedAt { get; set; }
+    string DeletedBy { get; set; }
+}
+
+public class Product : ISoftDeletable
+{
+    public int Id { get; set; }
+    public string Name { get; set; }
+    public bool IsDeleted { get; set; }
+    public DateTime? DeletedAt { get; set; }
+    public string DeletedBy { get; set; }
+}
+```
+
+## Global Query Filter
+
+```csharp
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    modelBuilder.Entity<Product>()
+        .HasQueryFilter(p => !p.IsDeleted);
+}
+```
+
+## Override SaveChanges
+
+```csharp
+public override int SaveChanges()
+{
+    foreach (var entry in ChangeTracker.Entries<ISoftDeletable>())
+    {
+        if (entry.State == EntityState.Deleted)
+        {
+            entry.State = EntityState.Modified;
+            entry.Entity.IsDeleted = true;
+            entry.Entity.DeletedAt = DateTime.UtcNow;
+            entry.Entity.DeletedBy = _currentUser;
+        }
+    }
+    
+    return base.SaveChanges();
+}
+```
+
+## Usage
+
+```csharp
+// Soft delete
+var product = await context.Products.FindAsync(id);
+context.Products.Remove(product);
+await context.SaveChangesAsync(); // Sets IsDeleted = true
+
+// Query active products
+var products = await context.Products.ToListAsync(); // Only non-deleted
+
+// Include deleted
+var allProducts = await context.Products
+    .IgnoreQueryFilters()
+    .ToListAsync();
+
+// Restore deleted
+var product = await context.Products
+    .IgnoreQueryFilters()
+    .FirstAsync(p => p.Id == id);
+product.IsDeleted = false;
+product.DeletedAt = null;
+await context.SaveChangesAsync();
+```
+
+## Summary
+
+Soft delete marks records as deleted instead of removing them. Implement using IsDeleted flag, global query filters, and override SaveChanges to intercept delete operations.

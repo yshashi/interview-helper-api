@@ -1,0 +1,291 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Database per Service Pattern
+---
+
+# Database per Service Pattern
+
+## What is Database per Service?
+
+Each microservice has its own private database that no other service can access directly.
+
+## Architecture
+
+```
+┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+│ User Service │     │Order Service │     │Product Svc   │
+└──────┬───────┘     └──────┬───────┘     └──────┬───────┘
+       │                    │                    │
+   ┌───▼────┐          ┌───▼────┐          ┌───▼────┐
+   │User DB │          │Order DB│          │Product │
+   └────────┘          └────────┘          │  DB    │
+                                           └────────┘
+```
+
+## Implementation
+
+```javascript
+// User Service - Own database
+const userDB = mongoose.createConnection('mongodb://localhost/users');
+
+const User = userDB.model('User', {
+  email: String,
+  name: String
+});
+
+// Order Service - Own database
+const orderDB = mongoose.createConnection('mongodb://localhost/orders');
+
+const Order = orderDB.model('Order', {
+  userId: String,
+  productId: String,
+  amount: Number
+});
+
+// Product Service - Own database
+const productDB = mongoose.createConnection('mongodb://localhost/products');
+
+const Product = productDB.model('Product', {
+  name: String,
+  price: Number
+});
+```
+
+## Benefits
+
+### 1. Independence
+
+```javascript
+// Each service can use different database technology
+// User Service - MongoDB
+const userDB = mongoose.connect('mongodb://localhost/users');
+
+// Order Service - PostgreSQL
+const orderDB = new Pool({
+  host: 'localhost',
+  database: 'orders'
+});
+
+// Product Service - MySQL
+const productDB = mysql.createConnection({
+  host: 'localhost',
+  database: 'products'
+});
+```
+
+### 2. Scalability
+
+```javascript
+// Scale databases independently
+// User database - high read traffic
+const userDB = mongoose.connect('mongodb://localhost/users', {
+  readPreference: 'secondaryPreferred',
+  maxPoolSize: 100
+});
+
+// Order database - high write traffic
+const orderDB = mongoose.connect('mongodb://localhost/orders', {
+  writeConcern: { w: 'majority' },
+  maxPoolSize: 50
+});
+```
+
+### 3. Isolation
+
+```javascript
+// Failure in one database doesn't affect others
+try {
+  await Order.create(orderData);
+} catch (error) {
+  // Order service down, but User service still works
+  logger.error('Order service unavailable');
+}
+```
+
+## Challenges
+
+### 1. Data Duplication
+
+```javascript
+// User data duplicated across services
+// User Service
+const user = {
+  id: '123',
+  email: 'user@example.com',
+  name: 'John Doe'
+};
+
+// Order Service (duplicated)
+const order = {
+  id: 'order_456',
+  userId: '123',
+  userName: 'John Doe',  // Duplicated
+  userEmail: 'user@example.com'  // Duplicated
+};
+```
+
+### 2. Joins Across Services
+
+```javascript
+// Can't use SQL joins across services
+// Instead, make multiple calls
+async function getOrderWithDetails(orderId) {
+  // Get order
+  const order = await Order.findById(orderId);
+  
+  // Get user (separate call)
+  const user = await axios.get(`http://user-service/users/${order.userId}`);
+  
+  // Get product (separate call)
+  const product = await axios.get(`http://product-service/products/${order.productId}`);
+  
+  return {
+    order,
+    user: user.data,
+    product: product.data
+  };
+}
+```
+
+### 3. Transactions
+
+```javascript
+// Can't use database transactions across services
+// Use Saga pattern instead
+class OrderSaga {
+  async execute(orderData) {
+    try {
+      await this.createOrder(orderData);
+      await this.updateInventory(orderData);
+      await this.processPayment(orderData);
+    } catch (error) {
+      await this.compensate();
+    }
+  }
+}
+```
+
+## Data Synchronization
+
+### Event-Based Sync
+
+```javascript
+// User Service publishes events
+async function updateUser(userId, updates) {
+  await User.findByIdAndUpdate(userId, updates);
+  
+  await eventBus.publish('UserUpdated', {
+    userId,
+    updates
+  });
+}
+
+// Order Service subscribes
+eventBus.subscribe('UserUpdated', async (event) => {
+  // Update denormalized user data in orders
+  await Order.updateMany(
+    { userId: event.data.userId },
+    {
+      $set: {
+        userName: event.data.updates.name,
+        userEmail: event.data.updates.email
+      }
+    }
+  );
+});
+```
+
+### API-Based Sync
+
+```javascript
+// Order Service fetches user data when needed
+async function createOrder(orderData) {
+  // Get latest user data
+  const user = await axios.get(`http://user-service/users/${orderData.userId}`);
+  
+  // Store denormalized data
+  const order = await Order.create({
+    ...orderData,
+    userName: user.data.name,
+    userEmail: user.data.email
+  });
+  
+  return order;
+}
+```
+
+## Shared Data Handling
+
+### Reference Data
+
+```javascript
+// Option 1: Duplicate reference data
+// Each service has own copy of countries, currencies, etc.
+
+// Option 2: Shared reference data service
+class ReferenceDataService {
+  async getCountries() {
+    return await axios.get('http://reference-service/countries');
+  }
+  
+  async getCurrencies() {
+    return await axios.get('http://reference-service/currencies');
+  }
+}
+```
+
+### Shared Database (Anti-Pattern)
+
+```javascript
+// AVOID: Multiple services sharing same database
+// User Service
+const sharedDB = mongoose.connect('mongodb://localhost/shared');
+const User = sharedDB.model('User', userSchema);
+
+// Order Service (BAD: accessing same database)
+const sharedDB = mongoose.connect('mongodb://localhost/shared');
+const User = sharedDB.model('User', userSchema);  // Tight coupling!
+```
+
+## Polyglot Persistence
+
+```javascript
+// Use best database for each service
+// User Service - Document store
+const userDB = mongoose.connect('mongodb://localhost/users');
+
+// Order Service - Relational
+const orderDB = new Pool({
+  connectionString: 'postgresql://localhost/orders'
+});
+
+// Product Search - Search engine
+const searchClient = new Client({
+  node: 'http://localhost:9200'
+});
+
+// Session Service - Key-value store
+const sessionDB = redis.createClient();
+```
+
+## Best Practices
+
+1. **Own your data**: Each service manages its database
+2. **Use events**: Sync data via events
+3. **Denormalize**: Store needed data locally
+4. **Accept duplication**: Trade-off for independence
+5. **Choose right database**: Per service needs
+6. **Monitor consistency**: Track sync lag
+
+## Interview Tips
+
+- **Explain pattern**: Private database per service
+- **Show benefits**: Independence, scalability, isolation
+- **Discuss challenges**: Joins, transactions, duplication
+- **Demonstrate sync**: Event-based synchronization
+- **Mention polyglot**: Different databases per service
+- **Show trade-offs**: Consistency vs independence
+
+## Summary
+
+Database per Service pattern gives each microservice its own private database. Provides independence, scalability, and isolation. Challenges include data duplication, cross-service joins, and distributed transactions. Use event-based synchronization. Accept denormalization. Choose appropriate database technology per service. Essential for true microservices independence.

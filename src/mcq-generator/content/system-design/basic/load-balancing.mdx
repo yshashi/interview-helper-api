@@ -1,0 +1,580 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Load Balancing
+---
+
+# Load Balancing
+
+## What is Load Balancing?
+
+Load balancing is the process of distributing network traffic across multiple servers to ensure no single server bears too much load. It improves application responsiveness, availability, and scalability.
+
+## Load Balancing Algorithms
+
+### 1. Round Robin
+
+```javascript
+class RoundRobinLoadBalancer {
+  constructor(servers) {
+    this.servers = servers;
+    this.currentIndex = 0;
+  }
+  
+  getNextServer() {
+    const server = this.servers[this.currentIndex];
+    this.currentIndex = (this.currentIndex + 1) % this.servers.length;
+    return server;
+  }
+}
+
+// Usage
+const lb = new RoundRobinLoadBalancer([
+  'server1.example.com',
+  'server2.example.com',
+  'server3.example.com'
+]);
+
+console.log(lb.getNextServer()); // server1
+console.log(lb.getNextServer()); // server2
+console.log(lb.getNextServer()); // server3
+console.log(lb.getNextServer()); // server1 (cycles back)
+```
+
+### 2. Weighted Round Robin
+
+```javascript
+class WeightedRoundRobinLoadBalancer {
+  constructor(servers) {
+    // servers: [{ host: 'server1', weight: 3 }, ...]
+    this.servers = [];
+    
+    // Expand servers based on weight
+    servers.forEach(server => {
+      for (let i = 0; i < server.weight; i++) {
+        this.servers.push(server.host);
+      }
+    });
+    
+    this.currentIndex = 0;
+  }
+  
+  getNextServer() {
+    const server = this.servers[this.currentIndex];
+    this.currentIndex = (this.currentIndex + 1) % this.servers.length;
+    return server;
+  }
+}
+
+// Usage
+const wlb = new WeightedRoundRobinLoadBalancer([
+  { host: 'server1', weight: 3 }, // 3x capacity
+  { host: 'server2', weight: 2 }, // 2x capacity
+  { host: 'server3', weight: 1 }  // 1x capacity
+]);
+
+// server1 gets 50% of traffic, server2 gets 33%, server3 gets 17%
+```
+
+### 3. Least Connections
+
+```javascript
+class LeastConnectionsLoadBalancer {
+  constructor(servers) {
+    this.servers = servers.map(host => ({
+      host,
+      activeConnections: 0
+    }));
+  }
+  
+  getNextServer() {
+    // Find server with least connections
+    const server = this.servers.reduce((min, server) => 
+      server.activeConnections < min.activeConnections ? server : min
+    );
+    
+    server.activeConnections++;
+    return server.host;
+  }
+  
+  releaseConnection(host) {
+    const server = this.servers.find(s => s.host === host);
+    if (server && server.activeConnections > 0) {
+      server.activeConnections--;
+    }
+  }
+}
+
+// Usage
+const lclb = new LeastConnectionsLoadBalancer([
+  'server1.example.com',
+  'server2.example.com',
+  'server3.example.com'
+]);
+
+const server = lclb.getNextServer(); // Returns server with least connections
+// ... handle request ...
+lclb.releaseConnection(server);
+```
+
+### 4. IP Hash
+
+```javascript
+class IPHashLoadBalancer {
+  constructor(servers) {
+    this.servers = servers;
+  }
+  
+  hash(ip) {
+    let hash = 0;
+    for (let i = 0; i < ip.length; i++) {
+      hash = ((hash << 5) - hash) + ip.charCodeAt(i);
+      hash = hash & hash; // Convert to 32-bit integer
+    }
+    return Math.abs(hash);
+  }
+  
+  getServer(clientIP) {
+    const index = this.hash(clientIP) % this.servers.length;
+    return this.servers[index];
+  }
+}
+
+// Usage
+const iplb = new IPHashLoadBalancer([
+  'server1.example.com',
+  'server2.example.com',
+  'server3.example.com'
+]);
+
+// Same IP always goes to same server (session persistence)
+console.log(iplb.getServer('192.168.1.100')); // Always server2
+console.log(iplb.getServer('192.168.1.100')); // Always server2
+console.log(iplb.getServer('192.168.1.101')); // Might be server1
+```
+
+### 5. Least Response Time
+
+```javascript
+class LeastResponseTimeLoadBalancer {
+  constructor(servers) {
+    this.servers = servers.map(host => ({
+      host,
+      avgResponseTime: 0,
+      requestCount: 0
+    }));
+  }
+  
+  getNextServer() {
+    // Find server with lowest average response time
+    const server = this.servers.reduce((min, server) => 
+      server.avgResponseTime < min.avgResponseTime ? server : min
+    );
+    
+    return server.host;
+  }
+  
+  recordResponse(host, responseTime) {
+    const server = this.servers.find(s => s.host === host);
+    if (server) {
+      // Update moving average
+      server.avgResponseTime = (
+        (server.avgResponseTime * server.requestCount + responseTime) /
+        (server.requestCount + 1)
+      );
+      server.requestCount++;
+    }
+  }
+}
+```
+
+## Load Balancer Types
+
+### Layer 4 (Transport Layer)
+
+```javascript
+// L4 Load Balancer - Routes based on IP and port
+const layer4LoadBalancer = {
+  description: 'Routes based on network information',
+  
+  routing: {
+    based_on: ['Source IP', 'Destination IP', 'Source Port', 'Destination Port'],
+    protocol: ['TCP', 'UDP'],
+    visibility: 'No application layer visibility'
+  },
+  
+  pros: [
+    'Fast (no packet inspection)',
+    'Low latency',
+    'Protocol agnostic',
+    'High throughput'
+  ],
+  
+  cons: [
+    'No content-based routing',
+    'No SSL termination',
+    'Limited health checks',
+    'No request modification'
+  ],
+  
+  useCases: [
+    'High-performance applications',
+    'Non-HTTP protocols',
+    'Simple load distribution'
+  ]
+};
+```
+
+### Layer 7 (Application Layer)
+
+```javascript
+// L7 Load Balancer - Routes based on application data
+const layer7LoadBalancer = {
+  description: 'Routes based on application content',
+  
+  routing: {
+    based_on: ['URL path', 'HTTP headers', 'Cookies', 'Request method'],
+    protocol: ['HTTP', 'HTTPS', 'WebSocket'],
+    visibility: 'Full application layer visibility'
+  },
+  
+  features: {
+    contentBasedRouting: '/api/* → API servers, /static/* → Static servers',
+    sslTermination: 'Decrypt SSL at load balancer',
+    requestModification: 'Add/remove headers, rewrite URLs',
+    advancedHealthChecks: 'Check application health endpoints'
+  },
+  
+  pros: [
+    'Intelligent routing',
+    'SSL offloading',
+    'Content caching',
+    'Request/response modification',
+    'Better observability'
+  ],
+  
+  cons: [
+    'Slower than L4',
+    'Higher CPU usage',
+    'HTTP/HTTPS only',
+    'More complex configuration'
+  ],
+  
+  useCases: [
+    'Microservices routing',
+    'A/B testing',
+    'Canary deployments',
+    'API gateways'
+  ]
+};
+```
+
+## Health Checks
+
+```javascript
+class HealthCheckManager {
+  constructor(servers) {
+    this.servers = servers.map(host => ({
+      host,
+      healthy: true,
+      consecutiveFailures: 0
+    }));
+    
+    this.maxFailures = 3;
+    this.checkInterval = 10000; // 10 seconds
+    
+    this.startHealthChecks();
+  }
+  
+  startHealthChecks() {
+    setInterval(() => {
+      this.servers.forEach(server => this.checkHealth(server));
+    }, this.checkInterval);
+  }
+  
+  async checkHealth(server) {
+    try {
+      const response = await fetch(`http://${server.host}/health`, {
+        timeout: 5000
+      });
+      
+      if (response.ok) {
+        server.healthy = true;
+        server.consecutiveFailures = 0;
+      } else {
+        this.handleFailure(server);
+      }
+    } catch (error) {
+      this.handleFailure(server);
+    }
+  }
+  
+  handleFailure(server) {
+    server.consecutiveFailures++;
+    
+    if (server.consecutiveFailures >= this.maxFailures) {
+      server.healthy = false;
+      console.log(`Server ${server.host} marked as unhealthy`);
+    }
+  }
+  
+  getHealthyServers() {
+    return this.servers.filter(s => s.healthy).map(s => s.host);
+  }
+}
+```
+
+## Session Persistence (Sticky Sessions)
+
+```javascript
+class StickySessionLoadBalancer {
+  constructor(servers) {
+    this.servers = servers;
+    this.sessions = new Map(); // sessionId -> server
+    this.currentIndex = 0;
+  }
+  
+  getServer(sessionId) {
+    // Check if session exists
+    if (this.sessions.has(sessionId)) {
+      return this.sessions.get(sessionId);
+    }
+    
+    // New session - assign server using round robin
+    const server = this.servers[this.currentIndex];
+    this.currentIndex = (this.currentIndex + 1) % this.servers.length;
+    
+    // Store session mapping
+    this.sessions.set(sessionId, server);
+    
+    return server;
+  }
+  
+  removeSession(sessionId) {
+    this.sessions.delete(sessionId);
+  }
+}
+
+// Usage
+const sslb = new StickySessionLoadBalancer([
+  'server1.example.com',
+  'server2.example.com'
+]);
+
+// User's requests always go to same server
+const sessionId = 'user-123-session';
+console.log(sslb.getServer(sessionId)); // server1
+console.log(sslb.getServer(sessionId)); // server1 (same)
+console.log(sslb.getServer(sessionId)); // server1 (same)
+```
+
+## Load Balancer Configuration
+
+### NGINX Configuration
+
+```nginx
+# nginx.conf
+upstream backend {
+    # Load balancing algorithm
+    least_conn;  # or: ip_hash, hash $request_uri
+    
+    # Backend servers
+    server backend1.example.com:8080 weight=3 max_fails=3 fail_timeout=30s;
+    server backend2.example.com:8080 weight=2 max_fails=3 fail_timeout=30s;
+    server backend3.example.com:8080 weight=1 max_fails=3 fail_timeout=30s;
+    
+    # Backup server
+    server backup.example.com:8080 backup;
+    
+    # Health check
+    keepalive 32;
+}
+
+server {
+    listen 80;
+    server_name example.com;
+    
+    location / {
+        proxy_pass http://backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        
+        # Timeouts
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 10s;
+        proxy_read_timeout 10s;
+    }
+    
+    # Health check endpoint
+    location /health {
+        access_log off;
+        return 200 "healthy\n";
+    }
+}
+```
+
+### HAProxy Configuration
+
+```haproxy
+# haproxy.cfg
+global
+    maxconn 4096
+    
+defaults
+    mode http
+    timeout connect 5s
+    timeout client 30s
+    timeout server 30s
+    
+frontend http_front
+    bind *:80
+    default_backend http_back
+    
+backend http_back
+    balance roundrobin
+    option httpchk GET /health
+    
+    server server1 backend1.example.com:8080 check weight 3
+    server server2 backend2.example.com:8080 check weight 2
+    server server3 backend3.example.com:8080 check weight 1
+    server backup backup.example.com:8080 check backup
+```
+
+## Cloud Load Balancers
+
+### AWS Application Load Balancer
+
+```javascript
+const AWS = require('aws-sdk');
+const elbv2 = new AWS.ELBv2();
+
+async function createALB() {
+  // Create load balancer
+  const lb = await elbv2.createLoadBalancer({
+    Name: 'my-application-lb',
+    Subnets: ['subnet-1', 'subnet-2'],
+    SecurityGroups: ['sg-123'],
+    Scheme: 'internet-facing',
+    Type: 'application',
+    IpAddressType: 'ipv4'
+  }).promise();
+  
+  // Create target group
+  const tg = await elbv2.createTargetGroup({
+    Name: 'my-targets',
+    Protocol: 'HTTP',
+    Port: 80,
+    VpcId: 'vpc-123',
+    HealthCheckPath: '/health',
+    HealthCheckIntervalSeconds: 30,
+    HealthyThresholdCount: 2,
+    UnhealthyThresholdCount: 3
+  }).promise();
+  
+  // Register targets
+  await elbv2.registerTargets({
+    TargetGroupArn: tg.TargetGroups[0].TargetGroupArn,
+    Targets: [
+      { Id: 'i-instance1', Port: 8080 },
+      { Id: 'i-instance2', Port: 8080 },
+      { Id: 'i-instance3', Port: 8080 }
+    ]
+  }).promise();
+  
+  // Create listener
+  await elbv2.createListener({
+    LoadBalancerArn: lb.LoadBalancers[0].LoadBalancerArn,
+    Protocol: 'HTTP',
+    Port: 80,
+    DefaultActions: [{
+      Type: 'forward',
+      TargetGroupArn: tg.TargetGroups[0].TargetGroupArn
+    }]
+  }).promise();
+}
+```
+
+## .NET Load Balancing
+
+```csharp
+using System.Net.Http;
+using Microsoft.Extensions.DependencyInjection;
+
+public class LoadBalancerService
+{
+    private readonly List<string> _servers;
+    private int _currentIndex = 0;
+    private readonly object _lock = new object();
+    
+    public LoadBalancerService(List<string> servers)
+    {
+        _servers = servers;
+    }
+    
+    public string GetNextServer()
+    {
+        lock (_lock)
+        {
+            var server = _servers[_currentIndex];
+            _currentIndex = (_currentIndex + 1) % _servers.Count;
+            return server;
+        }
+    }
+    
+    public async Task<HttpResponseMessage> ForwardRequest(HttpRequestMessage request)
+    {
+        var server = GetNextServer();
+        var client = new HttpClient();
+        
+        // Modify request URL
+        var builder = new UriBuilder(request.RequestUri)
+        {
+            Host = server
+        };
+        request.RequestUri = builder.Uri;
+        
+        // Forward request
+        return await client.SendAsync(request);
+    }
+}
+
+// Startup.cs
+services.AddSingleton(new LoadBalancerService(new List<string>
+{
+    "server1.example.com",
+    "server2.example.com",
+    "server3.example.com"
+}));
+```
+
+## Load Balancing Best Practices
+
+```javascript
+const bestPractices = [
+  'Use health checks to detect failures',
+  'Implement connection draining for graceful shutdowns',
+  'Monitor server metrics (CPU, memory, connections)',
+  'Use weighted algorithms for heterogeneous servers',
+  'Enable SSL termination at load balancer',
+  'Implement rate limiting',
+  'Use multiple availability zones',
+  'Configure appropriate timeouts',
+  'Log and monitor load balancer metrics',
+  'Plan for load balancer redundancy',
+  'Test failover scenarios',
+  'Use sticky sessions only when necessary'
+];
+```
+
+## Interview Tips
+
+- **Explain algorithms**: Round robin, least connections, IP hash
+- **Show L4 vs L7**: Understand the differences
+- **Demonstrate health checks**: How to detect failures
+- **Discuss sticky sessions**: When and why to use
+- **Mention cloud solutions**: AWS ALB/NLB, Azure Load Balancer
+- **Show configuration**: NGINX or HAProxy examples
+
+## Summary
+
+Load balancing distributes traffic across multiple servers to improve availability and scalability. Common algorithms include round robin (simple rotation), least connections (route to least busy), and IP hash (session persistence). Layer 4 load balancers route based on IP/port (fast), while Layer 7 route based on application data (flexible). Implement health checks to detect failures. Use sticky sessions for stateful applications. Configure timeouts and connection limits. Essential for building highly available systems.

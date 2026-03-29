@@ -1,0 +1,284 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Data Consistency in Microservices
+---
+
+# Data Consistency in Microservices
+
+## The Challenge
+
+Each microservice has its own database, making it difficult to maintain consistency across services.
+
+## Consistency Models
+
+### Strong Consistency
+All nodes see the same data at the same time.
+
+```javascript
+// ACID transactions (not possible across services)
+await db.transaction(async (trx) => {
+  await trx('users').update({ balance: balance - 100 });
+  await trx('orders').insert({ amount: 100 });
+});
+```
+
+### Eventual Consistency
+Data becomes consistent over time.
+
+```javascript
+// Event-driven eventual consistency
+async function createOrder(orderData) {
+  const order = await Order.create(orderData);
+  
+  await eventBus.publish('OrderCreated', order);
+  
+  return order; // Consistent immediately in Order service
+  // Other services will become consistent eventually
+}
+```
+
+## Patterns for Consistency
+
+### 1. Saga Pattern
+
+```javascript
+class OrderSaga {
+  async execute(orderData) {
+    try {
+      await this.reserveInventory(orderData);
+      await this.processPayment(orderData);
+      await this.createOrder(orderData);
+    } catch (error) {
+      await this.compensate();
+    }
+  }
+}
+```
+
+### 2. Event Sourcing
+
+```javascript
+// Store events instead of state
+const events = [
+  { type: 'OrderCreated', data: { orderId: '123' } },
+  { type: 'OrderPaid', data: { orderId: '123' } },
+  { type: 'OrderShipped', data: { orderId: '123' } }
+];
+
+// Rebuild state from events
+function getCurrentState(events) {
+  return events.reduce((state, event) => {
+    return applyEvent(state, event);
+  }, initialState);
+}
+```
+
+### 3. CQRS
+
+```javascript
+// Separate read and write models
+// Write model
+await UserWriteModel.create(userData);
+await eventBus.publish('UserCreated', userData);
+
+// Read model (eventually consistent)
+eventBus.subscribe('UserCreated', async (event) => {
+  await UserReadModel.create(event.data);
+});
+```
+
+### 4. Distributed Locks
+
+```javascript
+const Redlock = require('redlock');
+const redlock = new Redlock([redisClient]);
+
+async function updateInventory(productId, quantity) {
+  const lock = await redlock.lock(`inventory:${productId}`, 1000);
+  
+  try {
+    const inventory = await Inventory.findById(productId);
+    inventory.quantity -= quantity;
+    await inventory.save();
+  } finally {
+    await lock.unlock();
+  }
+}
+```
+
+## Handling Conflicts
+
+### Last Write Wins
+
+```javascript
+async function updateUser(userId, updates) {
+  await User.findByIdAndUpdate(userId, {
+    ...updates,
+    updatedAt: new Date()
+  });
+}
+```
+
+### Version-Based Conflict Resolution
+
+```javascript
+async function updateUser(userId, updates, expectedVersion) {
+  const result = await User.updateOne(
+    { _id: userId, version: expectedVersion },
+    {
+      $set: updates,
+      $inc: { version: 1 }
+    }
+  );
+  
+  if (result.modifiedCount === 0) {
+    throw new Error('Conflict: Version mismatch');
+  }
+}
+```
+
+### Merge Strategy
+
+```javascript
+async function mergeUpdates(userId, updates) {
+  const current = await User.findById(userId);
+  
+  const merged = {
+    ...current.toObject(),
+    ...updates,
+    updatedAt: new Date()
+  };
+  
+  await User.findByIdAndUpdate(userId, merged);
+}
+```
+
+## Read-Your-Own-Writes
+
+```javascript
+class UserService {
+  constructor() {
+    this.writeCache = new Map();
+  }
+  
+  async updateUser(userId, updates) {
+    // Write to database
+    await UserWriteModel.update(userId, updates);
+    
+    // Cache for immediate reads
+    this.writeCache.set(userId, {
+      ...updates,
+      timestamp: Date.now()
+    });
+    
+    // Publish event
+    await eventBus.publish('UserUpdated', { userId, updates });
+  }
+  
+  async getUser(userId) {
+    // Check write cache first
+    const cached = this.writeCache.get(userId);
+    
+    if (cached && Date.now() - cached.timestamp < 5000) {
+      return cached;
+    }
+    
+    // Read from read model
+    return await UserReadModel.findById(userId);
+  }
+}
+```
+
+## Idempotency
+
+```javascript
+async function processPayment(orderId, amount) {
+  // Check if already processed
+  const existing = await Payment.findOne({ orderId });
+  
+  if (existing) {
+    return existing; // Idempotent
+  }
+  
+  // Process payment
+  const payment = await Payment.create({
+    orderId,
+    amount,
+    status: 'COMPLETED'
+  });
+  
+  return payment;
+}
+```
+
+## Compensating Transactions
+
+```javascript
+class OrderWorkflow {
+  async execute(orderData) {
+    const compensations = [];
+    
+    try {
+      // Step 1
+      await this.reserveInventory(orderData);
+      compensations.push(() => this.releaseInventory(orderData));
+      
+      // Step 2
+      await this.processPayment(orderData);
+      compensations.push(() => this.refundPayment(orderData));
+      
+      // Step 3
+      await this.createOrder(orderData);
+      
+    } catch (error) {
+      // Execute compensations in reverse
+      for (const compensate of compensations.reverse()) {
+        await compensate();
+      }
+      throw error;
+    }
+  }
+}
+```
+
+## Monitoring Consistency
+
+```javascript
+class ConsistencyMonitor {
+  async checkConsistency() {
+    const writeCount = await UserWriteModel.count();
+    const readCount = await UserReadModel.count();
+    
+    const lag = writeCount - readCount;
+    
+    if (lag > 100) {
+      logger.warn(`Consistency lag detected: ${lag} records`);
+    }
+    
+    return { writeCount, readCount, lag };
+  }
+}
+```
+
+## Best Practices
+
+1. **Accept eventual consistency**
+2. **Use idempotent operations**
+3. **Implement compensating transactions**
+4. **Version your data**
+5. **Monitor consistency lag**
+6. **Handle conflicts gracefully**
+7. **Use distributed locks sparingly**
+
+## Interview Tips
+
+- **Explain challenge**: Distributed data consistency
+- **Show models**: Strong vs eventual consistency
+- **Demonstrate patterns**: Saga, Event Sourcing, CQRS
+- **Discuss conflicts**: Version-based resolution
+- **Mention idempotency**: Handle retries
+- **Show compensations**: Rollback mechanism
+
+## Summary
+
+Data consistency in microservices requires accepting eventual consistency. Use Saga pattern for distributed transactions. Implement Event Sourcing for audit trail. Apply CQRS for read/write separation. Handle conflicts with versioning. Ensure idempotency for retries. Use compensating transactions for rollback. Monitor consistency lag between services.

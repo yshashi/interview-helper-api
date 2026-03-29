@@ -1,0 +1,568 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Distributed Caching
+---
+
+# Distributed Caching
+
+## What is Distributed Caching?
+
+Distributed caching spreads cached data across multiple servers, enabling horizontal scaling of cache capacity and providing high availability. Unlike single-server caching, distributed caches can handle massive datasets and high request volumes.
+
+## Why Distributed Caching?
+
+**Scalability:** Single cache server has memory limits
+
+**High Availability:** No single point of failure
+
+**Performance:** Serve requests from multiple locations
+
+**Capacity:** Combine memory of multiple servers
+
+**Geographic Distribution:** Cache closer to users
+
+## Popular Distributed Cache Systems
+
+### Redis Cluster
+
+**Architecture:** Automatic sharding across nodes with master-replica replication
+
+**Key Features:**
+- 16,384 hash slots distributed across nodes
+- Automatic failover
+- Client-side routing
+- No proxy needed
+
+**Use Cases:** Session storage, real-time analytics, leaderboards
+
+### Memcached
+
+**Architecture:** Simple key-value store, client handles sharding
+
+**Key Features:**
+- Very fast, simple protocol
+- Multi-threaded
+- LRU eviction
+- No persistence
+
+**Use Cases:** Database query caching, page caching, API response caching
+
+### Hazelcast
+
+**Architecture:** In-memory data grid with distributed data structures
+
+**Key Features:**
+- Embedded or client-server mode
+- Distributed maps, queues, locks
+- Near cache for frequently accessed data
+- WAN replication
+
+**Use Cases:** Java applications, distributed computing, session clustering
+
+## Cache Sharding Strategies
+
+### Consistent Hashing
+
+**Purpose:** Minimize data movement when adding/removing nodes
+
+**How it works:**
+- Hash both keys and nodes onto ring
+- Key stored on first node clockwise
+- Adding node only affects adjacent keys
+
+**Benefits:**
+- Only ~1/N keys move when adding node
+- Balanced distribution with virtual nodes
+
+### Modulo Hashing
+
+**Simple approach:** `server = hash(key) % server_count`
+
+**Problem:** Adding server remaps most keys
+
+**When to use:** Fixed number of servers
+
+### Range-Based Sharding
+
+**Approach:** Divide key space into ranges
+
+**Example:**
+- Server 1: keys A-H
+- Server 2: keys I-P
+- Server 3: keys Q-Z
+
+**Challenge:** Uneven distribution if keys not uniform
+
+## Cache Replication
+
+### Master-Replica
+
+**Setup:** Each shard has master and replicas
+
+**Reads:** Can read from replicas (eventual consistency)
+
+**Writes:** Go to master, replicated to replicas
+
+**Failover:** Replica promoted to master if master fails
+
+```javascript
+// Redis Cluster with replicas
+const Redis = require('ioredis');
+
+const cluster = new Redis.Cluster([
+  { host: 'node1', port: 6379 },
+  { host: 'node2', port: 6379 },
+  { host: 'node3', port: 6379 }
+], {
+  redisOptions: {
+    password: 'password'
+  },
+  // Read from replicas
+  scaleReads: 'slave'
+});
+
+// Write (goes to master)
+await cluster.set('user:123', JSON.stringify(userData));
+
+// Read (can come from replica)
+const data = await cluster.get('user:123');
+```
+
+### Multi-Master Replication
+
+**Setup:** Multiple nodes accept writes
+
+**Challenge:** Conflict resolution needed
+
+**Use case:** Geographic distribution
+
+## Cache Invalidation Strategies
+
+### Time-Based (TTL)
+
+**Approach:** Set expiration time on cache entries
+
+**Pros:** Simple, automatic cleanup
+
+**Cons:** May serve stale data until expiry
+
+```javascript
+// Set with TTL
+await cache.setEx('user:123', 300, userData); // 5 minutes
+
+// Set with absolute expiration
+await cache.expireAt('session:abc', Date.now() + 3600000);
+```
+
+### Event-Based
+
+**Approach:** Invalidate when data changes
+
+**Pros:** Always fresh data
+
+**Cons:** Requires event system
+
+```javascript
+// When user updates profile
+async function updateUserProfile(userId, updates) {
+  // Update database
+  await db.users.update(userId, updates);
+  
+  // Invalidate cache
+  await cache.del(`user:${userId}`);
+  
+  // Publish event
+  await eventBus.publish('user.updated', { userId });
+}
+
+// Other services can also invalidate
+eventBus.subscribe('user.updated', async (event) => {
+  await cache.del(`user:${event.userId}`);
+});
+```
+
+### Write-Through
+
+**Approach:** Update cache when writing to database
+
+**Pros:** Cache always current
+
+**Cons:** Write latency increased
+
+```javascript
+async function updateUser(userId, data) {
+  // Write to database
+  await db.users.update(userId, data);
+  
+  // Update cache
+  await cache.set(`user:${userId}`, JSON.stringify(data));
+}
+```
+
+### Cache-Aside with Versioning
+
+**Approach:** Include version in cache key
+
+**Pros:** No stale data issues
+
+**Cons:** More cache misses
+
+```javascript
+const CACHE_VERSION = 'v2';
+
+async function getUser(userId) {
+  const key = `user:${userId}:${CACHE_VERSION}`;
+  
+  let user = await cache.get(key);
+  
+  if (!user) {
+    user = await db.users.findById(userId);
+    await cache.setEx(key, 300, JSON.stringify(user));
+  }
+  
+  return JSON.parse(user);
+}
+
+// When schema changes, just increment version
+// Old cache entries automatically become stale
+```
+
+## Cache Stampede Prevention
+
+**Problem:** Many requests for expired key hit database simultaneously
+
+**Solution:** Lock-based approach
+
+```javascript
+class CacheStampedePrevention {
+  constructor(cache, db) {
+    this.cache = cache;
+    this.db = db;
+    this.locks = new Map();
+  }
+  
+  async get(key, loader) {
+    // Try cache
+    let value = await this.cache.get(key);
+    if (value) return JSON.parse(value);
+    
+    // Check if another request is loading
+    if (this.locks.has(key)) {
+      return await this.locks.get(key);
+    }
+    
+    // Create load promise
+    const loadPromise = this.load(key, loader);
+    this.locks.set(key, loadPromise);
+    
+    try {
+      value = await loadPromise;
+      return value;
+    } finally {
+      this.locks.delete(key);
+    }
+  }
+  
+  async load(key, loader) {
+    const value = await loader();
+    await this.cache.setEx(key, 300, JSON.stringify(value));
+    return value;
+  }
+}
+
+// Usage
+const cache = new CacheStampedePrevention(redis, db);
+
+// Multiple concurrent requests
+const results = await Promise.all([
+  cache.get('user:123', () => db.users.findById('123')),
+  cache.get('user:123', () => db.users.findById('123')),
+  cache.get('user:123', () => db.users.findById('123'))
+]);
+// Only one database query executed
+```
+
+## Near Cache Pattern
+
+**Concept:** Local cache in application server + distributed cache
+
+**Benefits:**
+- Fastest possible reads (in-process)
+- Reduced network calls
+- Lower distributed cache load
+
+**Implementation:**
+
+```javascript
+class NearCache {
+  constructor(distributedCache, maxSize = 1000) {
+    this.distributedCache = distributedCache;
+    this.localCache = new Map();
+    this.maxSize = maxSize;
+  }
+  
+  async get(key) {
+    // Try local cache first
+    if (this.localCache.has(key)) {
+      return this.localCache.get(key);
+    }
+    
+    // Try distributed cache
+    const value = await this.distributedCache.get(key);
+    
+    if (value) {
+      // Store in local cache
+      this.setLocal(key, value);
+    }
+    
+    return value;
+  }
+  
+  async set(key, value, ttl) {
+    // Update distributed cache
+    await this.distributedCache.setEx(key, ttl, value);
+    
+    // Update local cache
+    this.setLocal(key, value);
+  }
+  
+  setLocal(key, value) {
+    // Evict if at capacity
+    if (this.localCache.size >= this.maxSize) {
+      const firstKey = this.localCache.keys().next().value;
+      this.localCache.delete(firstKey);
+    }
+    
+    this.localCache.set(key, value);
+  }
+  
+  async invalidate(key) {
+    // Remove from both caches
+    this.localCache.delete(key);
+    await this.distributedCache.del(key);
+  }
+}
+```
+
+## Cache Warming
+
+**Purpose:** Pre-populate cache with frequently accessed data
+
+**Strategies:**
+
+```javascript
+class CacheWarmer {
+  constructor(cache, db) {
+    this.cache = cache;
+    this.db = db;
+  }
+  
+  // Warm on startup
+  async warmOnStartup() {
+    console.log('Warming cache...');
+    
+    // Load popular items
+    const popular = await this.db.query(`
+      SELECT id, data FROM items 
+      ORDER BY access_count DESC 
+      LIMIT 1000
+    `);
+    
+    for (const item of popular) {
+      await this.cache.setEx(
+        `item:${item.id}`,
+        3600,
+        JSON.stringify(item.data)
+      );
+    }
+    
+    console.log(`Warmed ${popular.length} items`);
+  }
+  
+  // Scheduled refresh
+  startScheduledWarming() {
+    setInterval(async () => {
+      await this.warmOnStartup();
+    }, 3600000); // Every hour
+  }
+  
+  // Predictive warming
+  async warmRelated(itemId) {
+    // When user views item, warm related items
+    const related = await this.db.query(`
+      SELECT id, data FROM items 
+      WHERE category = (SELECT category FROM items WHERE id = ?)
+      LIMIT 10
+    `, [itemId]);
+    
+    for (const item of related) {
+      await this.cache.setEx(
+        `item:${item.id}`,
+        1800,
+        JSON.stringify(item.data)
+      );
+    }
+  }
+}
+```
+
+## Monitoring Distributed Cache
+
+**Key Metrics:**
+
+**Hit Rate:** `hits / (hits + misses)`
+- Target: > 80%
+- Low hit rate indicates poor caching strategy
+
+**Memory Usage:** Current memory / max memory
+- Alert when > 80%
+- Plan for scaling
+
+**Evictions:** Number of keys evicted
+- High evictions indicate insufficient memory
+
+**Latency:** P50, P95, P99 response times
+- Should be < 1ms for local network
+
+**Network Bandwidth:** Bytes in/out
+- Monitor for bottlenecks
+
+```javascript
+class CacheMonitor {
+  async getMetrics(cache) {
+    const info = await cache.info();
+    
+    return {
+      hitRate: info.keyspace_hits / (info.keyspace_hits + info.keyspace_misses),
+      memoryUsage: info.used_memory / info.maxmemory,
+      evictions: info.evicted_keys,
+      connections: info.connected_clients,
+      opsPerSecond: info.instantaneous_ops_per_sec,
+      
+      alerts: this.checkAlerts(info)
+    };
+  }
+  
+  checkAlerts(info) {
+    const alerts = [];
+    
+    const hitRate = info.keyspace_hits / (info.keyspace_hits + info.keyspace_misses);
+    if (hitRate < 0.8) {
+      alerts.push({ level: 'warning', message: `Low hit rate: ${hitRate.toFixed(2)}` });
+    }
+    
+    const memoryUsage = info.used_memory / info.maxmemory;
+    if (memoryUsage > 0.9) {
+      alerts.push({ level: 'critical', message: `High memory usage: ${(memoryUsage * 100).toFixed(1)}%` });
+    }
+    
+    return alerts;
+  }
+}
+```
+
+## .NET Distributed Cache
+
+```csharp
+using Microsoft.Extensions.Caching.Distributed;
+using StackExchange.Redis;
+
+public class DistributedCacheService
+{
+    private readonly IDistributedCache _cache;
+    private readonly IConnectionMultiplexer _redis;
+    
+    public DistributedCacheService(
+        IDistributedCache cache,
+        IConnectionMultiplexer redis)
+    {
+        _cache = cache;
+        _redis = redis;
+    }
+    
+    // Basic caching
+    public async Task<T> GetOrCreateAsync<T>(
+        string key,
+        Func<Task<T>> factory,
+        TimeSpan expiration)
+    {
+        var cached = await _cache.GetStringAsync(key);
+        
+        if (!string.IsNullOrEmpty(cached))
+        {
+            return JsonSerializer.Deserialize<T>(cached);
+        }
+        
+        var value = await factory();
+        
+        await _cache.SetStringAsync(
+            key,
+            JsonSerializer.Serialize(value),
+            new DistributedCacheEntryOptions
+            {
+                AbsoluteExpirationRelativeToNow = expiration
+            }
+        );
+        
+        return value;
+    }
+    
+    // Batch operations
+    public async Task<Dictionary<string, T>> GetManyAsync<T>(List<string> keys)
+    {
+        var db = _redis.GetDatabase();
+        var tasks = keys.Select(key => db.StringGetAsync(key));
+        var results = await Task.WhenAll(tasks);
+        
+        var dict = new Dictionary<string, T>();
+        for (int i = 0; i < keys.Count; i++)
+        {
+            if (results[i].HasValue)
+            {
+                dict[keys[i]] = JsonSerializer.Deserialize<T>(results[i]);
+            }
+        }
+        
+        return dict;
+    }
+    
+    // Invalidation with pattern
+    public async Task InvalidatePatternAsync(string pattern)
+    {
+        var server = _redis.GetServer(_redis.GetEndPoints().First());
+        var keys = server.Keys(pattern: pattern);
+        
+        var db = _redis.GetDatabase();
+        foreach (var key in keys)
+        {
+            await db.KeyDeleteAsync(key);
+        }
+    }
+}
+```
+
+## Best Practices
+
+- **Use appropriate TTL** - Balance freshness and cache hits
+- **Monitor hit rates** - Optimize caching strategy
+- **Implement cache warming** - Pre-populate frequently accessed data
+- **Handle cache failures gracefully** - Fallback to database
+- **Use compression for large values** - Reduce memory usage
+- **Implement proper serialization** - Consistent data format
+- **Set memory limits** - Prevent out-of-memory
+- **Use connection pooling** - Efficient resource usage
+- **Implement retry logic** - Handle transient failures
+- **Tag cache entries** - Group-based invalidation
+
+## Interview Tips
+
+- **Explain distributed caching**: Scale beyond single server
+- **Show sharding strategies**: Consistent hashing, modulo
+- **Demonstrate invalidation**: TTL, event-based, write-through
+- **Discuss cache stampede**: Prevention with locking
+- **Mention near cache**: Local + distributed caching
+- **Show monitoring**: Hit rate, memory, latency
+
+## Summary
+
+Distributed caching spreads data across multiple servers for scalability and availability. Redis Cluster provides automatic sharding and failover. Memcached offers simple, fast caching. Use consistent hashing to minimize data movement when scaling. Implement proper invalidation strategies: TTL for simplicity, event-based for freshness. Prevent cache stampede with locking. Use near cache for fastest reads. Monitor hit rates (target > 80%), memory usage, and latency. Implement cache warming for frequently accessed data. Handle failures gracefully with fallback to database. Essential for building high-performance, scalable systems.

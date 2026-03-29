@@ -1,0 +1,399 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Idempotency
+---
+
+# Idempotency
+
+## What is Idempotency?
+
+**Idempotency** means that making the same request multiple times produces the same result as making it once.
+
+## Idempotent HTTP Methods
+
+| Method | Idempotent | Safe |
+|--------|------------|------|
+| **GET** | ✅ | ✅ |
+| **PUT** | ✅ | ❌ |
+| **DELETE** | ✅ | ❌ |
+| **HEAD** | ✅ | ✅ |
+| **OPTIONS** | ✅ | ✅ |
+| **POST** | ❌ | ❌ |
+| **PATCH** | ❌ | ❌ |
+
+## Why Idempotency Matters
+
+- **Network failures**: Safe to retry requests
+- **Duplicate requests**: Prevent duplicate operations
+- **Client errors**: Handle accidental retries
+- **Distributed systems**: Ensure consistency
+
+## Idempotency Keys
+
+```javascript
+// Node.js/Express - Idempotency key implementation
+const idempotencyStore = new Map();
+
+app.post('/api/payments', async (req, res) => {
+  const idempotencyKey = req.headers['idempotency-key'];
+  
+  if (!idempotencyKey) {
+    return res.status(400).json({
+      error: 'Idempotency-Key header required'
+    });
+  }
+  
+  // Check if request already processed
+  if (idempotencyStore.has(idempotencyKey)) {
+    const cachedResponse = idempotencyStore.get(idempotencyKey);
+    return res.status(cachedResponse.status).json(cachedResponse.body);
+  }
+  
+  try {
+    // Process payment
+    const payment = await processPayment(req.body);
+    
+    // Store result
+    const response = { status: 201, body: payment };
+    idempotencyStore.set(idempotencyKey, response);
+    
+    // Clean up after 24 hours
+    setTimeout(() => idempotencyStore.delete(idempotencyKey), 24 * 60 * 60 * 1000);
+    
+    res.status(201).json(payment);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Usage
+POST /api/payments
+Idempotency-Key: 550e8400-e29b-41d4-a716-446655440000
+{
+  "amount": 100,
+  "currency": "USD"
+}
+```
+
+## Redis-Based Idempotency
+
+```javascript
+const redis = require('redis');
+const client = redis.createClient();
+
+app.post('/api/orders', async (req, res) => {
+  const idempotencyKey = req.headers['idempotency-key'];
+  
+  if (!idempotencyKey) {
+    return res.status(400).json({ error: 'Idempotency-Key required' });
+  }
+  
+  const cacheKey = `idempotency:${idempotencyKey}`;
+  
+  // Check cache
+  const cached = await client.get(cacheKey);
+  if (cached) {
+    const response = JSON.parse(cached);
+    return res.status(response.status).json(response.body);
+  }
+  
+  try {
+    // Process order
+    const order = await Order.create(req.body);
+    
+    // Cache response for 24 hours
+    const response = { status: 201, body: order };
+    await client.setex(cacheKey, 86400, JSON.stringify(response));
+    
+    res.status(201).json(order);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+```
+
+## .NET Implementation
+
+```csharp
+public class IdempotencyMiddleware
+{
+    private readonly RequestDelegate _next;
+    private readonly IDistributedCache _cache;
+    
+    public IdempotencyMiddleware(RequestDelegate next, IDistributedCache cache)
+    {
+        _next = next;
+        _cache = cache;
+    }
+    
+    public async Task InvokeAsync(HttpContext context)
+    {
+        if (context.Request.Method != "POST")
+        {
+            await _next(context);
+            return;
+        }
+        
+        var idempotencyKey = context.Request.Headers["Idempotency-Key"].FirstOrDefault();
+        
+        if (string.IsNullOrEmpty(idempotencyKey))
+        {
+            context.Response.StatusCode = 400;
+            await context.Response.WriteAsJsonAsync(new { error = "Idempotency-Key required" });
+            return;
+        }
+        
+        var cacheKey = $"idempotency:{idempotencyKey}";
+        var cached = await _cache.GetStringAsync(cacheKey);
+        
+        if (cached != null)
+        {
+            var response = JsonSerializer.Deserialize<CachedResponse>(cached);
+            context.Response.StatusCode = response.StatusCode;
+            await context.Response.WriteAsync(response.Body);
+            return;
+        }
+        
+        // Capture response
+        var originalBodyStream = context.Response.Body;
+        using var responseBody = new MemoryStream();
+        context.Response.Body = responseBody;
+        
+        await _next(context);
+        
+        // Cache successful responses
+        if (context.Response.StatusCode >= 200 && context.Response.StatusCode < 300)
+        {
+            responseBody.Seek(0, SeekOrigin.Begin);
+            var body = await new StreamReader(responseBody).ReadToEndAsync();
+            
+            var cachedResponse = new CachedResponse
+            {
+                StatusCode = context.Response.StatusCode,
+                Body = body
+            };
+            
+            await _cache.SetStringAsync(
+                cacheKey,
+                JsonSerializer.Serialize(cachedResponse),
+                new DistributedCacheEntryOptions
+                {
+                    AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(24)
+                });
+        }
+        
+        responseBody.Seek(0, SeekOrigin.Begin);
+        await responseBody.CopyToAsync(originalBodyStream);
+    }
+}
+
+public class CachedResponse
+{
+    public int StatusCode { get; set; }
+    public string Body { get; set; }
+}
+```
+
+## Database-Level Idempotency
+
+```javascript
+// Using unique constraints
+const orderSchema = new mongoose.Schema({
+  idempotencyKey: {
+    type: String,
+    unique: true,
+    required: true
+  },
+  userId: String,
+  items: Array,
+  total: Number
+});
+
+app.post('/api/orders', async (req, res) => {
+  const idempotencyKey = req.headers['idempotency-key'];
+  
+  if (!idempotencyKey) {
+    return res.status(400).json({ error: 'Idempotency-Key required' });
+  }
+  
+  try {
+    // Try to create order
+    const order = await Order.create({
+      idempotencyKey,
+      ...req.body
+    });
+    
+    res.status(201).json(order);
+  } catch (error) {
+    if (error.code === 11000) {
+      // Duplicate key - return existing order
+      const existingOrder = await Order.findOne({ idempotencyKey });
+      return res.status(201).json(existingOrder);
+    }
+    
+    res.status(500).json({ error: error.message });
+  }
+});
+```
+
+## Idempotent PUT
+
+```javascript
+// PUT is naturally idempotent
+app.put('/api/users/:id', async (req, res) => {
+  const user = await User.findByIdAndUpdate(
+    req.params.id,
+    req.body,
+    { new: true, upsert: true }
+  );
+  
+  res.json(user);
+});
+
+// Multiple calls produce same result
+PUT /api/users/123
+{ "name": "John Doe", "email": "john@example.com" }
+// Result: User with id 123 has these exact values
+
+PUT /api/users/123
+{ "name": "John Doe", "email": "john@example.com" }
+// Result: Same - idempotent
+```
+
+## Idempotent DELETE
+
+```javascript
+// DELETE is idempotent
+app.delete('/api/users/:id', async (req, res) => {
+  const user = await User.findByIdAndDelete(req.params.id);
+  
+  if (!user) {
+    // Already deleted - still return 204
+    return res.status(204).send();
+  }
+  
+  res.status(204).send();
+});
+
+// First call: Deletes user, returns 204
+// Second call: User already deleted, returns 204
+// Same result - idempotent
+```
+
+## Making POST Idempotent
+
+```javascript
+// POST is not naturally idempotent
+// Use idempotency keys to make it idempotent
+
+app.post('/api/transfers', async (req, res) => {
+  const idempotencyKey = req.headers['idempotency-key'];
+  
+  if (!idempotencyKey) {
+    return res.status(400).json({ error: 'Idempotency-Key required' });
+  }
+  
+  // Check if transfer already processed
+  const existing = await Transfer.findOne({ idempotencyKey });
+  if (existing) {
+    return res.status(201).json(existing);
+  }
+  
+  // Process transfer
+  const transfer = await Transfer.create({
+    idempotencyKey,
+    from: req.body.from,
+    to: req.body.to,
+    amount: req.body.amount
+  });
+  
+  res.status(201).json(transfer);
+});
+```
+
+## Angular Implementation
+
+```typescript
+import { v4 as uuidv4 } from 'uuid';
+
+@Injectable()
+export class PaymentService {
+  createPayment(payment: Payment): Observable<Payment> {
+    const idempotencyKey = uuidv4();
+    
+    return this.http.post<Payment>(
+      `${this.apiUrl}/payments`,
+      payment,
+      {
+        headers: {
+          'Idempotency-Key': idempotencyKey
+        }
+      }
+    ).pipe(
+      retry({
+        count: 3,
+        delay: 1000
+      })
+    );
+  }
+  
+  // Retry with same idempotency key
+  retryPayment(payment: Payment, idempotencyKey: string): Observable<Payment> {
+    return this.http.post<Payment>(
+      `${this.apiUrl}/payments`,
+      payment,
+      {
+        headers: {
+          'Idempotency-Key': idempotencyKey
+        }
+      }
+    );
+  }
+}
+```
+
+## Idempotency Best Practices
+
+```javascript
+// 1. Generate unique keys
+const crypto = require('crypto');
+const idempotencyKey = crypto.randomUUID();
+
+// 2. Set expiration
+await redis.setex(`idempotency:${key}`, 86400, response);
+
+// 3. Handle errors consistently
+if (error.code === 11000) {
+  // Return existing resource
+  return res.status(201).json(existing);
+}
+
+// 4. Cache successful responses only
+if (statusCode >= 200 && statusCode < 300) {
+  await cache.set(key, response);
+}
+
+// 5. Return same status code
+const cached = await cache.get(key);
+res.status(cached.status).json(cached.body);
+
+// 6. Document requirement
+/**
+ * POST /api/payments
+ * Headers:
+ *   Idempotency-Key: Required UUID for idempotent requests
+ */
+```
+
+## Interview Tips
+
+- **Explain idempotency**: Same request, same result
+- **Show methods**: GET, PUT, DELETE are idempotent
+- **Demonstrate keys**: Idempotency-Key header
+- **Discuss storage**: Redis, database
+- **Mention POST**: Not naturally idempotent
+- **Show implementation**: Node.js, .NET, Angular
+
+## Summary
+
+Idempotency ensures repeated requests produce same result. GET, PUT, DELETE are naturally idempotent. POST requires idempotency keys. Store processed requests in cache or database. Return cached response for duplicate keys. Set expiration for stored responses. Essential for reliable distributed systems and payment processing.

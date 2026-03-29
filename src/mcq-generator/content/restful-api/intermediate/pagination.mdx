@@ -1,0 +1,324 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Pagination
+---
+
+# Pagination
+
+## Why Pagination?
+
+- **Performance**: Reduce data transfer
+- **Memory**: Avoid loading large datasets
+- **User experience**: Faster response times
+- **Scalability**: Handle growing data
+
+## Pagination Strategies
+
+### 1. Offset-Based Pagination
+
+```javascript
+// Node.js/Express
+app.get('/api/users', async (req, res) => {
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 10;
+  const offset = (page - 1) * limit;
+  
+  const users = await User.find()
+    .skip(offset)
+    .limit(limit);
+  
+  const total = await User.countDocuments();
+  
+  res.json({
+    data: users,
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+      hasNext: page * limit < total,
+      hasPrev: page > 1
+    }
+  });
+});
+
+// Usage
+GET /api/users?page=2&limit=20
+```
+
+```csharp
+// .NET
+[HttpGet]
+public async Task<ActionResult<object>> GetUsers(
+    [FromQuery] int page = 1,
+    [FromQuery] int limit = 10)
+{
+    var offset = (page - 1) * limit;
+    
+    var users = await _context.Users
+        .Skip(offset)
+        .Take(limit)
+        .ToListAsync();
+    
+    var total = await _context.Users.CountAsync();
+    
+    return Ok(new
+    {
+        data = users,
+        pagination = new
+        {
+            page,
+            limit,
+            total,
+            totalPages = (int)Math.Ceiling(total / (double)limit)
+        }
+    });
+}
+```
+
+### 2. Cursor-Based Pagination
+
+```javascript
+// More efficient for large datasets
+app.get('/api/users', async (req, res) => {
+  const limit = parseInt(req.query.limit) || 10;
+  const cursor = req.query.cursor;
+  
+  const query = cursor
+    ? { _id: { $gt: cursor } }
+    : {};
+  
+  const users = await User.find(query)
+    .sort({ _id: 1 })
+    .limit(limit + 1);
+  
+  const hasNext = users.length > limit;
+  const data = hasNext ? users.slice(0, -1) : users;
+  const nextCursor = hasNext ? data[data.length - 1]._id : null;
+  
+  res.json({
+    data,
+    pagination: {
+      nextCursor,
+      hasNext,
+      limit
+    }
+  });
+});
+
+// Usage
+GET /api/users?limit=10
+GET /api/users?cursor=507f1f77bcf86cd799439011&limit=10
+```
+
+### 3. Keyset Pagination
+
+```javascript
+// Using timestamp or sequential ID
+app.get('/api/posts', async (req, res) => {
+  const limit = parseInt(req.query.limit) || 10;
+  const since = req.query.since; // timestamp
+  
+  const query = since
+    ? { createdAt: { $gt: new Date(since) } }
+    : {};
+  
+  const posts = await Post.find(query)
+    .sort({ createdAt: 1 })
+    .limit(limit);
+  
+  res.json({
+    data: posts,
+    pagination: {
+      since: posts.length > 0 ? posts[posts.length - 1].createdAt : null,
+      limit
+    }
+  });
+});
+
+// Usage
+GET /api/posts?limit=10
+GET /api/posts?since=2024-01-01T00:00:00Z&limit=10
+```
+
+## Response Headers
+
+```javascript
+// Link header for pagination
+app.get('/api/users', async (req, res) => {
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 10;
+  
+  // ... fetch data ...
+  
+  const baseUrl = `${req.protocol}://${req.get('host')}${req.path}`;
+  const links = [];
+  
+  if (page > 1) {
+    links.push(`<${baseUrl}?page=${page - 1}&limit=${limit}>; rel="prev"`);
+    links.push(`<${baseUrl}?page=1&limit=${limit}>; rel="first"`);
+  }
+  
+  if (page * limit < total) {
+    links.push(`<${baseUrl}?page=${page + 1}&limit=${limit}>; rel="next"`);
+    links.push(`<${baseUrl}?page=${Math.ceil(total / limit)}&limit=${limit}>; rel="last"`);
+  }
+  
+  res.set('Link', links.join(', '));
+  res.set('X-Total-Count', total);
+  res.set('X-Page', page);
+  res.set('X-Per-Page', limit);
+  
+  res.json({ data: users });
+});
+```
+
+## Angular Implementation
+
+```typescript
+@Injectable()
+export class UserService {
+  getUsers(page: number = 1, limit: number = 10): Observable<PaginatedResponse<User>> {
+    const params = new HttpParams()
+      .set('page', page.toString())
+      .set('limit', limit.toString());
+    
+    return this.http.get<PaginatedResponse<User>>(`${this.apiUrl}/users`, { params });
+  }
+  
+  // Cursor-based
+  getUsersCursor(cursor?: string, limit: number = 10): Observable<CursorResponse<User>> {
+    let params = new HttpParams().set('limit', limit.toString());
+    if (cursor) {
+      params = params.set('cursor', cursor);
+    }
+    
+    return this.http.get<CursorResponse<User>>(`${this.apiUrl}/users`, { params });
+  }
+}
+
+interface PaginatedResponse<T> {
+  data: T[];
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
+}
+
+interface CursorResponse<T> {
+  data: T[];
+  pagination: {
+    nextCursor: string | null;
+    hasNext: boolean;
+    limit: number;
+  };
+}
+```
+
+## Infinite Scroll
+
+```javascript
+// API endpoint for infinite scroll
+app.get('/api/feed', async (req, res) => {
+  const limit = parseInt(req.query.limit) || 20;
+  const lastId = req.query.lastId;
+  
+  const query = lastId
+    ? { _id: { $lt: lastId } }
+    : {};
+  
+  const posts = await Post.find(query)
+    .sort({ _id: -1 })
+    .limit(limit + 1);
+  
+  const hasMore = posts.length > limit;
+  const data = hasMore ? posts.slice(0, -1) : posts;
+  
+  res.json({
+    data,
+    hasMore,
+    lastId: data.length > 0 ? data[data.length - 1]._id : null
+  });
+});
+```
+
+```typescript
+// Angular component
+export class FeedComponent implements OnInit {
+  posts: Post[] = [];
+  lastId: string | null = null;
+  hasMore = true;
+  loading = false;
+  
+  ngOnInit() {
+    this.loadMore();
+  }
+  
+  loadMore() {
+    if (this.loading || !this.hasMore) return;
+    
+    this.loading = true;
+    this.feedService.getPosts(this.lastId).subscribe(response => {
+      this.posts = [...this.posts, ...response.data];
+      this.lastId = response.lastId;
+      this.hasMore = response.hasMore;
+      this.loading = false;
+    });
+  }
+  
+  @HostListener('window:scroll', ['$event'])
+  onScroll() {
+    const scrollPosition = window.pageYOffset + window.innerHeight;
+    const pageHeight = document.documentElement.scrollHeight;
+    
+    if (scrollPosition >= pageHeight - 100) {
+      this.loadMore();
+    }
+  }
+}
+```
+
+## Performance Optimization
+
+```javascript
+// Index for pagination
+db.users.createIndex({ createdAt: -1 });
+db.users.createIndex({ _id: 1 });
+
+// Efficient count (for small datasets)
+const total = await User.countDocuments(filter);
+
+// Estimated count (for large datasets)
+const total = await User.estimatedDocumentCount();
+
+// Skip count for better performance
+app.get('/api/users', async (req, res) => {
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 10;
+  
+  const users = await User.find()
+    .skip((page - 1) * limit)
+    .limit(limit);
+  
+  // Don't count on every request
+  // Cache total or calculate periodically
+  const total = await cache.get('users:total') || await User.countDocuments();
+  
+  res.json({ data: users, pagination: { page, limit, total } });
+});
+```
+
+## Interview Tips
+
+- **Explain pagination**: Why it's needed
+- **Show strategies**: Offset, cursor, keyset
+- **Demonstrate implementation**: Node.js, .NET, Angular
+- **Discuss performance**: Indexes, skip optimization
+- **Mention headers**: Link header, X-Total-Count
+- **Show infinite scroll**: Cursor-based approach
+
+## Summary
+
+Pagination limits data returned per request for performance and usability. Offset-based pagination uses page and limit parameters. Cursor-based pagination uses unique identifiers for efficient traversal. Keyset pagination uses timestamps or sequential IDs. Include pagination metadata in response. Use Link headers for navigation. Optimize with database indexes. Essential for APIs returning large datasets.

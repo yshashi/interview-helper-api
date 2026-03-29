@@ -20,6 +20,8 @@ import topicwiseMcqRoutes from './routes/topicwise-mcq.routes.js';
 import topicwiseQuizResultRoutes from './routes/topicwise-quiz-result.routes.js';
 import feedbackRoutes from './routes/feedback.routes.js';
 import contributionRoutes from './routes/contribution.routes.js';
+import announcementRoutes from './routes/announcement.routes.js';
+import mcqGeneratorRoutes from './routes/mcq-generator.routes.js';
 
 setupGlobalErrorHandlers();
 
@@ -28,26 +30,28 @@ connectToDatabase();
 const app = express();
 
 app.use(helmet());
-app.use(cors({
-  origin: function(origin, callback) {
-    const allowedOrigins = [
-      'https://interviewhelper.in',
-      'https://www.interviewhelper.in',
-      'http://localhost:4321',
-      env.CLIENT_URL
-    ].filter(Boolean);
-    
-    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      console.warn(`CORS blocked request from origin: ${origin}`);
-      callback(null, false);
-    }
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      const allowedOrigins = [
+        'https://interviewhelper.in',
+        'https://www.interviewhelper.in',
+        'http://localhost:4321',
+        env.CLIENT_URL,
+      ].filter(Boolean);
+
+      if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+        callback(null, true);
+      } else {
+        console.warn(`CORS blocked request from origin: ${origin}`);
+        callback(null, false);
+      }
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+  }),
+);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(createRequestLogger());
@@ -65,6 +69,8 @@ app.use('/api/topicwise-mcq', topicwiseMcqRoutes);
 app.use('/api/topicwise-quiz-results', topicwiseQuizResultRoutes);
 app.use('/api/feedback', feedbackRoutes);
 app.use('/api/contributions', contributionRoutes);
+app.use('/api/announcements', announcementRoutes);
+app.use('/api/mcq-generator', mcqGeneratorRoutes);
 
 // Redirect root to API docs
 app.get('/', (_req, res) => {
@@ -83,15 +89,15 @@ const server = app.listen(parseInt(env.PORT), '0.0.0.0', () => {
 
 const gracefulShutdown = async (signal: string): Promise<void> => {
   log.info(`Received ${signal}. Shutting down gracefully...`);
-  
+
   server.close(async () => {
     log.info('HTTP server closed');
-    
+
     await disconnectFromDatabase();
-    
+
     process.exit(0);
   });
-  
+
   setTimeout(() => {
     log.error('Could not close connections in time, forcefully shutting down', { signal });
     process.exit(1);

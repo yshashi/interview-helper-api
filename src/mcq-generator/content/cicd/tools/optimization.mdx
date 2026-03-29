@@ -1,0 +1,348 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Optimizing CI/CD Performance
+---
+
+# Optimizing CI/CD Performance
+
+## Performance Metrics
+
+```yaml
+# Track pipeline performance
+metrics:
+  - Build duration
+  - Test duration
+  - Deploy duration
+  - Total pipeline time
+  - Queue time
+  - Resource utilization
+```
+
+## 1. Caching Dependencies
+
+```yaml
+# GitHub Actions caching
+jobs:
+  build:
+    steps:
+      - uses: actions/cache@v3
+        with:
+          path: |
+            ~/.npm
+            ~/.m2
+            ~/.nuget
+          key: ${{ runner.os }}-deps-${{ hashFiles('**/package-lock.json', '**/pom.xml', '**/packages.lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-deps-
+      
+      - run: npm ci  # Uses cache if available
+```
+
+## 2. Parallel Execution
+
+```yaml
+# Run jobs in parallel
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - run: npm run test:unit
+  
+  integration-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - run: npm run test:integration
+  
+  e2e-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - run: npm run test:e2e
+  
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - run: npm run lint
+```
+
+## 3. Matrix Builds
+
+```yaml
+# Test multiple versions in parallel
+jobs:
+  test:
+    strategy:
+      matrix:
+        node: [16, 18, 20]
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/setup-node@v3
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm test
+```
+
+## 4. Incremental Builds
+
+```yaml
+# Only build changed components
+jobs:
+  detect-changes:
+    outputs:
+      frontend: ${{ steps.changes.outputs.frontend }}
+      api: ${{ steps.changes.outputs.api }}
+    steps:
+      - uses: dorny/paths-filter@v2
+        id: changes
+        with:
+          filters: |
+            frontend:
+              - 'frontend/**'
+            api:
+              - 'api/**'
+  
+  build-frontend:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.frontend == 'true'
+    steps:
+      - run: cd frontend && npm run build
+  
+  build-api:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.api == 'true'
+    steps:
+      - run: cd api && dotnet build
+```
+
+## 5. Docker Layer Caching
+
+```dockerfile
+# Optimize Docker layers
+FROM node:18-alpine AS deps
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --only=production
+
+FROM node:18-alpine AS build
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+FROM node:18-alpine AS production
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=build /app/dist ./dist
+CMD ["node", "dist/index.js"]
+```
+
+```yaml
+# Use Docker buildx for caching
+- name: Build with cache
+  uses: docker/build-push-action@v4
+  with:
+    context: .
+    cache-from: type=gha
+    cache-to: type=gha,mode=max
+    push: true
+    tags: myapp:latest
+```
+
+## 6. Selective Testing
+
+```javascript
+// Run only affected tests
+const { execSync } = require('child_process');
+
+const changedFiles = execSync('git diff --name-only HEAD~1')
+  .toString()
+  .split('\n')
+  .filter(Boolean);
+
+const testFiles = changedFiles
+  .filter(file => file.endsWith('.spec.ts'))
+  .join(' ');
+
+if (testFiles) {
+  execSync(`jest ${testFiles}`, { stdio: 'inherit' });
+} else {
+  console.log('No test files changed, skipping tests');
+}
+```
+
+## 7. Artifact Optimization
+
+```yaml
+# Only upload necessary artifacts
+jobs:
+  build:
+    steps:
+      - run: npm run build
+      
+      - uses: actions/upload-artifact@v3
+        with:
+          name: dist
+          path: dist/
+          retention-days: 7  # Auto-delete after 7 days
+          if-no-files-found: error
+```
+
+## 8. Resource Allocation
+
+```yaml
+# Use appropriate runner sizes
+jobs:
+  small-job:
+    runs-on: ubuntu-latest  # 2 CPU, 7GB RAM
+    steps:
+      - run: npm run lint
+  
+  large-job:
+    runs-on: ubuntu-latest-4-cores  # 4 CPU, 16GB RAM
+    steps:
+      - run: npm run build
+```
+
+## 9. Fail Fast
+
+```yaml
+jobs:
+  lint:
+    steps:
+      - run: npm run lint
+  
+  test:
+    needs: lint  # Don't run if lint fails
+    steps:
+      - run: npm test
+  
+  build:
+    needs: test  # Don't build if tests fail
+    steps:
+      - run: npm run build
+```
+
+## 10. Optimize Test Execution
+
+```javascript
+// Jest parallel execution
+module.exports = {
+  maxWorkers: '50%',  // Use 50% of available CPUs
+  testTimeout: 10000,
+  bail: 1,  // Stop after first failure
+  cache: true,
+  cacheDirectory: '.jest-cache'
+};
+```
+
+## 11. Database Optimization
+
+```yaml
+# Use in-memory database for tests
+services:
+  postgres:
+    image: postgres:15
+    env:
+      POSTGRES_PASSWORD: postgres
+    options: >-
+      --health-cmd pg_isready
+      --health-interval 10s
+      --tmpfs /var/lib/postgresql/data  # In-memory
+```
+
+## 12. Skip Redundant Steps
+
+```yaml
+# Skip CI for documentation changes
+on:
+  push:
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+```
+
+## 13. Optimize npm install
+
+```bash
+# Use npm ci instead of npm install
+npm ci  # Faster, uses package-lock.json
+
+# Clean install
+npm ci --prefer-offline --no-audit
+```
+
+## 14. Reduce Image Size
+
+```dockerfile
+# Multi-stage build
+FROM node:18 AS build
+WORKDIR /app
+COPY . .
+RUN npm ci && npm run build
+
+FROM node:18-alpine  # Smaller base image
+WORKDIR /app
+COPY --from=build /app/dist ./dist
+RUN npm ci --only=production
+CMD ["node", "dist/index.js"]
+
+# Result: 150MB vs 1.2GB
+```
+
+## 15. Pipeline Monitoring
+
+```javascript
+// Track pipeline metrics
+const metrics = {
+  startTime: Date.now(),
+  stages: {}
+};
+
+async function trackStage(name, fn) {
+  const start = Date.now();
+  await fn();
+  metrics.stages[name] = Date.now() - start;
+}
+
+await trackStage('build', async () => {
+  await exec('npm run build');
+});
+
+await trackStage('test', async () => {
+  await exec('npm test');
+});
+
+console.log('Pipeline metrics:', metrics);
+```
+
+## Performance Comparison
+
+```yaml
+# Before optimization
+Total time: 15 minutes
+- Build: 5 min
+- Test: 8 min
+- Deploy: 2 min
+
+# After optimization
+Total time: 5 minutes
+- Build: 2 min (caching)
+- Test: 2 min (parallel)
+- Deploy: 1 min (optimized)
+
+# 67% faster!
+```
+
+## Interview Tips
+
+- **Explain caching**: Dependencies, Docker layers
+- **Show parallelization**: Multiple jobs
+- **Demonstrate incremental**: Only build changes
+- **Discuss optimization**: Docker, tests, artifacts
+- **Mention monitoring**: Track metrics
+- **Show results**: Before/after comparison
+
+## Summary
+
+Optimize CI/CD pipelines with caching, parallel execution, incremental builds, Docker layer optimization, selective testing, and proper resource allocation. Implement fail-fast strategy. Reduce artifact size. Use in-memory databases for tests. Monitor pipeline performance. Can achieve 50-70% faster builds. Essential for efficient DevOps workflows.

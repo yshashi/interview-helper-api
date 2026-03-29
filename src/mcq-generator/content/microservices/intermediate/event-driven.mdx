@@ -1,0 +1,273 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Event-Driven Architecture
+---
+
+# Event-Driven Architecture
+
+## What is Event-Driven Architecture?
+
+**Event-Driven Architecture (EDA)** is a design pattern where services communicate by producing and consuming events. Events represent state changes or significant occurrences.
+
+## Core Concepts
+
+### Event
+A record of something that happened.
+
+```javascript
+{
+  eventId: "evt_123",
+  eventType: "OrderCreated",
+  timestamp: "2024-01-15T10:30:00Z",
+  data: {
+    orderId: "order_456",
+    userId: "user_789",
+    amount: 99.99,
+    items: [...]
+  }
+}
+```
+
+### Event Producer
+Service that publishes events.
+
+```javascript
+// Order Service (Producer)
+async function createOrder(orderData) {
+  const order = await Order.create(orderData);
+  
+  // Publish event
+  await eventBus.publish('OrderCreated', {
+    orderId: order.id,
+    userId: order.userId,
+    amount: order.amount
+  });
+  
+  return order;
+}
+```
+
+### Event Consumer
+Service that subscribes to and processes events.
+
+```javascript
+// Email Service (Consumer)
+eventBus.subscribe('OrderCreated', async (event) => {
+  await sendOrderConfirmationEmail(event.data);
+});
+
+// Inventory Service (Consumer)
+eventBus.subscribe('OrderCreated', async (event) => {
+  await reserveInventory(event.data.items);
+});
+
+// Analytics Service (Consumer)
+eventBus.subscribe('OrderCreated', async (event) => {
+  await trackOrderMetrics(event.data);
+});
+```
+
+## Implementation with Event Bus
+
+```javascript
+const EventEmitter = require('events');
+
+class EventBus extends EventEmitter {
+  publish(eventType, data) {
+    this.emit(eventType, {
+      eventId: generateId(),
+      eventType,
+      timestamp: new Date(),
+      data
+    });
+  }
+  
+  subscribe(eventType, handler) {
+    this.on(eventType, handler);
+  }
+}
+
+const eventBus = new EventBus();
+
+// Producer
+eventBus.publish('UserRegistered', {
+  userId: '123',
+  email: 'user@example.com'
+});
+
+// Consumers
+eventBus.subscribe('UserRegistered', async (event) => {
+  await sendWelcomeEmail(event.data);
+});
+
+eventBus.subscribe('UserRegistered', async (event) => {
+  await createUserProfile(event.data);
+});
+```
+
+## Event Store
+
+```javascript
+class EventStore {
+  constructor() {
+    this.events = [];
+  }
+  
+  append(event) {
+    this.events.push({
+      ...event,
+      position: this.events.length
+    });
+  }
+  
+  getEvents(aggregateId) {
+    return this.events.filter(e => e.aggregateId === aggregateId);
+  }
+  
+  getAllEvents() {
+    return this.events;
+  }
+}
+
+const eventStore = new EventStore();
+
+// Store events
+eventStore.append({
+  eventType: 'OrderCreated',
+  aggregateId: 'order_123',
+  data: { amount: 99.99 }
+});
+
+eventStore.append({
+  eventType: 'OrderPaid',
+  aggregateId: 'order_123',
+  data: { paymentId: 'pay_456' }
+});
+```
+
+## Event Patterns
+
+### Pub/Sub Pattern
+
+```javascript
+// Publisher
+class OrderService {
+  async createOrder(orderData) {
+    const order = await Order.create(orderData);
+    
+    await pubsub.publish('orders', {
+      type: 'OrderCreated',
+      order
+    });
+    
+    return order;
+  }
+}
+
+// Subscribers
+class EmailService {
+  constructor() {
+    pubsub.subscribe('orders', this.handleOrderEvent.bind(this));
+  }
+  
+  async handleOrderEvent(event) {
+    if (event.type === 'OrderCreated') {
+      await this.sendConfirmation(event.order);
+    }
+  }
+}
+
+class InventoryService {
+  constructor() {
+    pubsub.subscribe('orders', this.handleOrderEvent.bind(this));
+  }
+  
+  async handleOrderEvent(event) {
+    if (event.type === 'OrderCreated') {
+      await this.reserveItems(event.order.items);
+    }
+  }
+}
+```
+
+### Event Sourcing Pattern
+
+```javascript
+class OrderAggregate {
+  constructor(orderId) {
+    this.orderId = orderId;
+    this.status = 'PENDING';
+    this.events = [];
+  }
+  
+  create(orderData) {
+    this.apply({
+      type: 'OrderCreated',
+      data: orderData
+    });
+  }
+  
+  pay(paymentData) {
+    this.apply({
+      type: 'OrderPaid',
+      data: paymentData
+    });
+  }
+  
+  ship(shippingData) {
+    this.apply({
+      type: 'OrderShipped',
+      data: shippingData
+    });
+  }
+  
+  apply(event) {
+    this.events.push(event);
+    
+    switch(event.type) {
+      case 'OrderCreated':
+        this.status = 'CREATED';
+        break;
+      case 'OrderPaid':
+        this.status = 'PAID';
+        break;
+      case 'OrderShipped':
+        this.status = 'SHIPPED';
+        break;
+    }
+  }
+  
+  getEvents() {
+    return this.events;
+  }
+}
+```
+
+## Benefits
+
+1. **Loose Coupling**: Services don't know about each other
+2. **Scalability**: Add consumers without changing producers
+3. **Resilience**: Failures don't cascade
+4. **Flexibility**: Easy to add new features
+5. **Audit Trail**: Event history
+
+## Challenges
+
+1. **Eventual Consistency**: Data not immediately consistent
+2. **Event Ordering**: Hard to guarantee order
+3. **Debugging**: Harder to trace flow
+4. **Duplicate Events**: Need idempotency
+5. **Event Schema Evolution**: Versioning complexity
+
+## Interview Tips
+
+- **Explain EDA**: Services communicate via events
+- **Show components**: Producers, consumers, event bus
+- **Demonstrate patterns**: Pub/Sub, Event Sourcing
+- **Discuss benefits**: Loose coupling, scalability
+- **Mention challenges**: Eventual consistency, ordering
+- **Show use cases**: Notifications, analytics, workflows
+
+## Summary
+
+Event-Driven Architecture enables services to communicate through events. Producers publish events, consumers subscribe and react. Provides loose coupling and scalability but introduces eventual consistency. Use for notifications, analytics, and asynchronous workflows. Implement with message queues or event buses.

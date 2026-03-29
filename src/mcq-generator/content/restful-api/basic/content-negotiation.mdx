@@ -1,0 +1,273 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Content Negotiation
+---
+
+# Content Negotiation
+
+## What is Content Negotiation?
+
+**Content negotiation** is the mechanism for serving different representations of a resource based on client preferences.
+
+## Accept Header
+
+Client specifies preferred response format:
+
+```javascript
+// Client requests JSON
+GET /api/users/123
+Accept: application/json
+
+// Client requests XML
+GET /api/users/123
+Accept: application/xml
+
+// Client accepts multiple formats
+GET /api/users/123
+Accept: application/json, application/xml;q=0.9
+```
+
+## Server-Side Implementation
+
+```javascript
+// Node.js/Express - Content negotiation
+app.get('/api/users/:id', async (req, res) => {
+  const user = await User.findById(req.params.id);
+  
+  res.format({
+    'application/json': () => {
+      res.json(user);
+    },
+    'application/xml': () => {
+      res.set('Content-Type', 'application/xml');
+      res.send(convertToXML(user));
+    },
+    'text/html': () => {
+      res.send(`<html><body><h1>${user.name}</h1></body></html>`);
+    },
+    'default': () => {
+      res.status(406).send('Not Acceptable');
+    }
+  });
+});
+```
+
+```csharp
+// .NET - Content negotiation
+[HttpGet("{id}")]
+public async Task<IActionResult> GetUser(int id)
+{
+    var user = await _context.Users.FindAsync(id);
+    
+    // ASP.NET Core automatically handles content negotiation
+    // based on Accept header
+    return Ok(user);
+}
+
+// Configure formatters
+services.AddControllers(options =>
+{
+    options.RespectBrowserAcceptHeader = true;
+    options.ReturnHttpNotAcceptable = true;
+})
+.AddXmlSerializerFormatters();
+```
+
+## Quality Values (q)
+
+```javascript
+// Client preference with quality values
+Accept: application/json;q=1.0, application/xml;q=0.8, text/html;q=0.5
+
+// Server chooses based on quality
+app.get('/api/users/:id', (req, res) => {
+  const user = await User.findById(req.params.id);
+  
+  // Automatically selects best match
+  res.format({
+    'application/json': () => res.json(user),
+    'application/xml': () => res.send(convertToXML(user)),
+    'text/html': () => res.send(convertToHTML(user))
+  });
+});
+```
+
+## Accept-Language
+
+```javascript
+// Language negotiation
+app.get('/api/users/:id', async (req, res) => {
+  const user = await User.findById(req.params.id);
+  const lang = req.acceptsLanguages('en', 'es', 'fr') || 'en';
+  
+  const translations = {
+    en: { name: 'Name', email: 'Email' },
+    es: { name: 'Nombre', email: 'Correo' },
+    fr: { name: 'Nom', email: 'Courriel' }
+  };
+  
+  res.json({
+    ...user,
+    _labels: translations[lang]
+  });
+});
+```
+
+## Accept-Encoding
+
+```javascript
+// Compression negotiation
+const compression = require('compression');
+
+app.use(compression());
+
+// Client request
+GET /api/users
+Accept-Encoding: gzip, deflate, br
+
+// Server response
+HTTP/1.1 200 OK
+Content-Encoding: gzip
+```
+
+## Accept-Charset
+
+```javascript
+// Character set negotiation
+app.get('/api/users/:id', (req, res) => {
+  const user = await User.findById(req.params.id);
+  const charset = req.acceptsCharsets('utf-8', 'iso-8859-1') || 'utf-8';
+  
+  res.set('Content-Type', `application/json; charset=${charset}`);
+  res.json(user);
+});
+```
+
+## Versioning via Content Negotiation
+
+```javascript
+// Version in Accept header
+GET /api/users/123
+Accept: application/vnd.myapi.v2+json
+
+app.get('/api/users/:id', async (req, res) => {
+  const user = await User.findById(req.params.id);
+  const accept = req.headers.accept;
+  
+  if (accept.includes('v2')) {
+    res.json(transformToV2(user));
+  } else {
+    res.json(user);
+  }
+});
+```
+
+## Custom Media Types
+
+```javascript
+// Define custom media types
+app.get('/api/users/:id', (req, res) => {
+  const user = await User.findById(req.params.id);
+  
+  res.format({
+    'application/vnd.company.user+json': () => {
+      res.json({
+        type: 'user',
+        version: '1.0',
+        data: user
+      });
+    },
+    'application/json': () => {
+      res.json(user);
+    }
+  });
+});
+```
+
+## Angular - Setting Accept Header
+
+```typescript
+import { HttpHeaders } from '@angular/common/http';
+
+@Injectable()
+export class UserService {
+  getUserAsJSON(id: string): Observable<User> {
+    const headers = new HttpHeaders({
+      'Accept': 'application/json'
+    });
+    
+    return this.http.get<User>(`${this.apiUrl}/users/${id}`, { headers });
+  }
+  
+  getUserAsXML(id: string): Observable<string> {
+    const headers = new HttpHeaders({
+      'Accept': 'application/xml'
+    });
+    
+    return this.http.get(`${this.apiUrl}/users/${id}`, {
+      headers,
+      responseType: 'text'
+    });
+  }
+}
+```
+
+## Proactive vs Reactive Negotiation
+
+```javascript
+// Proactive - Server chooses based on Accept header
+app.get('/api/users/:id', (req, res) => {
+  const user = await User.findById(req.params.id);
+  res.format({
+    'application/json': () => res.json(user),
+    'application/xml': () => res.send(convertToXML(user))
+  });
+});
+
+// Reactive - Client chooses from available options
+app.options('/api/users/:id', (req, res) => {
+  res.json({
+    formats: [
+      { type: 'application/json', url: '/api/users/123.json' },
+      { type: 'application/xml', url: '/api/users/123.xml' }
+    ]
+  });
+});
+```
+
+## Error Handling
+
+```javascript
+// 406 Not Acceptable
+app.get('/api/users/:id', async (req, res) => {
+  const user = await User.findById(req.params.id);
+  
+  const accepted = req.accepts(['json', 'xml']);
+  
+  if (!accepted) {
+    return res.status(406).json({
+      error: 'Not Acceptable',
+      supported: ['application/json', 'application/xml']
+    });
+  }
+  
+  if (accepted === 'json') {
+    res.json(user);
+  } else {
+    res.send(convertToXML(user));
+  }
+});
+```
+
+## Interview Tips
+
+- **Explain content negotiation**: Serve different formats
+- **Show Accept header**: Client preferences
+- **Demonstrate implementation**: Node.js, .NET
+- **Discuss quality values**: Preference ordering
+- **Mention compression**: Accept-Encoding
+- **Show versioning**: Via media types
+
+## Summary
+
+Content negotiation allows serving different resource representations based on client preferences. Use Accept header for format negotiation, Accept-Language for language, Accept-Encoding for compression. Server selects best match using quality values. Return 406 Not Acceptable if no match. Supports JSON, XML, HTML, and custom formats. Essential for flexible REST APIs.

@@ -1,0 +1,191 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Child Processes in Node.js
+---
+
+# Child Processes in Node.js
+
+## What are Child Processes?
+
+**Child processes** allow Node.js to run system commands and spawn new processes. Useful for CPU-intensive tasks, running external programs, or parallel processing.
+
+## Methods
+
+### 1. exec()
+
+Executes command in shell, buffers output.
+
+```javascript
+const { exec } = require('child_process');
+
+exec('ls -la', (error, stdout, stderr) => {
+  if (error) {
+    console.error(`Error: ${error.message}`);
+    return;
+  }
+  if (stderr) {
+    console.error(`stderr: ${stderr}`);
+    return;
+  }
+  console.log(`stdout: ${stdout}`);
+});
+```
+
+### 2. execFile()
+
+Executes file directly without shell.
+
+```javascript
+const { execFile } = require('child_process');
+
+execFile('node', ['--version'], (error, stdout, stderr) => {
+  if (error) throw error;
+  console.log(stdout);
+});
+```
+
+### 3. spawn()
+
+Streams data, better for large output.
+
+```javascript
+const { spawn } = require('child_process');
+
+const ls = spawn('ls', ['-la']);
+
+ls.stdout.on('data', (data) => {
+  console.log(`stdout: ${data}`);
+});
+
+ls.stderr.on('data', (data) => {
+  console.error(`stderr: ${data}`);
+});
+
+ls.on('close', (code) => {
+  console.log(`Process exited with code ${code}`);
+});
+```
+
+### 4. fork()
+
+Spawns Node.js process with IPC channel.
+
+```javascript
+// parent.js
+const { fork } = require('child_process');
+
+const child = fork('child.js');
+
+child.on('message', (msg) => {
+  console.log('Message from child:', msg);
+});
+
+child.send({ hello: 'world' });
+
+// child.js
+process.on('message', (msg) => {
+  console.log('Message from parent:', msg);
+  process.send({ foo: 'bar' });
+});
+```
+
+## Practical Examples
+
+### Running Shell Commands
+
+```javascript
+const { exec } = require('child_process');
+const util = require('util');
+const execPromise = util.promisify(exec);
+
+async function runCommand(command) {
+  try {
+    const { stdout, stderr } = await execPromise(command);
+    return stdout;
+  } catch (error) {
+    throw new Error(`Command failed: ${error.message}`);
+  }
+}
+
+// Usage
+const output = await runCommand('git status');
+console.log(output);
+```
+
+### CPU-Intensive Tasks
+
+```javascript
+// worker.js
+function fibonacci(n) {
+  if (n <= 1) return n;
+  return fibonacci(n - 1) + fibonacci(n - 2);
+}
+
+process.on('message', (n) => {
+  const result = fibonacci(n);
+  process.send(result);
+});
+
+// main.js
+const { fork } = require('child_process');
+
+function calculateFibonacci(n) {
+  return new Promise((resolve, reject) => {
+    const worker = fork('worker.js');
+    
+    worker.on('message', (result) => {
+      resolve(result);
+      worker.kill();
+    });
+    
+    worker.on('error', reject);
+    worker.send(n);
+  });
+}
+
+const result = await calculateFibonacci(40);
+console.log(result);
+```
+
+### Parallel Processing
+
+```javascript
+const { fork } = require('child_process');
+
+async function processInParallel(tasks) {
+  const workers = tasks.map(task => {
+    return new Promise((resolve, reject) => {
+      const worker = fork('worker.js');
+      
+      worker.on('message', resolve);
+      worker.on('error', reject);
+      worker.send(task);
+    });
+  });
+  
+  return Promise.all(workers);
+}
+
+const results = await processInParallel([1, 2, 3, 4, 5]);
+```
+
+## Best Practices
+
+1. **Use spawn()** for large output
+2. **Use exec()** for simple commands
+3. **Use fork()** for Node.js processes
+4. **Handle errors** properly
+5. **Kill processes** when done
+6. **Limit concurrent processes**
+
+## Interview Tips
+
+- **Explain child processes**: Run external commands/programs
+- **Show methods**: exec, execFile, spawn, fork
+- **Demonstrate use cases**: CPU tasks, shell commands
+- **Discuss IPC**: Inter-process communication with fork
+- **Mention performance**: Parallel processing benefits
+
+## Summary
+
+Child processes run external commands and programs. Use exec() for simple commands, spawn() for streaming, fork() for Node.js processes with IPC. Useful for CPU-intensive tasks and parallel processing.

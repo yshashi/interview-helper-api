@@ -1,0 +1,356 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Node.js Security Best Practices
+---
+
+# Node.js Security Best Practices
+
+## Input Validation
+
+### Sanitize User Input
+
+```javascript
+const validator = require('validator');
+
+app.post('/users', (req, res) => {
+  const { email, name } = req.body;
+  
+  if (!validator.isEmail(email)) {
+    return res.status(400).json({ error: 'Invalid email' });
+  }
+  
+  if (!validator.isLength(name, { min: 2, max: 50 })) {
+    return res.status(400).json({ error: 'Invalid name length' });
+  }
+  
+  // Sanitize
+  const sanitizedName = validator.escape(name);
+  const sanitizedEmail = validator.normalizeEmail(email);
+});
+```
+
+### Prevent SQL Injection
+
+```javascript
+// BAD - SQL Injection vulnerability
+const query = `SELECT * FROM users WHERE email = '${email}'`;
+
+// GOOD - Use parameterized queries
+const query = 'SELECT * FROM users WHERE email = ?';
+db.query(query, [email]);
+
+// Or with ORM
+const user = await User.findOne({ where: { email } });
+```
+
+### Prevent NoSQL Injection
+
+```javascript
+// BAD
+const user = await User.findOne({ email: req.body.email });
+
+// GOOD - Validate input type
+if (typeof req.body.email !== 'string') {
+  return res.status(400).json({ error: 'Invalid input' });
+}
+
+const user = await User.findOne({ email: req.body.email });
+```
+
+## Authentication & Authorization
+
+### Secure Password Storage
+
+```javascript
+const bcrypt = require('bcryptjs');
+
+// Hash password
+const hashedPassword = await bcrypt.hash(password, 10);
+
+// Verify password
+const isValid = await bcrypt.compare(password, hashedPassword);
+```
+
+### JWT Security
+
+```javascript
+const jwt = require('jsonwebtoken');
+
+// Generate token
+const token = jwt.sign(
+  { userId: user.id },
+  process.env.JWT_SECRET,
+  { expiresIn: '1h' }
+);
+
+// Verify token
+const authenticateToken = (req, res, next) => {
+  const token = req.headers.authorization?.split(' ')[1];
+  
+  if (!token) {
+    return res.status(401).json({ error: 'No token provided' });
+  }
+  
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = decoded;
+    next();
+  } catch (err) {
+    res.status(403).json({ error: 'Invalid token' });
+  }
+};
+```
+
+## Security Headers
+
+### Using Helmet
+
+```javascript
+const helmet = require('helmet');
+
+app.use(helmet());
+
+// Or configure specific headers
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrc: ["'self'"]
+    }
+  },
+  hsts: {
+    maxAge: 31536000,
+    includeSubDomains: true
+  }
+}));
+```
+
+## Rate Limiting
+
+```javascript
+const rateLimit = require('express-rate-limit');
+
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Limit each IP to 100 requests per windowMs
+  message: 'Too many requests from this IP'
+});
+
+app.use('/api/', limiter);
+
+// Stricter limit for auth endpoints
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5
+});
+
+app.use('/api/login', authLimiter);
+```
+
+## CORS Configuration
+
+```javascript
+const cors = require('cors');
+
+// Restrictive CORS
+app.use(cors({
+  origin: ['https://yourdomain.com'],
+  methods: ['GET', 'POST'],
+  credentials: true,
+  maxAge: 3600
+}));
+
+// Dynamic origin
+app.use(cors({
+  origin: (origin, callback) => {
+    const allowedOrigins = ['https://yourdomain.com', 'https://app.yourdomain.com'];
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  }
+}));
+```
+
+## Prevent XSS
+
+```javascript
+// Sanitize HTML
+const xss = require('xss');
+
+app.post('/comments', (req, res) => {
+  const sanitized = xss(req.body.comment);
+  // Save sanitized content
+});
+
+// Set CSP headers
+app.use(helmet.contentSecurityPolicy({
+  directives: {
+    defaultSrc: ["'self'"],
+    scriptSrc: ["'self'", "'unsafe-inline'"]
+  }
+}));
+```
+
+## Environment Variables
+
+```javascript
+// Use dotenv
+require('dotenv').config();
+
+// Never commit .env files
+// .gitignore
+.env
+.env.local
+
+// Validate required variables
+const requiredEnvVars = ['DATABASE_URL', 'JWT_SECRET', 'API_KEY'];
+
+requiredEnvVars.forEach(varName => {
+  if (!process.env[varName]) {
+    throw new Error(`Missing required environment variable: ${varName}`);
+  }
+});
+```
+
+## Secure Dependencies
+
+```bash
+# Audit dependencies
+npm audit
+
+# Fix vulnerabilities
+npm audit fix
+
+# Force fix
+npm audit fix --force
+
+# Check for outdated packages
+npm outdated
+
+# Update packages
+npm update
+```
+
+## HTTPS
+
+```javascript
+const https = require('https');
+const fs = require('fs');
+
+const options = {
+  key: fs.readFileSync('private-key.pem'),
+  cert: fs.readFileSync('certificate.pem')
+};
+
+https.createServer(options, app).listen(443);
+
+// Redirect HTTP to HTTPS
+const http = require('http');
+http.createServer((req, res) => {
+  res.writeHead(301, { Location: `https://${req.headers.host}${req.url}` });
+  res.end();
+}).listen(80);
+```
+
+## Session Security
+
+```javascript
+const session = require('express-session');
+
+app.use(session({
+  secret: process.env.SESSION_SECRET,
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: true, // HTTPS only
+    httpOnly: true, // Prevent XSS
+    maxAge: 3600000, // 1 hour
+    sameSite: 'strict' // CSRF protection
+  }
+}));
+```
+
+## File Upload Security
+
+```javascript
+const multer = require('multer');
+const path = require('path');
+
+const storage = multer.diskStorage({
+  destination: './uploads/',
+  filename: (req, file, cb) => {
+    cb(null, `${Date.now()}-${file.originalname}`);
+  }
+});
+
+const upload = multer({
+  storage,
+  limits: {
+    fileSize: 5 * 1024 * 1024 // 5MB
+  },
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = /jpeg|jpg|png|pdf/;
+    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+    const mimetype = allowedTypes.test(file.mimetype);
+    
+    if (extname && mimetype) {
+      cb(null, true);
+    } else {
+      cb(new Error('Invalid file type'));
+    }
+  }
+});
+```
+
+## Logging & Monitoring
+
+```javascript
+const winston = require('winston');
+
+const logger = winston.createLogger({
+  level: 'info',
+  format: winston.format.json(),
+  transports: [
+    new winston.transports.File({ filename: 'error.log', level: 'error' }),
+    new winston.transports.File({ filename: 'combined.log' })
+  ]
+});
+
+// Log security events
+app.post('/login', (req, res) => {
+  logger.info('Login attempt', {
+    ip: req.ip,
+    email: req.body.email,
+    timestamp: new Date()
+  });
+});
+```
+
+## Best Practices Checklist
+
+1. ✓ **Validate all user input**
+2. ✓ **Use parameterized queries**
+3. ✓ **Hash passwords with bcrypt**
+4. ✓ **Implement rate limiting**
+5. ✓ **Use security headers (Helmet)**
+6. ✓ **Configure CORS properly**
+7. ✓ **Keep dependencies updated**
+8. ✓ **Use HTTPS in production**
+9. ✓ **Secure environment variables**
+10. ✓ **Implement proper logging**
+
+## Interview Tips
+
+- **Explain input validation**: Prevent injection attacks
+- **Show authentication**: Secure password storage, JWT
+- **Demonstrate security headers**: Helmet middleware
+- **Discuss rate limiting**: Prevent abuse
+- **Mention HTTPS**: Encrypt data in transit
+- **Show dependency auditing**: npm audit
+
+## Summary
+
+Secure Node.js applications by validating input, using parameterized queries, hashing passwords, implementing rate limiting, using security headers with Helmet, configuring CORS, keeping dependencies updated, using HTTPS, and implementing proper logging and monitoring.

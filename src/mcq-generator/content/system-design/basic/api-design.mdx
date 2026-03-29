@@ -1,0 +1,618 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: API Design
+---
+
+# API Design
+
+## RESTful API Principles
+
+```javascript
+const restPrinciples = {
+  stateless: 'Each request contains all information needed',
+  clientServer: 'Separation of concerns',
+  cacheable: 'Responses must define cacheability',
+  uniformInterface: 'Consistent resource identification',
+  layeredSystem: 'Client cannot tell if connected to end server',
+  codeOnDemand: 'Optional: Server can extend client functionality'
+};
+```
+
+## HTTP Methods
+
+```javascript
+const httpMethods = {
+  GET: {
+    purpose: 'Retrieve resource',
+    idempotent: true,
+    safe: true,
+    example: 'GET /api/users/123'
+  },
+  
+  POST: {
+    purpose: 'Create resource',
+    idempotent: false,
+    safe: false,
+    example: 'POST /api/users'
+  },
+  
+  PUT: {
+    purpose: 'Update/replace resource',
+    idempotent: true,
+    safe: false,
+    example: 'PUT /api/users/123'
+  },
+  
+  PATCH: {
+    purpose: 'Partial update',
+    idempotent: true,
+    safe: false,
+    example: 'PATCH /api/users/123'
+  },
+  
+  DELETE: {
+    purpose: 'Delete resource',
+    idempotent: true,
+    safe: false,
+    example: 'DELETE /api/users/123'
+  }
+};
+```
+
+## URL Design
+
+```javascript
+// ✅ Good URL design
+const goodURLs = {
+  collection: 'GET /api/users',
+  resource: 'GET /api/users/123',
+  nested: 'GET /api/users/123/orders',
+  filtering: 'GET /api/users?status=active&role=admin',
+  pagination: 'GET /api/users?page=2&limit=20',
+  sorting: 'GET /api/users?sort=createdAt&order=desc',
+  search: 'GET /api/users/search?q=john'
+};
+
+// ❌ Bad URL design
+const badURLs = {
+  verbs: 'GET /api/getUsers',
+  actions: 'POST /api/users/create',
+  underscores: 'GET /api/user_orders',
+  fileExtensions: 'GET /api/users.json',
+  camelCase: 'GET /api/userOrders'
+};
+```
+
+## Status Codes
+
+```javascript
+const statusCodes = {
+  // 2xx Success
+  200: 'OK - Request succeeded',
+  201: 'Created - Resource created',
+  204: 'No Content - Success but no body',
+  
+  // 3xx Redirection
+  301: 'Moved Permanently',
+  304: 'Not Modified - Use cached version',
+  
+  // 4xx Client Errors
+  400: 'Bad Request - Invalid syntax',
+  401: 'Unauthorized - Authentication required',
+  403: 'Forbidden - No permission',
+  404: 'Not Found - Resource not found',
+  409: 'Conflict - Resource conflict',
+  422: 'Unprocessable Entity - Validation failed',
+  429: 'Too Many Requests - Rate limit exceeded',
+  
+  // 5xx Server Errors
+  500: 'Internal Server Error',
+  502: 'Bad Gateway',
+  503: 'Service Unavailable',
+  504: 'Gateway Timeout'
+};
+```
+
+## Request/Response Format
+
+```javascript
+// Request
+const apiRequest = {
+  method: 'POST',
+  url: '/api/users',
+  headers: {
+    'Content-Type': 'application/json',
+    'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIs...',
+    'Accept': 'application/json',
+    'X-Request-ID': 'uuid-123'
+  },
+  body: {
+    name: 'John Doe',
+    email: 'john@example.com',
+    role: 'user'
+  }
+};
+
+// Response
+const apiResponse = {
+  status: 201,
+  headers: {
+    'Content-Type': 'application/json',
+    'X-Request-ID': 'uuid-123',
+    'X-RateLimit-Remaining': '99'
+  },
+  body: {
+    data: {
+      id: '123',
+      name: 'John Doe',
+      email: 'john@example.com',
+      role: 'user',
+      createdAt: '2024-01-01T00:00:00Z'
+    },
+    meta: {
+      requestId: 'uuid-123',
+      timestamp: '2024-01-01T00:00:00Z'
+    }
+  }
+};
+```
+
+## Error Handling
+
+```javascript
+class APIErrorHandler {
+  formatError(error) {
+    return {
+      error: {
+        code: error.code || 'INTERNAL_ERROR',
+        message: error.message,
+        details: error.details || [],
+        timestamp: new Date().toISOString(),
+        path: error.path,
+        requestId: error.requestId
+      }
+    };
+  }
+  
+  // Validation error
+  validationError(errors) {
+    return {
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: 'Validation failed',
+        details: errors.map(e => ({
+          field: e.field,
+          message: e.message,
+          value: e.value
+        }))
+      }
+    };
+  }
+  
+  // Not found error
+  notFoundError(resource) {
+    return {
+      error: {
+        code: 'NOT_FOUND',
+        message: `${resource} not found`,
+        details: []
+      }
+    };
+  }
+}
+
+// Usage
+app.use((err, req, res, next) => {
+  const errorHandler = new APIErrorHandler();
+  const formattedError = errorHandler.formatError(err);
+  
+  res.status(err.statusCode || 500).json(formattedError);
+});
+```
+
+## Versioning
+
+```javascript
+const versioningStrategies = {
+  urlPath: {
+    example: '/api/v1/users',
+    pros: ['Clear', 'Easy to route'],
+    cons: ['URL pollution']
+  },
+  
+  queryParameter: {
+    example: '/api/users?version=1',
+    pros: ['Clean URLs'],
+    cons: ['Easy to miss', 'Caching issues']
+  },
+  
+  header: {
+    example: 'Accept: application/vnd.api.v1+json',
+    pros: ['Clean URLs', 'Flexible'],
+    cons: ['Less visible', 'Complex']
+  },
+  
+  contentNegotiation: {
+    example: 'Accept: application/vnd.api+json;version=1',
+    pros: ['RESTful', 'Flexible'],
+    cons: ['Complex', 'Less common']
+  }
+};
+
+// Implementation
+class APIVersioning {
+  constructor(app) {
+    this.app = app;
+  }
+  
+  // URL path versioning
+  setupURLVersioning() {
+    this.app.use('/api/v1', v1Routes);
+    this.app.use('/api/v2', v2Routes);
+  }
+  
+  // Header versioning
+  setupHeaderVersioning() {
+    this.app.use((req, res, next) => {
+      const version = req.headers['api-version'] || '1';
+      req.apiVersion = version;
+      next();
+    });
+  }
+}
+```
+
+## Pagination
+
+```javascript
+class PaginationHandler {
+  // Offset-based pagination
+  offsetPagination(req) {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const offset = (page - 1) * limit;
+    
+    return {
+      limit,
+      offset,
+      page
+    };
+  }
+  
+  // Cursor-based pagination
+  cursorPagination(req) {
+    const limit = parseInt(req.query.limit) || 20;
+    const cursor = req.query.cursor;
+    
+    return {
+      limit,
+      cursor
+    };
+  }
+  
+  // Format response
+  formatPaginatedResponse(data, total, page, limit) {
+    return {
+      data,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+        hasNext: page * limit < total,
+        hasPrev: page > 1
+      }
+    };
+  }
+}
+
+// Usage
+app.get('/api/users', async (req, res) => {
+  const pagination = new PaginationHandler();
+  const { limit, offset, page } = pagination.offsetPagination(req);
+  
+  const users = await db.users.findMany({
+    skip: offset,
+    take: limit
+  });
+  
+  const total = await db.users.count();
+  
+  res.json(pagination.formatPaginatedResponse(users, total, page, limit));
+});
+```
+
+## Filtering and Sorting
+
+```javascript
+class QueryBuilder {
+  buildFilter(query) {
+    const filter = {};
+    
+    // Equality
+    if (query.status) filter.status = query.status;
+    if (query.role) filter.role = query.role;
+    
+    // Range
+    if (query.minAge) filter.age = { $gte: parseInt(query.minAge) };
+    if (query.maxAge) filter.age = { ...filter.age, $lte: parseInt(query.maxAge) };
+    
+    // Date range
+    if (query.startDate) {
+      filter.createdAt = { $gte: new Date(query.startDate) };
+    }
+    if (query.endDate) {
+      filter.createdAt = { ...filter.createdAt, $lte: new Date(query.endDate) };
+    }
+    
+    // Search
+    if (query.search) {
+      filter.$or = [
+        { name: { $regex: query.search, $options: 'i' } },
+        { email: { $regex: query.search, $options: 'i' } }
+      ];
+    }
+    
+    return filter;
+  }
+  
+  buildSort(query) {
+    const sort = {};
+    
+    if (query.sort) {
+      const order = query.order === 'desc' ? -1 : 1;
+      sort[query.sort] = order;
+    } else {
+      sort.createdAt = -1; // Default sort
+    }
+    
+    return sort;
+  }
+}
+
+// Usage
+app.get('/api/users', async (req, res) => {
+  const builder = new QueryBuilder();
+  const filter = builder.buildFilter(req.query);
+  const sort = builder.buildSort(req.query);
+  
+  const users = await db.collection('users')
+    .find(filter)
+    .sort(sort)
+    .limit(20)
+    .toArray();
+  
+  res.json({ data: users });
+});
+```
+
+## Rate Limiting
+
+```javascript
+const rateLimit = require('express-rate-limit');
+
+// Basic rate limiting
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Limit each IP to 100 requests per windowMs
+  message: 'Too many requests, please try again later',
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
+app.use('/api/', limiter);
+
+// Custom rate limiting
+class RateLimiter {
+  constructor(redis) {
+    this.redis = redis;
+  }
+  
+  async checkLimit(userId, limit = 100, window = 60) {
+    const key = `ratelimit:${userId}`;
+    const now = Date.now();
+    const windowStart = now - (window * 1000);
+    
+    // Remove old entries
+    await this.redis.zRemRangeByScore(key, 0, windowStart);
+    
+    // Count requests in window
+    const count = await this.redis.zCard(key);
+    
+    if (count >= limit) {
+      return {
+        allowed: false,
+        remaining: 0,
+        resetAt: windowStart + (window * 1000)
+      };
+    }
+    
+    // Add current request
+    await this.redis.zAdd(key, [{ score: now, value: `${now}` }]);
+    await this.redis.expire(key, window);
+    
+    return {
+      allowed: true,
+      remaining: limit - count - 1
+    };
+  }
+}
+```
+
+## Authentication
+
+```javascript
+const jwt = require('jsonwebtoken');
+
+class AuthenticationMiddleware {
+  // JWT authentication
+  authenticateJWT(req, res, next) {
+    const token = req.headers.authorization?.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({ error: 'No token provided' });
+    }
+    
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      req.user = decoded;
+      next();
+    } catch (error) {
+      return res.status(401).json({ error: 'Invalid token' });
+    }
+  }
+  
+  // API key authentication
+  authenticateAPIKey(req, res, next) {
+    const apiKey = req.headers['x-api-key'];
+    
+    if (!apiKey) {
+      return res.status(401).json({ error: 'No API key provided' });
+    }
+    
+    // Validate API key
+    const isValid = this.validateAPIKey(apiKey);
+    
+    if (!isValid) {
+      return res.status(401).json({ error: 'Invalid API key' });
+    }
+    
+    next();
+  }
+}
+```
+
+## .NET API Design
+
+```csharp
+using Microsoft.AspNetCore.Mvc;
+
+[ApiController]
+[Route("api/[controller]")]
+public class UsersController : ControllerBase
+{
+    private readonly IUserService _userService;
+    
+    public UsersController(IUserService userService)
+    {
+        _userService = userService;
+    }
+    
+    // GET api/users
+    [HttpGet]
+    [ProducesResponseType(typeof(PaginatedResponse<User>), 200)]
+    public async Task<IActionResult> GetUsers(
+        [FromQuery] int page = 1,
+        [FromQuery] int limit = 20,
+        [FromQuery] string? status = null,
+        [FromQuery] string? sort = "createdAt",
+        [FromQuery] string? order = "desc")
+    {
+        var users = await _userService.GetUsersAsync(page, limit, status, sort, order);
+        return Ok(users);
+    }
+    
+    // GET api/users/{id}
+    [HttpGet("{id}")]
+    [ProducesResponseType(typeof(User), 200)]
+    [ProducesResponseType(404)]
+    public async Task<IActionResult> GetUser(string id)
+    {
+        var user = await _userService.GetUserByIdAsync(id);
+        
+        if (user == null)
+        {
+            return NotFound(new { error = "User not found" });
+        }
+        
+        return Ok(user);
+    }
+    
+    // POST api/users
+    [HttpPost]
+    [ProducesResponseType(typeof(User), 201)]
+    [ProducesResponseType(typeof(ValidationProblemDetails), 400)]
+    public async Task<IActionResult> CreateUser([FromBody] CreateUserRequest request)
+    {
+        if (!ModelState.IsValid)
+        {
+            return BadRequest(ModelState);
+        }
+        
+        var user = await _userService.CreateUserAsync(request);
+        
+        return CreatedAtAction(
+            nameof(GetUser),
+            new { id = user.Id },
+            user
+        );
+    }
+    
+    // PUT api/users/{id}
+    [HttpPut("{id}")]
+    [ProducesResponseType(typeof(User), 200)]
+    [ProducesResponseType(404)]
+    public async Task<IActionResult> UpdateUser(string id, [FromBody] UpdateUserRequest request)
+    {
+        var user = await _userService.UpdateUserAsync(id, request);
+        
+        if (user == null)
+        {
+            return NotFound();
+        }
+        
+        return Ok(user);
+    }
+    
+    // DELETE api/users/{id}
+    [HttpDelete("{id}")]
+    [ProducesResponseType(204)]
+    [ProducesResponseType(404)]
+    public async Task<IActionResult> DeleteUser(string id)
+    {
+        var deleted = await _userService.DeleteUserAsync(id);
+        
+        if (!deleted)
+        {
+            return NotFound();
+        }
+        
+        return NoContent();
+    }
+}
+```
+
+## API Best Practices
+
+```javascript
+const apiBestPractices = [
+  'Use nouns for resources, not verbs',
+  'Use HTTP methods correctly',
+  'Return appropriate status codes',
+  'Version your API',
+  'Implement pagination for large datasets',
+  'Use filtering, sorting, and searching',
+  'Implement rate limiting',
+  'Use authentication and authorization',
+  'Provide clear error messages',
+  'Document your API (OpenAPI/Swagger)',
+  'Use HTTPS',
+  'Implement CORS properly',
+  'Cache responses when appropriate',
+  'Use compression (gzip)',
+  'Monitor API performance'
+];
+```
+
+## Interview Tips
+
+- **Explain REST principles**: Stateless, uniform interface
+- **Show HTTP methods**: GET, POST, PUT, PATCH, DELETE
+- **Demonstrate URL design**: Resource-based, not action-based
+- **Discuss versioning**: URL path vs headers
+- **Mention pagination**: Offset vs cursor-based
+- **Show error handling**: Consistent error format
+
+## Summary
+
+Design RESTful APIs with resource-based URLs using nouns, not verbs. Use HTTP methods correctly: GET (retrieve), POST (create), PUT (update), PATCH (partial update), DELETE (remove). Return appropriate status codes (2xx success, 4xx client error, 5xx server error). Implement versioning (URL path recommended). Add pagination for large datasets. Support filtering, sorting, and searching. Implement rate limiting and authentication. Provide clear, consistent error messages. Document with OpenAPI/Swagger. Essential for building maintainable APIs.

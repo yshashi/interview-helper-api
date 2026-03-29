@@ -1,0 +1,342 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Database Connection Management in Node.js
+---
+
+# Database Connection Management in Node.js
+
+## Connection Pooling
+
+**Connection pooling** reuses database connections instead of creating new ones for each request, significantly improving performance.
+
+## MongoDB (Mongoose)
+
+### Basic Connection
+
+```javascript
+const mongoose = require('mongoose');
+
+mongoose.connect(process.env.MONGODB_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+  maxPoolSize: 10,
+  minPoolSize: 5,
+  serverSelectionTimeoutMS: 5000,
+  socketTimeoutMS: 45000
+});
+
+mongoose.connection.on('connected', () => {
+  console.log('MongoDB connected');
+});
+
+mongoose.connection.on('error', (err) => {
+  console.error('MongoDB error:', err);
+});
+
+mongoose.connection.on('disconnected', () => {
+  console.log('MongoDB disconnected');
+});
+```
+
+### Connection Pool Configuration
+
+```javascript
+const options = {
+  maxPoolSize: 10, // Maximum connections
+  minPoolSize: 5, // Minimum connections
+  maxIdleTimeMS: 30000, // Close idle connections after 30s
+  waitQueueTimeoutMS: 5000, // Wait 5s for available connection
+  serverSelectionTimeoutMS: 5000
+};
+
+await mongoose.connect(uri, options);
+```
+
+## PostgreSQL (pg)
+
+### Using Pool
+
+```javascript
+const { Pool } = require('pg');
+
+const pool = new Pool({
+  host: process.env.DB_HOST,
+  port: 5432,
+  database: process.env.DB_NAME,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  max: 20, // Maximum connections
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 2000
+});
+
+// Query using pool
+const result = await pool.query('SELECT * FROM users WHERE id = $1', [userId]);
+
+// Release connection automatically
+pool.on('error', (err) => {
+  console.error('Unexpected error on idle client', err);
+  process.exit(-1);
+});
+```
+
+### Manual Connection Management
+
+```javascript
+const client = await pool.connect();
+try {
+  await client.query('BEGIN');
+  await client.query('INSERT INTO users (name) VALUES ($1)', ['John']);
+  await client.query('COMMIT');
+} catch (err) {
+  await client.query('ROLLBACK');
+  throw err;
+} finally {
+  client.release();
+}
+```
+
+## MySQL (mysql2)
+
+### Connection Pool
+
+```javascript
+const mysql = require('mysql2/promise');
+
+const pool = mysql.createPool({
+  host: process.env.DB_HOST,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_NAME,
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0,
+  enableKeepAlive: true,
+  keepAliveInitialDelay: 0
+});
+
+// Execute query
+const [rows] = await pool.execute('SELECT * FROM users WHERE id = ?', [userId]);
+
+// Get connection from pool
+const connection = await pool.getConnection();
+try {
+  await connection.beginTransaction();
+  await connection.query('INSERT INTO users (name) VALUES (?)', ['John']);
+  await connection.commit();
+} catch (err) {
+  await connection.rollback();
+  throw err;
+} finally {
+  connection.release();
+}
+```
+
+## Redis
+
+### Connection Management
+
+```javascript
+const redis = require('redis');
+
+const client = redis.createClient({
+  socket: {
+    host: process.env.REDIS_HOST,
+    port: 6379,
+    reconnectStrategy: (retries) => {
+      if (retries > 10) {
+        return new Error('Too many retries');
+      }
+      return retries * 100;
+    }
+  },
+  password: process.env.REDIS_PASSWORD
+});
+
+client.on('error', (err) => console.error('Redis error:', err));
+client.on('connect', () => console.log('Redis connected'));
+client.on('reconnecting', () => console.log('Redis reconnecting'));
+
+await client.connect();
+```
+
+## Connection Best Practices
+
+### 1. Singleton Pattern
+
+```javascript
+// db.js
+let pool;
+
+function getPool() {
+  if (!pool) {
+    pool = new Pool({
+      // configuration
+    });
+  }
+  return pool;
+}
+
+module.exports = { getPool };
+
+// Usage
+const { getPool } = require('./db');
+const pool = getPool();
+```
+
+### 2. Graceful Shutdown
+
+```javascript
+process.on('SIGTERM', async () => {
+  console.log('SIGTERM received, closing connections...');
+  
+  await mongoose.connection.close();
+  await pool.end();
+  await redisClient.quit();
+  
+  process.exit(0);
+});
+```
+
+### 3. Health Checks
+
+```javascript
+app.get('/health', async (req, res) => {
+  try {
+    // Check MongoDB
+    await mongoose.connection.db.admin().ping();
+    
+    // Check PostgreSQL
+    await pool.query('SELECT 1');
+    
+    // Check Redis
+    await redisClient.ping();
+    
+    res.json({ status: 'healthy' });
+  } catch (err) {
+    res.status(503).json({ status: 'unhealthy', error: err.message });
+  }
+});
+```
+
+### 4. Connection Retry Logic
+
+```javascript
+async function connectWithRetry(maxRetries = 5) {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      await mongoose.connect(uri, options);
+      console.log('Database connected');
+      return;
+    } catch (err) {
+      console.error(`Connection attempt ${i + 1} failed:`, err.message);
+      if (i < maxRetries - 1) {
+        await new Promise(resolve => setTimeout(resolve, 5000));
+      }
+    }
+  }
+  throw new Error('Failed to connect after maximum retries');
+}
+```
+
+## Monitoring Connections
+
+### PostgreSQL
+
+```javascript
+pool.on('connect', () => {
+  console.log('New client connected to pool');
+});
+
+pool.on('acquire', () => {
+  console.log('Client acquired from pool');
+});
+
+pool.on('remove', () => {
+  console.log('Client removed from pool');
+});
+
+// Get pool stats
+setInterval(() => {
+  console.log({
+    total: pool.totalCount,
+    idle: pool.idleCount,
+    waiting: pool.waitingCount
+  });
+}, 60000);
+```
+
+### MongoDB
+
+```javascript
+setInterval(() => {
+  const stats = mongoose.connection.db.serverStatus();
+  console.log({
+    connections: stats.connections,
+    available: stats.connections.available,
+    current: stats.connections.current
+  });
+}, 60000);
+```
+
+## Transaction Management
+
+### MongoDB
+
+```javascript
+const session = await mongoose.startSession();
+session.startTransaction();
+
+try {
+  await User.create([{ name: 'John' }], { session });
+  await Order.create([{ userId: user.id }], { session });
+  
+  await session.commitTransaction();
+} catch (err) {
+  await session.abortTransaction();
+  throw err;
+} finally {
+  session.endSession();
+}
+```
+
+### PostgreSQL
+
+```javascript
+const client = await pool.connect();
+try {
+  await client.query('BEGIN');
+  await client.query('INSERT INTO users (name) VALUES ($1)', ['John']);
+  await client.query('INSERT INTO orders (user_id) VALUES ($1)', [userId]);
+  await client.query('COMMIT');
+} catch (err) {
+  await client.query('ROLLBACK');
+  throw err;
+} finally {
+  client.release();
+}
+```
+
+## Best Practices
+
+1. **Use connection pooling** for all databases
+2. **Set appropriate pool sizes** based on load
+3. **Implement graceful shutdown**
+4. **Add health check endpoints**
+5. **Monitor connection metrics**
+6. **Handle connection errors**
+7. **Use transactions** for data consistency
+8. **Implement retry logic** for failures
+
+## Interview Tips
+
+- **Explain connection pooling**: Reuse connections for performance
+- **Show configuration**: Pool size, timeouts
+- **Demonstrate transactions**: ACID properties
+- **Discuss monitoring**: Track connection metrics
+- **Mention graceful shutdown**: Clean connection closure
+- **Show error handling**: Retry logic, fallbacks
+
+## Summary
+
+Use connection pooling to reuse database connections efficiently. Configure appropriate pool sizes, implement graceful shutdown, add health checks, monitor connection metrics, and handle errors with retry logic. Use transactions for data consistency.

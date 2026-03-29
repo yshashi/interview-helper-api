@@ -1,0 +1,621 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Design Chat System
+---
+
+# Design Chat System
+
+## Requirements
+
+### Functional Requirements
+
+- One-on-one messaging
+- Group chat (up to 100 members)
+- Online/offline status
+- Message delivery confirmation
+- Message history
+- File sharing (images, documents)
+
+### Non-Functional Requirements
+
+**Scale:**
+- 50 million daily active users
+- Each user sends 40 messages per day
+- 2 billion messages per day
+
+**Performance:**
+- Message delivery < 100ms
+- Real-time updates
+- 99.99% uptime
+
+**Consistency:**
+- Messages delivered in order
+- No message loss
+
+## Capacity Estimation
+
+**Storage:**
+- 2B messages/day × 100 bytes = 200 GB/day
+- 5 years: 200 GB × 365 × 5 = 365 TB
+- With media: ~1 PB
+
+**Bandwidth:**
+- 2B messages/day ÷ 86400 seconds = 23,000 messages/second
+- Peak (3x average): 70,000 messages/second
+
+**Connections:**
+- 50M active users
+- Need persistent connections (WebSocket)
+- 50M concurrent connections
+
+## High-Level Design
+
+```
+┌─────────┐
+│ Client  │
+└────┬────┘
+     │ WebSocket
+┌────▼────────────┐
+│ WebSocket       │
+│ Gateway         │
+└────┬────────────┘
+     │
+┌────▼────────────────────────┐
+│ Message Queue (Kafka)       │
+└────┬────────────────────────┘
+     │
+     ├──────────┬──────────┬──────────┐
+     │          │          │          │
+┌────▼────┐ ┌──▼──────┐ ┌─▼────────┐ ┌─▼────────┐
+│ Message │ │Presence │ │ User     │ │ File     │
+│ Service │ │ Service │ │ Service  │ │ Service  │
+└────┬────┘ └──┬──────┘ └─┬────────┘ └─┬────────┘
+     │         │          │            │
+┌────▼─────────▼──────────▼────────────▼────┐
+│ Cassandra (Messages) + Redis (Presence)   │
+└───────────────────────────────────────────┘
+```
+
+## Database Schema
+
+### Messages (Cassandra)
+
+```sql
+-- One-on-one messages
+CREATE TABLE messages (
+  conversation_id UUID,
+  message_id TIMEUUID,
+  sender_id BIGINT,
+  receiver_id BIGINT,
+  content TEXT,
+  message_type VARCHAR(20),
+  created_at TIMESTAMP,
+  delivered_at TIMESTAMP,
+  read_at TIMESTAMP,
+  PRIMARY KEY (conversation_id, message_id)
+) WITH CLUSTERING ORDER BY (message_id DESC);
+
+-- Group messages
+CREATE TABLE group_messages (
+  group_id UUID,
+  message_id TIMEUUID,
+  sender_id BIGINT,
+  content TEXT,
+  message_type VARCHAR(20),
+  created_at TIMESTAMP,
+  PRIMARY KEY (group_id, message_id)
+) WITH CLUSTERING ORDER BY (message_id DESC);
+
+-- User inbox (for quick access to conversations)
+CREATE TABLE user_inbox (
+  user_id BIGINT,
+  conversation_id UUID,
+  last_message_id TIMEUUID,
+  last_message_preview TEXT,
+  unread_count INT,
+  updated_at TIMESTAMP,
+  PRIMARY KEY (user_id, updated_at, conversation_id)
+) WITH CLUSTERING ORDER BY (updated_at DESC);
+```
+
+### Users (MySQL)
+
+```sql
+CREATE TABLE users (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  username VARCHAR(50) UNIQUE NOT NULL,
+  email VARCHAR(255) UNIQUE NOT NULL,
+  password_hash VARCHAR(255) NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE groups (
+  id UUID PRIMARY KEY,
+  name VARCHAR(100) NOT NULL,
+  created_by BIGINT NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (created_by) REFERENCES users(id)
+);
+
+CREATE TABLE group_members (
+  group_id UUID NOT NULL,
+  user_id BIGINT NOT NULL,
+  joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (group_id, user_id),
+  FOREIGN KEY (group_id) REFERENCES groups(id),
+  FOREIGN KEY (user_id) REFERENCES users(id)
+);
+```
+
+## WebSocket Connection Management
+
+```javascript
+const WebSocket = require('ws');
+const Redis = require('ioredis');
+
+class WebSocketServer {
+  constructor() {
+    this.wss = new WebSocket.Server({ port: 8080 });
+    this.connections = new Map(); // userId -> WebSocket
+    this.redis = new Redis();
+    this.redisSub = new Redis();
+    
+    this.setupWebSocket();
+    this.setupRedisSubscription();
+  }
+  
+  setupWebSocket() {
+    this.wss.on('connection', async (ws, req) => {
+      const userId = await this.authenticateConnection(req);
+      
+      if (!userId) {
+        ws.close(4001, 'Unauthorized');
+        return;
+      }
+      
+      // Store connection
+      this.connections.set(userId, ws);
+      
+      // Update presence
+      await this.updatePresence(userId, 'online');
+      
+      // Handle messages from client
+      ws.on('message', async (data) => {
+        await this.handleClientMessage(userId, data);
+      });
+      
+      // Handle disconnection
+      ws.on('close', async () => {
+        this.connections.delete(userId);
+        await this.updatePresence(userId, 'offline');
+      });
+      
+      // Send pending messages
+      await this.sendPendingMessages(userId);
+    });
+  }
+  
+  setupRedisSubscription() {
+    // Subscribe to user's message channel
+    this.redisSub.psubscribe('user:*:messages');
+    
+    this.redisSub.on('pmessage', (pattern, channel, message) => {
+      const userId = channel.split(':')[1];
+      const ws = this.connections.get(userId);
+      
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(message);
+      }
+    });
+  }
+  
+  async handleClientMessage(userId, data) {
+    const message = JSON.parse(data);
+    
+    switch (message.type) {
+      case 'send_message':
+        await this.sendMessage(userId, message);
+        break;
+      case 'typing':
+        await this.broadcastTyping(userId, message.conversationId);
+        break;
+      case 'read_receipt':
+        await this.markAsRead(userId, message.messageId);
+        break;
+    }
+  }
+  
+  async sendMessage(senderId, message) {
+    const messageId = generateTimeUUID();
+    
+    // Publish to Kafka for processing
+    await kafka.publish('messages', {
+      messageId,
+      senderId,
+      receiverId: message.receiverId,
+      conversationId: message.conversationId,
+      content: message.content,
+      timestamp: Date.now()
+    });
+    
+    // Send acknowledgment to sender
+    const ws = this.connections.get(senderId);
+    if (ws) {
+      ws.send(JSON.stringify({
+        type: 'message_sent',
+        messageId,
+        tempId: message.tempId
+      }));
+    }
+  }
+  
+  async updatePresence(userId, status) {
+    await this.redis.setEx(
+      `presence:${userId}`,
+      300, // 5 minutes TTL
+      JSON.stringify({ status, lastSeen: Date.now() })
+    );
+    
+    // Publish presence update
+    await this.redis.publish(
+      'presence:updates',
+      JSON.stringify({ userId, status })
+    );
+  }
+}
+```
+
+## Message Processing Service
+
+```javascript
+class MessageProcessor {
+  constructor(cassandra, redis) {
+    this.cassandra = cassandra;
+    this.redis = redis;
+  }
+  
+  async processMessage(message) {
+    const {
+      messageId,
+      senderId,
+      receiverId,
+      conversationId,
+      content,
+      timestamp
+    } = message;
+    
+    // 1. Save to database
+    await this.saveMessage(message);
+    
+    // 2. Update user inboxes
+    await this.updateInboxes(message);
+    
+    // 3. Deliver to recipient if online
+    await this.deliverMessage(message);
+    
+    // 4. Send push notification if offline
+    const isOnline = await this.isUserOnline(receiverId);
+    if (!isOnline) {
+      await this.sendPushNotification(receiverId, message);
+    }
+  }
+  
+  async saveMessage(message) {
+    await this.cassandra.execute(
+      `INSERT INTO messages (conversation_id, message_id, sender_id, receiver_id, content, message_type, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        message.conversationId,
+        message.messageId,
+        message.senderId,
+        message.receiverId,
+        message.content,
+        'text',
+        new Date(message.timestamp)
+      ]
+    );
+  }
+  
+  async updateInboxes(message) {
+    // Update sender's inbox
+    await this.cassandra.execute(
+      `INSERT INTO user_inbox (user_id, conversation_id, last_message_id, last_message_preview, unread_count, updated_at)
+       VALUES (?, ?, ?, ?, 0, ?)`,
+      [
+        message.senderId,
+        message.conversationId,
+        message.messageId,
+        message.content.substring(0, 100),
+        new Date()
+      ]
+    );
+    
+    // Update receiver's inbox
+    await this.cassandra.execute(
+      `INSERT INTO user_inbox (user_id, conversation_id, last_message_id, last_message_preview, unread_count, updated_at)
+       VALUES (?, ?, ?, ?, unread_count + 1, ?)`,
+      [
+        message.receiverId,
+        message.conversationId,
+        message.messageId,
+        message.content.substring(0, 100),
+        new Date()
+      ]
+    );
+  }
+  
+  async deliverMessage(message) {
+    // Publish to Redis for WebSocket delivery
+    await this.redis.publish(
+      `user:${message.receiverId}:messages`,
+      JSON.stringify({
+        type: 'new_message',
+        message
+      })
+    );
+  }
+  
+  async isUserOnline(userId) {
+    const presence = await this.redis.get(`presence:${userId}`);
+    return presence !== null;
+  }
+}
+```
+
+## Group Chat
+
+```javascript
+class GroupChatService {
+  async sendGroupMessage(senderId, groupId, content) {
+    const messageId = generateTimeUUID();
+    
+    // 1. Verify sender is group member
+    const isMember = await this.isGroupMember(senderId, groupId);
+    if (!isMember) {
+      throw new Error('Not a group member');
+    }
+    
+    // 2. Save message
+    await cassandra.execute(
+      `INSERT INTO group_messages (group_id, message_id, sender_id, content, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      [groupId, messageId, senderId, content, new Date()]
+    );
+    
+    // 3. Get all group members
+    const members = await this.getGroupMembers(groupId);
+    
+    // 4. Deliver to all online members
+    for (const memberId of members) {
+      if (memberId !== senderId) {
+        await redis.publish(
+          `user:${memberId}:messages`,
+          JSON.stringify({
+            type: 'group_message',
+            groupId,
+            messageId,
+            senderId,
+            content,
+            timestamp: Date.now()
+          })
+        );
+      }
+    }
+    
+    return messageId;
+  }
+  
+  async getGroupMembers(groupId) {
+    const result = await mysql.query(
+      'SELECT user_id FROM group_members WHERE group_id = ?',
+      [groupId]
+    );
+    return result.map(r => r.user_id);
+  }
+}
+```
+
+## Message Delivery Guarantees
+
+```javascript
+class MessageDeliveryTracker {
+  async trackDelivery(messageId, userId) {
+    // Update delivery status
+    await cassandra.execute(
+      `UPDATE messages SET delivered_at = ? WHERE conversation_id = ? AND message_id = ?`,
+      [new Date(), conversationId, messageId]
+    );
+    
+    // Notify sender
+    await redis.publish(
+      `user:${senderId}:receipts`,
+      JSON.stringify({
+        type: 'delivered',
+        messageId,
+        deliveredTo: userId,
+        timestamp: Date.now()
+      })
+    );
+  }
+  
+  async trackRead(messageId, userId) {
+    // Update read status
+    await cassandra.execute(
+      `UPDATE messages SET read_at = ? WHERE conversation_id = ? AND message_id = ?`,
+      [new Date(), conversationId, messageId]
+    );
+    
+    // Notify sender
+    await redis.publish(
+      `user:${senderId}:receipts`,
+      JSON.stringify({
+        type: 'read',
+        messageId,
+        readBy: userId,
+        timestamp: Date.now()
+      })
+    );
+  }
+}
+```
+
+## File Sharing
+
+```javascript
+class FileService {
+  async uploadFile(userId, file) {
+    const fileId = generateUUID();
+    const key = `files/${userId}/${fileId}/${file.name}`;
+    
+    // Upload to S3
+    await s3.putObject({
+      Bucket: 'chat-files',
+      Key: key,
+      Body: file.buffer,
+      ContentType: file.mimetype
+    }).promise();
+    
+    // Generate presigned URL (expires in 7 days)
+    const url = await s3.getSignedUrlPromise('getObject', {
+      Bucket: 'chat-files',
+      Key: key,
+      Expires: 604800
+    });
+    
+    return {
+      fileId,
+      url,
+      name: file.name,
+      size: file.size,
+      type: file.mimetype
+    };
+  }
+}
+```
+
+## Presence System
+
+```javascript
+class PresenceService {
+  async updatePresence(userId, status) {
+    await redis.setEx(
+      `presence:${userId}`,
+      300, // 5 minutes
+      JSON.stringify({
+        status,
+        lastSeen: Date.now()
+      })
+    );
+  }
+  
+  async getPresence(userId) {
+    const data = await redis.get(`presence:${userId}`);
+    
+    if (!data) {
+      return { status: 'offline', lastSeen: null };
+    }
+    
+    return JSON.parse(data);
+  }
+  
+  async getBulkPresence(userIds) {
+    const pipeline = redis.pipeline();
+    
+    userIds.forEach(userId => {
+      pipeline.get(`presence:${userId}`);
+    });
+    
+    const results = await pipeline.exec();
+    
+    return userIds.map((userId, index) => ({
+      userId,
+      ...JSON.parse(results[index][1] || '{"status":"offline"}')
+    }));
+  }
+  
+  // Heartbeat to keep presence alive
+  startHeartbeat(userId) {
+    setInterval(async () => {
+      await this.updatePresence(userId, 'online');
+    }, 60000); // Every minute
+  }
+}
+```
+
+## .NET Implementation
+
+```csharp
+public class ChatService
+{
+    private readonly ICassandraSession _cassandra;
+    private readonly IConnectionMultiplexer _redis;
+    private readonly IKafkaProducer _kafka;
+    
+    public async Task SendMessageAsync(long senderId, long receiverId, string content)
+    {
+        var messageId = TimeUuid.NewId();
+        var conversationId = GetConversationId(senderId, receiverId);
+        
+        // Publish to Kafka
+        await _kafka.ProduceAsync("messages", new
+        {
+            MessageId = messageId,
+            SenderId = senderId,
+            ReceiverId = receiverId,
+            ConversationId = conversationId,
+            Content = content,
+            Timestamp = DateTime.UtcNow
+        });
+    }
+    
+    public async Task<List<Message>> GetMessagesAsync(
+        Guid conversationId,
+        int limit = 50)
+    {
+        var statement = new SimpleStatement(
+            "SELECT * FROM messages WHERE conversation_id = ? LIMIT ?",
+            conversationId, limit
+        );
+        
+        var result = await _cassandra.ExecuteAsync(statement);
+        
+        return result.Select(row => new Message
+        {
+            MessageId = row.GetValue<TimeUuid>("message_id"),
+            SenderId = row.GetValue<long>("sender_id"),
+            Content = row.GetValue<string>("content"),
+            CreatedAt = row.GetValue<DateTime>("created_at")
+        }).ToList();
+    }
+}
+```
+
+## Scaling Considerations
+
+**WebSocket Servers:**
+- Stateful (maintain connections)
+- Use consistent hashing to route users to same server
+- Redis pub/sub for cross-server messaging
+
+**Message Storage:**
+- Cassandra for horizontal scaling
+- Partition by conversation_id
+- Time-series data model
+
+**Presence:**
+- Redis for fast reads/writes
+- TTL for automatic cleanup
+- Heartbeat mechanism
+
+## Interview Tips
+
+- **Start with requirements** - Real-time, scale, delivery guarantees
+- **Design WebSocket layer** - Connection management
+- **Show message flow** - Send, store, deliver
+- **Implement presence** - Redis with TTL
+- **Discuss group chat** - Fan-out to members
+- **Address scaling** - Sharding, pub/sub
+
+## Summary
+
+Chat system requires real-time bidirectional communication using WebSockets. Manage 50M concurrent connections with multiple WebSocket servers. Use Kafka for message processing pipeline. Store messages in Cassandra (time-series, scalable). Implement presence with Redis (TTL-based). Support one-on-one and group chat. Track delivery and read receipts. Store files in S3 with presigned URLs. Use Redis pub/sub for cross-server messaging. Shard by conversation_id. Handle 70K messages/second at peak. Essential pattern for real-time communication systems.

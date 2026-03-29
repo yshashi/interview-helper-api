@@ -1,0 +1,390 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: GitLab CI/CD
+---
+
+# GitLab CI/CD
+
+## What is GitLab CI/CD?
+
+**GitLab CI/CD** is a built-in continuous integration and deployment tool in GitLab that automates the software development lifecycle.
+
+## Basic Pipeline
+
+```yaml
+# .gitlab-ci.yml
+stages:
+  - build
+  - test
+  - deploy
+
+variables:
+  NODE_VERSION: "18"
+
+build:
+  stage: build
+  image: node:18
+  script:
+    - npm ci
+    - npm run build
+  artifacts:
+    paths:
+      - dist/
+    expire_in: 1 hour
+
+test:
+  stage: test
+  image: node:18
+  script:
+    - npm ci
+    - npm test
+  coverage: '/Coverage: \d+\.\d+%/'
+
+deploy:
+  stage: deploy
+  image: alpine:latest
+  script:
+    - apk add --no-cache curl
+    - ./deploy.sh
+  only:
+    - main
+```
+
+## Multi-Stack Pipeline
+
+```yaml
+stages:
+  - build
+  - test
+  - deploy
+
+# Angular Frontend
+angular-build:
+  stage: build
+  image: node:18
+  script:
+    - cd frontend
+    - npm ci
+    - ng lint
+    - ng test --watch=false --code-coverage
+    - ng build --configuration production
+  artifacts:
+    paths:
+      - frontend/dist/
+  only:
+    - main
+    - develop
+
+# .NET API
+dotnet-build:
+  stage: build
+  image: mcr.microsoft.com/dotnet/sdk:8.0
+  script:
+    - cd api
+    - dotnet restore
+    - dotnet build -c Release
+    - dotnet test -c Release
+    - dotnet publish -c Release -o ./publish
+  artifacts:
+    paths:
+      - api/publish/
+  only:
+    - main
+    - develop
+
+# Node.js Service
+nodejs-build:
+  stage: build
+  image: node:18
+  services:
+    - postgres:15
+    - mongo:6
+    - redis:7
+  variables:
+    POSTGRES_PASSWORD: postgres
+    DATABASE_URL: postgresql://postgres:postgres@postgres:5432/test
+    MONGODB_URL: mongodb://mongo:27017/test
+    REDIS_URL: redis://redis:6379
+  script:
+    - cd service
+    - npm ci
+    - npm run migrate
+    - npm test
+    - npm run build
+  artifacts:
+    paths:
+      - service/dist/
+
+# Deploy to Staging
+deploy-staging:
+  stage: deploy
+  image: alpine:latest
+  script:
+    - apk add --no-cache curl kubectl
+    - kubectl config use-context staging
+    - kubectl apply -f k8s/staging/
+  environment:
+    name: staging
+    url: https://staging.example.com
+  only:
+    - develop
+
+# Deploy to Production
+deploy-production:
+  stage: deploy
+  image: alpine:latest
+  script:
+    - apk add --no-cache curl kubectl
+    - kubectl config use-context production
+    - kubectl apply -f k8s/production/
+  environment:
+    name: production
+    url: https://example.com
+  when: manual
+  only:
+    - main
+```
+
+## Docker Build
+
+```yaml
+docker-build:
+  stage: build
+  image: docker:latest
+  services:
+    - docker:dind
+  variables:
+    DOCKER_DRIVER: overlay2
+  script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA .
+    - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+    - docker tag $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA $CI_REGISTRY_IMAGE:latest
+    - docker push $CI_REGISTRY_IMAGE:latest
+```
+
+## Parallel Jobs
+
+```yaml
+test:
+  stage: test
+  parallel:
+    matrix:
+      - NODE_VERSION: ["16", "18", "20"]
+        OS: ["ubuntu-latest", "windows-latest"]
+  image: node:${NODE_VERSION}
+  script:
+    - npm ci
+    - npm test
+```
+
+## Caching
+
+```yaml
+build:
+  stage: build
+  image: node:18
+  cache:
+    key:
+      files:
+        - package-lock.json
+    paths:
+      - node_modules/
+  script:
+    - npm ci
+    - npm run build
+```
+
+## Artifacts
+
+```yaml
+build:
+  stage: build
+  script:
+    - npm run build
+  artifacts:
+    name: "$CI_JOB_NAME-$CI_COMMIT_REF_NAME"
+    paths:
+      - dist/
+    expire_in: 1 week
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage/cobertura-coverage.xml
+```
+
+## Environment Variables
+
+```yaml
+deploy:
+  stage: deploy
+  script:
+    - echo "Deploying to $ENVIRONMENT"
+    - ./deploy.sh
+  variables:
+    ENVIRONMENT: production
+    API_URL: https://api.example.com
+  only:
+    - main
+```
+
+## Conditional Execution
+
+```yaml
+# Run only on main branch
+deploy-production:
+  script:
+    - ./deploy.sh
+  only:
+    - main
+
+# Run on all branches except main
+test:
+  script:
+    - npm test
+  except:
+    - main
+
+# Run only on tags
+release:
+  script:
+    - ./release.sh
+  only:
+    - tags
+
+# Run only on merge requests
+lint:
+  script:
+    - npm run lint
+  only:
+    - merge_requests
+```
+
+## GitLab Runner
+
+```yaml
+# .gitlab-ci.yml with specific runner
+build:
+  tags:
+    - docker
+    - linux
+  script:
+    - npm run build
+```
+
+```bash
+# Register GitLab Runner
+gitlab-runner register \
+  --url https://gitlab.com/ \
+  --registration-token $REGISTRATION_TOKEN \
+  --executor docker \
+  --docker-image alpine:latest \
+  --description "Docker Runner"
+```
+
+## Auto DevOps
+
+```yaml
+# Enable Auto DevOps
+include:
+  - template: Auto-DevOps.gitlab-ci.yml
+
+variables:
+  POSTGRES_ENABLED: "true"
+  POSTGRES_VERSION: "15"
+```
+
+## Security Scanning
+
+```yaml
+include:
+  - template: Security/SAST.gitlab-ci.yml
+  - template: Security/Dependency-Scanning.gitlab-ci.yml
+  - template: Security/Container-Scanning.gitlab-ci.yml
+
+sast:
+  stage: test
+
+dependency_scanning:
+  stage: test
+
+container_scanning:
+  stage: test
+  variables:
+    CI_APPLICATION_REPOSITORY: $CI_REGISTRY_IMAGE
+    CI_APPLICATION_TAG: $CI_COMMIT_SHA
+```
+
+## Review Apps
+
+```yaml
+review:
+  stage: deploy
+  script:
+    - kubectl create namespace review-$CI_COMMIT_REF_SLUG
+    - kubectl apply -f k8s/ -n review-$CI_COMMIT_REF_SLUG
+  environment:
+    name: review/$CI_COMMIT_REF_NAME
+    url: https://review-$CI_COMMIT_REF_SLUG.example.com
+    on_stop: stop_review
+  only:
+    - merge_requests
+
+stop_review:
+  stage: deploy
+  script:
+    - kubectl delete namespace review-$CI_COMMIT_REF_SLUG
+  environment:
+    name: review/$CI_COMMIT_REF_NAME
+    action: stop
+  when: manual
+  only:
+    - merge_requests
+```
+
+## Scheduled Pipelines
+
+```yaml
+nightly-build:
+  script:
+    - npm run build
+    - npm run test:e2e
+  only:
+    - schedules
+```
+
+## Notifications
+
+```yaml
+notify:
+  stage: .post
+  script:
+    - |
+      curl -X POST $SLACK_WEBHOOK \
+        -d "{\"text\":\"Pipeline $CI_PIPELINE_STATUS for $CI_PROJECT_NAME\"}"
+  when: always
+```
+
+## Multi-Project Pipelines
+
+```yaml
+trigger-downstream:
+  stage: deploy
+  trigger:
+    project: group/downstream-project
+    branch: main
+    strategy: depend
+```
+
+## Interview Tips
+
+- **Explain GitLab CI/CD**: Built-in CI/CD platform
+- **Show pipeline**: Multi-stage configuration
+- **Demonstrate multi-stack**: Angular, .NET, Node.js
+- **Discuss runners**: Executor types
+- **Mention artifacts**: Build outputs
+- **Show environments**: Staging, production
+
+## Summary
+
+GitLab CI/CD provides integrated continuous integration and deployment. Define pipelines in .gitlab-ci.yml with stages for build, test, and deploy. Support multi-stack applications with parallel jobs. Use caching for speed. Implement security scanning. Deploy to multiple environments. Essential for GitLab-based development workflows.

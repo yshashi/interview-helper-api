@@ -1,0 +1,266 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: WebSockets in Node.js
+---
+
+# WebSockets in Node.js
+
+## What are WebSockets?
+
+**WebSockets** provide full-duplex communication channels over a single TCP connection, enabling real-time bidirectional data transfer between client and server.
+
+## Using ws Library
+
+```bash
+npm install ws
+```
+
+### Basic Server
+
+```javascript
+const WebSocket = require('ws');
+
+const wss = new WebSocket.Server({ port: 8080 });
+
+wss.on('connection', (ws) => {
+  console.log('Client connected');
+  
+  ws.on('message', (message) => {
+    console.log('Received:', message);
+    ws.send(`Echo: ${message}`);
+  });
+  
+  ws.on('close', () => {
+    console.log('Client disconnected');
+  });
+  
+  ws.send('Welcome to WebSocket server');
+});
+```
+
+### Basic Client
+
+```javascript
+const WebSocket = require('ws');
+
+const ws = new WebSocket('ws://localhost:8080');
+
+ws.on('open', () => {
+  console.log('Connected');
+  ws.send('Hello Server');
+});
+
+ws.on('message', (data) => {
+  console.log('Received:', data);
+});
+
+ws.on('close', () => {
+  console.log('Disconnected');
+});
+```
+
+## Socket.IO
+
+```bash
+npm install socket.io
+```
+
+### Server
+
+```javascript
+const express = require('express');
+const http = require('http');
+const socketIO = require('socket.io');
+
+const app = express();
+const server = http.createServer(app);
+const io = socketIO(server);
+
+io.on('connection', (socket) => {
+  console.log('User connected:', socket.id);
+  
+  socket.on('message', (data) => {
+    console.log('Message:', data);
+    
+    // Send to sender
+    socket.emit('message', data);
+    
+    // Broadcast to all except sender
+    socket.broadcast.emit('message', data);
+    
+    // Send to all including sender
+    io.emit('message', data);
+  });
+  
+  socket.on('disconnect', () => {
+    console.log('User disconnected:', socket.id);
+  });
+});
+
+server.listen(3000);
+```
+
+### Client
+
+```html
+<script src="/socket.io/socket.io.js"></script>
+<script>
+  const socket = io('http://localhost:3000');
+  
+  socket.on('connect', () => {
+    console.log('Connected');
+  });
+  
+  socket.on('message', (data) => {
+    console.log('Message:', data);
+  });
+  
+  socket.emit('message', 'Hello Server');
+</script>
+```
+
+## Chat Application
+
+```javascript
+const io = require('socket.io')(server);
+
+const users = new Map();
+
+io.on('connection', (socket) => {
+  // User joins
+  socket.on('join', (username) => {
+    users.set(socket.id, username);
+    socket.broadcast.emit('user-joined', username);
+    io.emit('users', Array.from(users.values()));
+  });
+  
+  // New message
+  socket.on('message', (message) => {
+    const username = users.get(socket.id);
+    io.emit('message', {
+      username,
+      message,
+      timestamp: new Date()
+    });
+  });
+  
+  // User disconnects
+  socket.on('disconnect', () => {
+    const username = users.get(socket.id);
+    users.delete(socket.id);
+    socket.broadcast.emit('user-left', username);
+    io.emit('users', Array.from(users.values()));
+  });
+});
+```
+
+## Rooms and Namespaces
+
+```javascript
+// Rooms
+io.on('connection', (socket) => {
+  // Join room
+  socket.join('room1');
+  
+  // Send to room
+  io.to('room1').emit('message', 'Hello room');
+  
+  // Leave room
+  socket.leave('room1');
+});
+
+// Namespaces
+const chat = io.of('/chat');
+const news = io.of('/news');
+
+chat.on('connection', (socket) => {
+  socket.emit('message', 'Welcome to chat');
+});
+
+news.on('connection', (socket) => {
+  socket.emit('news', 'Latest news');
+});
+```
+
+## Authentication
+
+```javascript
+io.use((socket, next) => {
+  const token = socket.handshake.auth.token;
+  
+  if (isValidToken(token)) {
+    socket.userId = getUserIdFromToken(token);
+    next();
+  } else {
+    next(new Error('Authentication error'));
+  }
+});
+
+io.on('connection', (socket) => {
+  console.log('Authenticated user:', socket.userId);
+});
+```
+
+## Broadcasting
+
+```javascript
+io.on('connection', (socket) => {
+  // To sender only
+  socket.emit('message', 'Just to you');
+  
+  // To all except sender
+  socket.broadcast.emit('message', 'To everyone else');
+  
+  // To all including sender
+  io.emit('message', 'To everyone');
+  
+  // To specific room
+  io.to('room1').emit('message', 'To room1');
+  
+  // To multiple rooms
+  io.to('room1').to('room2').emit('message', 'To both rooms');
+});
+```
+
+## Real-Time Dashboard
+
+```javascript
+// Server
+const io = require('socket.io')(server);
+
+setInterval(() => {
+  const stats = {
+    cpu: getCPUUsage(),
+    memory: getMemoryUsage(),
+    requests: getRequestCount()
+  };
+  
+  io.emit('stats', stats);
+}, 1000);
+
+// Client
+socket.on('stats', (stats) => {
+  updateDashboard(stats);
+});
+```
+
+## Best Practices
+
+1. **Use namespaces** for organization
+2. **Implement authentication**
+3. **Handle reconnection**
+4. **Limit message size**
+5. **Use rooms** for targeted messages
+6. **Implement rate limiting**
+
+## Interview Tips
+
+- **Explain WebSockets**: Full-duplex communication
+- **Show Socket.IO**: Popular library features
+- **Demonstrate rooms**: Targeted messaging
+- **Discuss authentication**: Secure connections
+- **Mention use cases**: Chat, real-time updates
+
+## Summary
+
+WebSockets enable real-time bidirectional communication. Use ws for basic WebSockets, Socket.IO for advanced features. Implement rooms for targeted messaging, namespaces for organization, and authentication for security. Ideal for chat, live updates, and collaborative applications.

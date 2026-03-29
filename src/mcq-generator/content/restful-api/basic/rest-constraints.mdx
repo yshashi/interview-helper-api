@@ -1,0 +1,274 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: REST Constraints
+---
+
+# REST Constraints
+
+## Six REST Constraints
+
+REST architecture is defined by six constraints that must be satisfied for an API to be considered RESTful.
+
+## 1. Client-Server Architecture
+
+Separation of concerns between client and server.
+
+```
+┌──────────┐                    ┌──────────┐
+│  Client  │ ←── HTTP/HTTPS ──→ │  Server  │
+│   (UI)   │                    │  (API)   │
+└──────────┘                    └──────────┘
+```
+
+```javascript
+// Server (Node.js)
+const express = require('express');
+const app = express();
+
+app.get('/api/users', async (req, res) => {
+  const users = await User.find();
+  res.json(users);
+});
+
+app.listen(3000);
+```
+
+```typescript
+// Client (Angular)
+@Injectable()
+export class UserService {
+  constructor(private http: HttpClient) {}
+  
+  getUsers(): Observable<User[]> {
+    return this.http.get<User[]>('http://localhost:3000/api/users');
+  }
+}
+```
+
+## 2. Stateless
+
+Each request contains all information needed to process it.
+
+```javascript
+// ✅ Stateless - Token in each request
+app.get('/api/profile', (req, res) => {
+  const token = req.headers.authorization;
+  const user = verifyToken(token);
+  res.json(user);
+});
+
+// ❌ Stateful - Server stores session
+app.get('/api/profile', (req, res) => {
+  const user = sessions[req.sessionId]; // Server-side state
+  res.json(user);
+});
+```
+
+```csharp
+// .NET - Stateless with JWT
+[Authorize]
+[HttpGet("profile")]
+public async Task<ActionResult<User>> GetProfile()
+{
+    var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+    var user = await _context.Users.FindAsync(userId);
+    return Ok(user);
+}
+```
+
+## 3. Cacheable
+
+Responses must define themselves as cacheable or non-cacheable.
+
+```javascript
+// Node.js - Cacheable response
+app.get('/api/users/:id', async (req, res) => {
+  const user = await User.findById(req.params.id);
+  
+  // Set cache headers
+  res.set('Cache-Control', 'public, max-age=300'); // 5 minutes
+  res.set('ETag', generateETag(user));
+  
+  res.json(user);
+});
+
+// Handle conditional requests
+app.get('/api/users/:id', async (req, res) => {
+  const user = await User.findById(req.params.id);
+  const etag = generateETag(user);
+  
+  if (req.headers['if-none-match'] === etag) {
+    return res.status(304).send(); // Not Modified
+  }
+  
+  res.set('ETag', etag);
+  res.json(user);
+});
+```
+
+```csharp
+// .NET - Response caching
+[HttpGet("{id}")]
+[ResponseCache(Duration = 300, Location = ResponseCacheLocation.Any)]
+public async Task<ActionResult<User>> GetUser(int id)
+{
+    var user = await _context.Users.FindAsync(id);
+    return Ok(user);
+}
+```
+
+## 4. Uniform Interface
+
+Consistent way to interact with resources.
+
+### 4a. Resource Identification
+
+```javascript
+// Resources identified by URIs
+GET    /api/users/123
+POST   /api/users
+PUT    /api/users/123
+DELETE /api/users/123
+```
+
+### 4b. Resource Manipulation through Representations
+
+```javascript
+// JSON representation
+{
+  "id": "123",
+  "name": "John Doe",
+  "email": "john@example.com"
+}
+
+// Client can manipulate resource using this representation
+PUT /api/users/123
+{
+  "name": "Jane Doe",
+  "email": "jane@example.com"
+}
+```
+
+### 4c. Self-Descriptive Messages
+
+```javascript
+// Request
+GET /api/users/123
+Accept: application/json
+Authorization: Bearer token123
+
+// Response
+HTTP/1.1 200 OK
+Content-Type: application/json
+Cache-Control: max-age=300
+
+{
+  "id": "123",
+  "name": "John Doe"
+}
+```
+
+### 4d. HATEOAS
+
+```javascript
+// Hypermedia as the Engine of Application State
+{
+  "id": "123",
+  "name": "John Doe",
+  "links": {
+    "self": "/api/users/123",
+    "orders": "/api/users/123/orders",
+    "update": "/api/users/123",
+    "delete": "/api/users/123"
+  }
+}
+```
+
+## 5. Layered System
+
+Client doesn't know if connected directly to server or intermediary.
+
+```
+┌────────┐     ┌─────────┐     ┌───────────┐     ┌────────┐
+│ Client │ ──→ │ Gateway │ ──→ │ Load      │ ──→ │ Server │
+└────────┘     └─────────┘     │ Balancer  │     └────────┘
+                                └───────────┘
+                                      ↓
+                                ┌─────────┐
+                                │  Cache  │
+                                └─────────┘
+```
+
+```javascript
+// Client doesn't know about layers
+fetch('https://api.example.com/users')
+  .then(res => res.json())
+  .then(users => console.log(users));
+
+// Could go through:
+// - API Gateway
+// - Load Balancer
+// - Cache Layer
+// - Application Server
+```
+
+## 6. Code on Demand (Optional)
+
+Server can send executable code to client.
+
+```javascript
+// Server sends JavaScript
+app.get('/api/widget', (req, res) => {
+  res.json({
+    data: { ... },
+    script: `
+      function renderWidget(data) {
+        // Client executes this code
+        document.getElementById('widget').innerHTML = data.html;
+      }
+    `
+  });
+});
+```
+
+## Constraint Benefits
+
+```javascript
+// Client-Server: Independent evolution
+// Client can update UI without changing API
+// Server can change implementation without affecting clients
+
+// Stateless: Scalability
+// No session state = easy horizontal scaling
+// Any server can handle any request
+
+// Cacheable: Performance
+// Reduced server load
+// Faster response times
+
+// Uniform Interface: Simplicity
+// Consistent patterns
+// Easy to understand and use
+
+// Layered System: Flexibility
+// Add caching layer
+// Add security layer
+// Add load balancing
+
+// Code on Demand: Extensibility
+// Dynamic functionality
+// Reduce client complexity
+```
+
+## Interview Tips
+
+- **Explain six constraints**: Client-server, stateless, cacheable, uniform interface, layered, code on demand
+- **Show stateless**: Token in every request
+- **Demonstrate caching**: Cache headers, ETags
+- **Discuss uniform interface**: URIs, HTTP methods, HATEOAS
+- **Mention benefits**: Scalability, performance, simplicity
+- **Show examples**: Node.js, .NET implementations
+
+## Summary
+
+REST defines six architectural constraints: client-server separation, stateless communication, cacheable responses, uniform interface, layered system, and optional code on demand. These constraints ensure scalability, reliability, and performance. Stateless enables horizontal scaling. Caching improves performance. Uniform interface provides consistency. Essential for RESTful API design.

@@ -1,0 +1,69 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Compiled Queries in EF Core
+---
+
+# Compiled Queries in EF Core
+
+## What are Compiled Queries?
+
+**Compiled queries** are pre-compiled LINQ queries that improve performance by caching the query translation. They're useful for frequently executed queries.
+
+## Basic Usage
+
+```csharp
+private static readonly Func<ApplicationDbContext, int, IEnumerable<Product>> _getProductsByCategory =
+    EF.CompileQuery((ApplicationDbContext context, int categoryId) =>
+        context.Products.Where(p => p.CategoryId == categoryId));
+
+// Usage
+var products = _getProductsByCategory(context, 5).ToList();
+```
+
+## Async Compiled Queries
+
+```csharp
+private static readonly Func<ApplicationDbContext, int, IAsyncEnumerable<Product>> _getProductsByCategoryAsync =
+    EF.CompileAsyncQuery((ApplicationDbContext context, int categoryId) =>
+        context.Products.Where(p => p.CategoryId == categoryId));
+
+// Usage
+await foreach (var product in _getProductsByCategoryAsync(context, 5))
+{
+    Console.WriteLine(product.Name);
+}
+```
+
+## Multiple Parameters
+
+```csharp
+private static readonly Func<ApplicationDbContext, int, decimal, IEnumerable<Product>> _getProducts =
+    EF.CompileQuery((ApplicationDbContext context, int categoryId, decimal minPrice) =>
+        context.Products
+            .Where(p => p.CategoryId == categoryId && p.Price >= minPrice)
+            .OrderBy(p => p.Name));
+```
+
+## With Includes
+
+```csharp
+private static readonly Func<ApplicationDbContext, int, Product> _getProductWithCategory =
+    EF.CompileQuery((ApplicationDbContext context, int productId) =>
+        context.Products
+            .Include(p => p.Category)
+            .FirstOrDefault(p => p.Id == productId));
+```
+
+## Performance Benefits
+
+```csharp
+// First call: Compiles and caches
+var products1 = _getProductsByCategory(context, 5);
+
+// Subsequent calls: Uses cached compilation
+var products2 = _getProductsByCategory(context, 10); // Faster
+```
+
+## Summary
+
+Compiled queries in EF Core cache query translation for better performance. Use EF.CompileQuery for sync and EF.CompileAsyncQuery for async queries. Best for frequently executed queries.

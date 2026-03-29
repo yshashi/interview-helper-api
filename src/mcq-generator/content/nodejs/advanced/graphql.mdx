@@ -1,0 +1,329 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: GraphQL in Node.js
+---
+
+# GraphQL in Node.js
+
+## What is GraphQL?
+
+**GraphQL** is a query language for APIs that allows clients to request exactly the data they need. It provides a complete description of the data in your API.
+
+## Installation
+
+```bash
+npm install apollo-server graphql
+```
+
+## Basic Server
+
+```javascript
+const { ApolloServer, gql } = require('apollo-server');
+
+// Type definitions
+const typeDefs = gql`
+  type User {
+    id: ID!
+    name: String!
+    email: String!
+    posts: [Post!]!
+  }
+  
+  type Post {
+    id: ID!
+    title: String!
+    content: String!
+    author: User!
+  }
+  
+  type Query {
+    users: [User!]!
+    user(id: ID!): User
+    posts: [Post!]!
+    post(id: ID!): Post
+  }
+  
+  type Mutation {
+    createUser(name: String!, email: String!): User!
+    createPost(title: String!, content: String!, authorId: ID!): Post!
+  }
+`;
+
+// Resolvers
+const resolvers = {
+  Query: {
+    users: () => users,
+    user: (_, { id }) => users.find(u => u.id === id),
+    posts: () => posts,
+    post: (_, { id }) => posts.find(p => p.id === id)
+  },
+  
+  Mutation: {
+    createUser: (_, { name, email }) => {
+      const user = { id: String(users.length + 1), name, email };
+      users.push(user);
+      return user;
+    },
+    
+    createPost: (_, { title, content, authorId }) => {
+      const post = {
+        id: String(posts.length + 1),
+        title,
+        content,
+        authorId
+      };
+      posts.push(post);
+      return post;
+    }
+  },
+  
+  User: {
+    posts: (user) => posts.filter(p => p.authorId === user.id)
+  },
+  
+  Post: {
+    author: (post) => users.find(u => u.id === post.authorId)
+  }
+};
+
+const server = new ApolloServer({ typeDefs, resolvers });
+
+server.listen().then(({ url }) => {
+  console.log(`Server ready at ${url}`);
+});
+```
+
+## Queries
+
+```graphql
+# Get all users
+query {
+  users {
+    id
+    name
+    email
+  }
+}
+
+# Get user with posts
+query {
+  user(id: "1") {
+    name
+    posts {
+      title
+      content
+    }
+  }
+}
+
+# Get posts with authors
+query {
+  posts {
+    title
+    author {
+      name
+      email
+    }
+  }
+}
+```
+
+## Mutations
+
+```graphql
+# Create user
+mutation {
+  createUser(name: "John Doe", email: "john@example.com") {
+    id
+    name
+    email
+  }
+}
+
+# Create post
+mutation {
+  createPost(
+    title: "GraphQL Tutorial"
+    content: "Learn GraphQL"
+    authorId: "1"
+  ) {
+    id
+    title
+    author {
+      name
+    }
+  }
+}
+```
+
+## With Express
+
+```javascript
+const express = require('express');
+const { ApolloServer } = require('apollo-server-express');
+
+const app = express();
+
+const server = new ApolloServer({ typeDefs, resolvers });
+
+await server.start();
+server.applyMiddleware({ app });
+
+app.listen(4000, () => {
+  console.log(`Server ready at http://localhost:4000${server.graphqlPath}`);
+});
+```
+
+## Database Integration
+
+```javascript
+const resolvers = {
+  Query: {
+    users: async () => {
+      return await User.find();
+    },
+    
+    user: async (_, { id }) => {
+      return await User.findById(id);
+    }
+  },
+  
+  Mutation: {
+    createUser: async (_, { name, email }) => {
+      const user = new User({ name, email });
+      await user.save();
+      return user;
+    },
+    
+    updateUser: async (_, { id, name, email }) => {
+      return await User.findByIdAndUpdate(
+        id,
+        { name, email },
+        { new: true }
+      );
+    },
+    
+    deleteUser: async (_, { id }) => {
+      await User.findByIdAndDelete(id);
+      return true;
+    }
+  },
+  
+  User: {
+    posts: async (user) => {
+      return await Post.find({ authorId: user.id });
+    }
+  }
+};
+```
+
+## Authentication
+
+```javascript
+const server = new ApolloServer({
+  typeDefs,
+  resolvers,
+  context: ({ req }) => {
+    const token = req.headers.authorization || '';
+    const user = getUserFromToken(token);
+    return { user };
+  }
+});
+
+// In resolvers
+const resolvers = {
+  Query: {
+    me: (_, __, { user }) => {
+      if (!user) throw new Error('Not authenticated');
+      return user;
+    }
+  },
+  
+  Mutation: {
+    createPost: (_, { title, content }, { user }) => {
+      if (!user) throw new Error('Not authenticated');
+      return Post.create({ title, content, authorId: user.id });
+    }
+  }
+};
+```
+
+## DataLoader (N+1 Problem)
+
+```javascript
+const DataLoader = require('dataloader');
+
+const userLoader = new DataLoader(async (userIds) => {
+  const users = await User.find({ _id: { $in: userIds } });
+  return userIds.map(id => users.find(u => u.id === id));
+});
+
+const resolvers = {
+  Post: {
+    author: (post, _, { loaders }) => {
+      return loaders.user.load(post.authorId);
+    }
+  }
+};
+
+const server = new ApolloServer({
+  typeDefs,
+  resolvers,
+  context: () => ({
+    loaders: {
+      user: userLoader
+    }
+  })
+});
+```
+
+## Subscriptions
+
+```javascript
+const { PubSub } = require('graphql-subscriptions');
+const pubsub = new PubSub();
+
+const typeDefs = gql`
+  type Subscription {
+    postAdded: Post!
+  }
+`;
+
+const resolvers = {
+  Mutation: {
+    createPost: async (_, { title, content }) => {
+      const post = await Post.create({ title, content });
+      pubsub.publish('POST_ADDED', { postAdded: post });
+      return post;
+    }
+  },
+  
+  Subscription: {
+    postAdded: {
+      subscribe: () => pubsub.asyncIterator(['POST_ADDED'])
+    }
+  }
+};
+```
+
+## Best Practices
+
+1. **Use DataLoader** to prevent N+1 queries
+2. **Implement authentication** in context
+3. **Validate inputs**
+4. **Limit query depth**
+5. **Use subscriptions** for real-time
+6. **Cache responses**
+
+## Interview Tips
+
+- **Explain GraphQL**: Query language for APIs
+- **Show schema**: Type definitions and resolvers
+- **Demonstrate queries**: Flexible data fetching
+- **Discuss mutations**: Data modifications
+- **Mention DataLoader**: Solve N+1 problem
+- **Show subscriptions**: Real-time updates
+
+## Summary
+
+GraphQL is a query language allowing clients to request specific data. Define schema with type definitions, implement resolvers for data fetching. Use DataLoader to prevent N+1 queries, context for authentication, subscriptions for real-time updates.

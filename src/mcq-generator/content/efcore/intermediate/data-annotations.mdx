@@ -1,0 +1,185 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Data Annotations in EF Core
+---
+
+# Data Annotations in EF Core
+
+## What are Data Annotations?
+
+**Data Annotations** are attributes applied to entity classes and properties to configure entity mappings and validation rules. They provide a simpler alternative to Fluent API for basic configurations.
+
+## Common Data Annotations
+
+### Key Attributes
+
+```csharp
+using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
+
+public class Product
+{
+    [Key]
+    public int Id { get; set; }
+    
+    [Required]
+    [MaxLength(200)]
+    public string Name { get; set; }
+    
+    [Column(TypeName = "decimal(18,2)")]
+    public decimal Price { get; set; }
+    
+    [StringLength(1000)]
+    public string Description { get; set; }
+}
+```
+
+### Table and Column Mapping
+
+```csharp
+[Table("Products", Schema = "dbo")]
+public class Product
+{
+    [Column("ProductId")]
+    public int Id { get; set; }
+    
+    [Column("ProductName", Order = 1)]
+    public string Name { get; set; }
+}
+```
+
+### Relationships
+
+```csharp
+public class Post
+{
+    public int Id { get; set; }
+    public string Title { get; set; }
+    
+    [ForeignKey("Blog")]
+    public int BlogId { get; set; }
+    
+    public Blog Blog { get; set; }
+}
+
+public class Blog
+{
+    public int Id { get; set; }
+    public string Name { get; set; }
+    
+    [InverseProperty("Blog")]
+    public ICollection<Post> Posts { get; set; }
+}
+```
+
+### Validation Attributes
+
+```csharp
+public class User
+{
+    [Required]
+    [EmailAddress]
+    public string Email { get; set; }
+    
+    [Range(18, 100)]
+    public int Age { get; set; }
+    
+    [RegularExpression(@"^[a-zA-Z0-9]*$")]
+    public string Username { get; set; }
+    
+    [Url]
+    public string Website { get; set; }
+    
+    [Phone]
+    public string PhoneNumber { get; set; }
+}
+```
+
+### Index Attributes
+
+```csharp
+[Index(nameof(Email), IsUnique = true)]
+[Index(nameof(LastName), nameof(FirstName))]
+public class User
+{
+    public int Id { get; set; }
+    public string Email { get; set; }
+    public string FirstName { get; set; }
+    public string LastName { get; set; }
+}
+```
+
+### Composite Keys
+
+```csharp
+public class OrderItem
+{
+    [Key]
+    [Column(Order = 0)]
+    public int OrderId { get; set; }
+    
+    [Key]
+    [Column(Order = 1)]
+    public int ProductId { get; set; }
+    
+    public int Quantity { get; set; }
+}
+```
+
+### Not Mapped
+
+```csharp
+public class Product
+{
+    public int Id { get; set; }
+    public string Name { get; set; }
+    public decimal Price { get; set; }
+    
+    [NotMapped]
+    public decimal DiscountedPrice => Price * 0.9m;
+}
+```
+
+### Timestamp/Concurrency
+
+```csharp
+public class Product
+{
+    public int Id { get; set; }
+    public string Name { get; set; }
+    
+    [Timestamp]
+    public byte[] RowVersion { get; set; }
+    
+    [ConcurrencyCheck]
+    public decimal Price { get; set; }
+}
+```
+
+## Data Annotations vs Fluent API
+
+| Feature | Data Annotations | Fluent API |
+|---------|-----------------|------------|
+| **Location** | On entity classes | In OnModelCreating |
+| **Complexity** | Simple configurations | Complex configurations |
+| **Readability** | Easy to read | More verbose |
+| **Capabilities** | Limited | Full control |
+| **Validation** | Includes validation | Configuration only |
+
+## When to Use Each
+
+### Use Data Annotations For:
+- Simple property configurations
+- Validation rules
+- Basic table/column mappings
+- Quick prototyping
+
+### Use Fluent API For:
+- Complex relationships
+- Advanced configurations
+- Separation of concerns
+- Configuration reusability
+
+## Summary
+
+Data Annotations provide attribute-based configuration for EF Core entities. They're simpler than Fluent API but offer fewer options. Use them for basic configurations and validation, and Fluent API for complex scenarios.

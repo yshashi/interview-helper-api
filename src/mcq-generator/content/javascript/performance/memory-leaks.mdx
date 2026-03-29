@@ -1,0 +1,546 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Memory Leaks in JavaScript
+---
+
+# Memory Leaks in JavaScript
+
+## What is a Memory Leak?
+
+A memory leak occurs when a program allocates memory but fails to release it back to the operating system, even when it's no longer needed. In JavaScript, this happens when objects are kept in memory despite no longer being necessary for the application.
+
+## Why Memory Leaks Matter
+
+- **Performance degradation**: Application becomes slower over time
+- **Increased memory usage**: Can crash the browser or application
+- **Poor user experience**: Lag, freezing, or unresponsiveness
+- **Mobile impact**: Especially critical on devices with limited resources
+
+## How JavaScript Memory Management Works
+
+### Garbage Collection
+
+JavaScript uses automatic garbage collection to free up memory:
+
+```javascript
+// Object is created and memory is allocated
+let user = {
+  name: 'John',
+  age: 30
+};
+
+// Object is still reachable, memory is retained
+console.log(user.name);
+
+// Object is no longer reachable, eligible for garbage collection
+user = null;
+```
+
+### Mark-and-Sweep Algorithm
+
+Modern JavaScript engines use the mark-and-sweep algorithm:
+
+1. **Mark Phase**: Starts from root objects and marks all reachable objects
+2. **Sweep Phase**: Removes unmarked (unreachable) objects from memory
+
+## Common Causes of Memory Leaks
+
+### 1. Accidental Global Variables
+
+```javascript
+// Bad: Creates global variable
+function createLeak() {
+  // Missing 'var', 'let', or 'const'
+  leakedVariable = 'This is global!';
+}
+
+createLeak();
+// leakedVariable persists in global scope
+
+// Good: Use strict mode and proper declarations
+'use strict';
+
+function noLeak() {
+  const properVariable = 'This is scoped!';
+}
+```
+
+### 2. Forgotten Timers and Callbacks
+
+```javascript
+// Bad: Timer never cleared
+function startTimer() {
+  const data = new Array(1000000);
+  
+  setInterval(() => {
+    console.log(data[0]); // Keeps 'data' in memory forever
+  }, 1000);
+}
+
+// Good: Clear timer when done
+function startTimerCorrectly() {
+  const data = new Array(1000000);
+  
+  const timerId = setInterval(() => {
+    console.log(data[0]);
+  }, 1000);
+  
+  // Clear when component unmounts or is no longer needed
+  return () => clearInterval(timerId);
+}
+```
+
+### 3. Event Listeners Not Removed
+
+```javascript
+// Bad: Event listener never removed
+class Component {
+  constructor() {
+    this.data = new Array(1000000);
+    this.handleClick = this.handleClick.bind(this);
+    
+    document.addEventListener('click', this.handleClick);
+  }
+  
+  handleClick() {
+    console.log(this.data.length);
+  }
+  
+  // Component destroyed but listener remains!
+}
+
+// Good: Remove event listeners
+class ComponentFixed {
+  constructor() {
+    this.data = new Array(1000000);
+    this.handleClick = this.handleClick.bind(this);
+    
+    document.addEventListener('click', this.handleClick);
+  }
+  
+  handleClick() {
+    console.log(this.data.length);
+  }
+  
+  destroy() {
+    document.removeEventListener('click', this.handleClick);
+    this.data = null;
+  }
+}
+```
+
+### 4. Closures Holding References
+
+```javascript
+// Bad: Closure keeps large object in memory
+function createClosure() {
+  const largeData = new Array(1000000).fill('data');
+  
+  return function() {
+    // Only uses one property but keeps entire object
+    console.log(largeData.length);
+  };
+}
+
+const fn = createClosure();
+// largeData is kept in memory even though we only need the length
+
+// Good: Extract only what you need
+function createClosureFixed() {
+  const largeData = new Array(1000000).fill('data');
+  const length = largeData.length; // Extract needed value
+  
+  return function() {
+    console.log(length); // Only keeps the number
+  };
+}
+```
+
+### 5. Detached DOM Nodes
+
+```javascript
+// Bad: DOM node removed but reference kept
+let detachedNode;
+
+function createNode() {
+  const div = document.createElement('div');
+  div.innerHTML = '<p>Large content...</p>'.repeat(1000);
+  document.body.appendChild(div);
+  
+  detachedNode = div; // Keep reference
+  
+  // Later: remove from DOM but reference remains
+  document.body.removeChild(div);
+  // detachedNode still in memory!
+}
+
+// Good: Clear references
+function createNodeFixed() {
+  const div = document.createElement('div');
+  div.innerHTML = '<p>Large content...</p>'.repeat(1000);
+  document.body.appendChild(div);
+  
+  // When removing, clear all references
+  document.body.removeChild(div);
+  // Don't keep reference or set to null
+}
+```
+
+### 6. Out of DOM References
+
+```javascript
+// Bad: Keeping references to DOM elements
+const elements = {
+  button: document.getElementById('button'),
+  div: document.getElementById('div'),
+  span: document.getElementById('span')
+};
+
+// If these elements are removed from DOM, they're still in memory
+
+// Good: Use WeakMap for DOM references
+const elements = new WeakMap();
+elements.set(document.getElementById('button'), { data: 'button data' });
+// When DOM element is removed, WeakMap entry can be garbage collected
+```
+
+### 7. Circular References
+
+```javascript
+// Bad: Circular references (less of an issue in modern JS)
+function createCircular() {
+  const obj1 = {};
+  const obj2 = {};
+  
+  obj1.ref = obj2;
+  obj2.ref = obj1;
+  
+  return obj1;
+}
+
+// Modern garbage collectors handle this, but be aware
+
+// Good: Break circular references when done
+function createCircularFixed() {
+  const obj1 = {};
+  const obj2 = {};
+  
+  obj1.ref = obj2;
+  obj2.ref = obj1;
+  
+  // Clean up when done
+  obj1.ref = null;
+  obj2.ref = null;
+}
+```
+
+## Detecting Memory Leaks
+
+### 1. Chrome DevTools Memory Profiler
+
+```javascript
+// Take heap snapshots to compare memory usage
+// 1. Open Chrome DevTools
+// 2. Go to Memory tab
+// 3. Take snapshot before action
+// 4. Perform action (navigate, click, etc.)
+// 5. Take snapshot after action
+// 6. Compare snapshots to find retained objects
+```
+
+### 2. Performance Monitor
+
+```javascript
+// Monitor memory in real-time
+// 1. Open Chrome DevTools
+// 2. Press Cmd+Shift+P (Mac) or Ctrl+Shift+P (Windows)
+// 3. Type "Show Performance Monitor"
+// 4. Watch JS Heap Size while using the app
+```
+
+### 3. Programmatic Memory Monitoring
+
+```javascript
+// Check memory usage programmatically
+if (performance.memory) {
+  console.log('Used JS Heap:', performance.memory.usedJSHeapSize);
+  console.log('Total JS Heap:', performance.memory.totalJSHeapSize);
+  console.log('Heap Limit:', performance.memory.jsHeapSizeLimit);
+}
+
+// Monitor over time
+setInterval(() => {
+  if (performance.memory) {
+    const used = (performance.memory.usedJSHeapSize / 1048576).toFixed(2);
+    console.log(`Memory used: ${used} MB`);
+  }
+}, 5000);
+```
+
+## Preventing Memory Leaks
+
+### 1. Clean Up Event Listeners
+
+```javascript
+class EventManager {
+  constructor() {
+    this.listeners = [];
+  }
+  
+  addEventListener(element, event, handler) {
+    element.addEventListener(event, handler);
+    this.listeners.push({ element, event, handler });
+  }
+  
+  removeAllListeners() {
+    this.listeners.forEach(({ element, event, handler }) => {
+      element.removeEventListener(event, handler);
+    });
+    this.listeners = [];
+  }
+}
+
+// Usage
+const manager = new EventManager();
+manager.addEventListener(button, 'click', handleClick);
+
+// Clean up when done
+manager.removeAllListeners();
+```
+
+### 2. Use WeakMap and WeakSet
+
+```javascript
+// WeakMap allows garbage collection of keys
+const cache = new WeakMap();
+
+function processElement(element) {
+  if (cache.has(element)) {
+    return cache.get(element);
+  }
+  
+  const result = expensiveOperation(element);
+  cache.set(element, result);
+  return result;
+}
+
+// When element is removed from DOM, cache entry is automatically cleaned
+```
+
+### 3. Proper Cleanup in React
+
+```javascript
+import { useEffect, useRef } from 'react';
+
+function Component() {
+  const timerRef = useRef(null);
+  
+  useEffect(() => {
+    // Set up
+    timerRef.current = setInterval(() => {
+      console.log('Tick');
+    }, 1000);
+    
+    // Clean up
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+      }
+    };
+  }, []);
+  
+  return <div>Component</div>;
+}
+```
+
+### 4. Abort Fetch Requests
+
+```javascript
+class DataFetcher {
+  constructor() {
+    this.controller = null;
+  }
+  
+  async fetchData(url) {
+    // Cancel previous request
+    if (this.controller) {
+      this.controller.abort();
+    }
+    
+    this.controller = new AbortController();
+    
+    try {
+      const response = await fetch(url, {
+        signal: this.controller.signal
+      });
+      return await response.json();
+    } catch (error) {
+      if (error.name === 'AbortError') {
+        console.log('Request cancelled');
+      } else {
+        throw error;
+      }
+    }
+  }
+  
+  cleanup() {
+    if (this.controller) {
+      this.controller.abort();
+      this.controller = null;
+    }
+  }
+}
+```
+
+### 5. Limit Cache Size
+
+```javascript
+class LRUCache {
+  constructor(maxSize = 100) {
+    this.maxSize = maxSize;
+    this.cache = new Map();
+  }
+  
+  get(key) {
+    if (!this.cache.has(key)) return null;
+    
+    // Move to end (most recently used)
+    const value = this.cache.get(key);
+    this.cache.delete(key);
+    this.cache.set(key, value);
+    
+    return value;
+  }
+  
+  set(key, value) {
+    // Remove if exists
+    if (this.cache.has(key)) {
+      this.cache.delete(key);
+    }
+    
+    // Add to end
+    this.cache.set(key, value);
+    
+    // Remove oldest if over limit
+    if (this.cache.size > this.maxSize) {
+      const firstKey = this.cache.keys().next().value;
+      this.cache.delete(firstKey);
+    }
+  }
+}
+```
+
+## Real-World Examples
+
+### Single Page Application (SPA) Memory Leak
+
+```javascript
+// Bad: Memory leak in SPA
+class PageManager {
+  constructor() {
+    this.currentPage = null;
+  }
+  
+  loadPage(PageClass) {
+    // Old page not cleaned up!
+    this.currentPage = new PageClass();
+    this.currentPage.render();
+  }
+}
+
+// Good: Proper cleanup
+class PageManagerFixed {
+  constructor() {
+    this.currentPage = null;
+  }
+  
+  loadPage(PageClass) {
+    // Clean up old page
+    if (this.currentPage && this.currentPage.destroy) {
+      this.currentPage.destroy();
+    }
+    
+    this.currentPage = new PageClass();
+    this.currentPage.render();
+  }
+}
+```
+
+### Infinite Scroll Memory Leak
+
+```javascript
+// Good: Virtual scrolling to prevent memory leaks
+class VirtualScroller {
+  constructor(container, itemHeight, totalItems) {
+    this.container = container;
+    this.itemHeight = itemHeight;
+    this.totalItems = totalItems;
+    this.visibleItems = new Map();
+    
+    this.handleScroll = this.handleScroll.bind(this);
+    this.container.addEventListener('scroll', this.handleScroll);
+  }
+  
+  handleScroll() {
+    const scrollTop = this.container.scrollTop;
+    const visibleStart = Math.floor(scrollTop / this.itemHeight);
+    const visibleEnd = visibleStart + Math.ceil(this.container.clientHeight / this.itemHeight);
+    
+    // Remove items outside visible range
+    this.visibleItems.forEach((item, index) => {
+      if (index < visibleStart || index > visibleEnd) {
+        item.remove();
+        this.visibleItems.delete(index);
+      }
+    });
+    
+    // Add items in visible range
+    for (let i = visibleStart; i <= visibleEnd && i < this.totalItems; i++) {
+      if (!this.visibleItems.has(i)) {
+        const item = this.createItem(i);
+        this.visibleItems.set(i, item);
+      }
+    }
+  }
+  
+  createItem(index) {
+    const div = document.createElement('div');
+    div.textContent = `Item ${index}`;
+    div.style.height = `${this.itemHeight}px`;
+    this.container.appendChild(div);
+    return div;
+  }
+  
+  destroy() {
+    this.container.removeEventListener('scroll', this.handleScroll);
+    this.visibleItems.forEach(item => item.remove());
+    this.visibleItems.clear();
+  }
+}
+```
+
+## Best Practices
+
+1. **Always clean up**: Remove event listeners, clear timers, abort requests
+2. **Use WeakMap/WeakSet**: For caching DOM elements or objects
+3. **Limit cache sizes**: Implement LRU or similar strategies
+4. **Profile regularly**: Use Chrome DevTools to monitor memory
+5. **Test long sessions**: Run your app for extended periods
+6. **Use strict mode**: Prevents accidental globals
+7. **Implement destroy methods**: For classes that manage resources
+8. **Avoid global scope**: Minimize global variables
+
+## Interview Tips
+
+- **Explain what memory leaks are** and why they matter
+- **Describe common causes** with code examples
+- **Show how to detect** memory leaks using DevTools
+- **Demonstrate prevention techniques** like cleanup and WeakMap
+- **Discuss garbage collection** and how JavaScript manages memory
+- **Provide real-world scenarios** like SPAs or infinite scroll
+- **Mention performance impact** on user experience
+- **Show awareness of modern tools** for memory profiling
+
+## Summary
+
+Memory leaks in JavaScript occur when objects remain in memory despite no longer being needed. Common causes include forgotten event listeners, timers, closures, and detached DOM nodes. Prevention involves proper cleanup, using WeakMap/WeakSet, limiting cache sizes, and regular profiling with DevTools.

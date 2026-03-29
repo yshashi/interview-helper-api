@@ -1,0 +1,376 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Migrations in EF Core
+---
+
+# Migrations in EF Core
+
+## What are Migrations?
+
+Migrations provide a way to incrementally update the database schema to keep it in sync with your application's data model while preserving existing data. They create a version history of your database schema.
+
+## Creating Migrations
+
+### Using .NET CLI
+
+```bash
+# Add a new migration
+dotnet ef migrations add InitialCreate
+
+# Add migration with specific context
+dotnet ef migrations add AddProductPrice --context ApplicationDbContext
+
+# Add migration to specific project
+dotnet ef migrations add AddCategory --project MyApp.Data
+```
+
+### Using Package Manager Console
+
+```powershell
+Add-Migration InitialCreate
+Add-Migration AddProductPrice -Context ApplicationDbContext
+```
+
+## Migration File Structure
+
+```csharp
+public partial class InitialCreate : Migration
+{
+    protected override void Up(MigrationBuilder migrationBuilder)
+    {
+        migrationBuilder.CreateTable(
+            name: "Products",
+            columns: table => new
+            {
+                Id = table.Column<int>(nullable: false)
+                    .Annotation("SqlServer:Identity", "1, 1"),
+                Name = table.Column<string>(maxLength: 200, nullable: false),
+                Price = table.Column<decimal>(type: "decimal(18,2)", nullable: false),
+                CategoryId = table.Column<int>(nullable: false)
+            },
+            constraints: table =>
+            {
+                table.PrimaryKey("PK_Products", x => x.Id);
+                table.ForeignKey(
+                    name: "FK_Products_Categories_CategoryId",
+                    column: x => x.CategoryId,
+                    principalTable: "Categories",
+                    principalColumn: "Id",
+                    onDelete: ReferentialAction.Cascade);
+            });
+    }
+
+    protected override void Down(MigrationBuilder migrationBuilder)
+    {
+        migrationBuilder.DropTable(name: "Products");
+    }
+}
+```
+
+## Applying Migrations
+
+### Update Database
+
+```bash
+# Apply all pending migrations
+dotnet ef database update
+
+# Update to specific migration
+dotnet ef database update AddProductPrice
+
+# Rollback to previous migration
+dotnet ef database update PreviousMigrationName
+
+# Rollback all migrations
+dotnet ef database update 0
+```
+
+### At Runtime
+
+```csharp
+public class Program
+{
+    public static void Main(string[] args)
+    {
+        var host = CreateHostBuilder(args).Build();
+        
+        // Apply migrations at startup
+        using (var scope = host.Services.CreateScope())
+        {
+            var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            context.Database.Migrate();
+        }
+        
+        host.Run();
+    }
+}
+```
+
+## Managing Migrations
+
+### List Migrations
+
+```bash
+# List all migrations
+dotnet ef migrations list
+
+# Check pending migrations
+dotnet ef migrations has-pending-model-changes
+```
+
+### Remove Migration
+
+```bash
+# Remove last migration (if not applied)
+dotnet ef migrations remove
+
+# Force remove
+dotnet ef migrations remove --force
+```
+
+### Generate SQL Script
+
+```bash
+# Generate script for all migrations
+dotnet ef migrations script
+
+# Generate script from specific migration
+dotnet ef migrations script AddProductPrice
+
+# Generate script between migrations
+dotnet ef migrations script InitialCreate AddCategory
+
+# Idempotent script (can run multiple times)
+dotnet ef migrations script --idempotent
+
+# Output to file
+dotnet ef migrations script --output migration.sql
+```
+
+## Custom Migration Operations
+
+### Raw SQL
+
+```csharp
+protected override void Up(MigrationBuilder migrationBuilder)
+{
+    migrationBuilder.Sql(@"
+        CREATE PROCEDURE GetProductsByCategory
+            @CategoryId INT
+        AS
+        BEGIN
+            SELECT * FROM Products WHERE CategoryId = @CategoryId
+        END
+    ");
+}
+
+protected override void Down(MigrationBuilder migrationBuilder)
+{
+    migrationBuilder.Sql("DROP PROCEDURE GetProductsByCategory");
+}
+```
+
+### Data Migration
+
+```csharp
+protected override void Up(MigrationBuilder migrationBuilder)
+{
+    // Add new column
+    migrationBuilder.AddColumn<string>(
+        name: "FullName",
+        table: "Users",
+        nullable: true);
+    
+    // Migrate existing data
+    migrationBuilder.Sql(@"
+        UPDATE Users 
+        SET FullName = FirstName + ' ' + LastName
+    ");
+    
+    // Make column required
+    migrationBuilder.AlterColumn<string>(
+        name: "FullName",
+        table: "Users",
+        nullable: false,
+        oldNullable: true);
+}
+```
+
+## Migration Best Practices
+
+### 1. Review Generated Migrations
+
+```csharp
+// Always review before applying
+public partial class AddProductDescription : Migration
+{
+    protected override void Up(MigrationBuilder migrationBuilder)
+    {
+        // Verify this is what you want
+        migrationBuilder.AddColumn<string>(
+            name: "Description",
+            table: "Products",
+            maxLength: 1000,
+            nullable: true);
+    }
+}
+```
+
+### 2. Test Migrations
+
+```csharp
+[Fact]
+public async Task Migration_ShouldAddDescriptionColumn()
+{
+    // Arrange
+    var options = new DbContextOptionsBuilder<ApplicationDbContext>()
+        .UseInMemoryDatabase(databaseName: "TestDb")
+        .Options;
+    
+    // Act
+    using (var context = new ApplicationDbContext(options))
+    {
+        await context.Database.MigrateAsync();
+        
+        // Assert
+        var product = new Product { Name = "Test", Description = "Test Description" };
+        context.Products.Add(product);
+        await context.SaveChangesAsync();
+    }
+}
+```
+
+### 3. Handle Data Loss
+
+```csharp
+protected override void Up(MigrationBuilder migrationBuilder)
+{
+    // Backup data before dropping column
+    migrationBuilder.Sql(@"
+        SELECT ProductId, OldColumnData 
+        INTO ProductBackup 
+        FROM Products
+    ");
+    
+    migrationBuilder.DropColumn(
+        name: "OldColumn",
+        table: "Products");
+}
+```
+
+## Production Deployment
+
+### Generate Script for Production
+
+```bash
+# Generate idempotent script
+dotnet ef migrations script --idempotent --output deploy.sql
+
+# Review and test script
+# Apply manually in production
+```
+
+### Deployment Strategies
+
+#### 1. Manual Script Execution
+
+```sql
+-- deploy.sql
+IF NOT EXISTS (SELECT * FROM [__EFMigrationsHistory] WHERE [MigrationId] = N'20240101000000_InitialCreate')
+BEGIN
+    CREATE TABLE [Products] (
+        [Id] int NOT NULL IDENTITY,
+        [Name] nvarchar(200) NOT NULL,
+        CONSTRAINT [PK_Products] PRIMARY KEY ([Id])
+    );
+    
+    INSERT INTO [__EFMigrationsHistory] ([MigrationId], [ProductVersion])
+    VALUES (N'20240101000000_InitialCreate', N'8.0.0');
+END;
+```
+
+#### 2. Automated Deployment
+
+```csharp
+// Startup.cs or Program.cs
+if (app.Environment.IsProduction())
+{
+    using var scope = app.Services.CreateScope();
+    var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+    
+    // Only apply if there are pending migrations
+    if (context.Database.GetPendingMigrations().Any())
+    {
+        context.Database.Migrate();
+    }
+}
+```
+
+## Handling Multiple Contexts
+
+```bash
+# Specify context
+dotnet ef migrations add AddProduct --context CatalogContext
+dotnet ef migrations add AddOrder --context OrderContext
+
+# Update specific context
+dotnet ef database update --context CatalogContext
+```
+
+## Migration Bundles (.NET 6+)
+
+```bash
+# Create migration bundle
+dotnet ef migrations bundle --output efbundle
+
+# Execute bundle
+./efbundle --connection "Server=.;Database=MyDb;Trusted_Connection=true;"
+
+# List migrations in bundle
+./efbundle --list
+```
+
+## Troubleshooting
+
+### Pending Model Changes
+
+```bash
+# Check for pending changes
+dotnet ef migrations has-pending-model-changes
+
+# Add migration for pending changes
+dotnet ef migrations add FixPendingChanges
+```
+
+### Reset Database
+
+```bash
+# Drop database
+dotnet ef database drop
+
+# Recreate with all migrations
+dotnet ef database update
+```
+
+### Merge Conflicts
+
+```csharp
+// If migration files conflict, remove and recreate
+dotnet ef migrations remove
+dotnet ef migrations add MergedMigration
+```
+
+## Interview Tips
+
+- **Explain migrations purpose**: Version control for database schema
+- **Show creation process**: dotnet ef migrations add
+- **Demonstrate application**: dotnet ef database update
+- **Discuss Up/Down methods**: Forward and rollback operations
+- **Mention SQL script generation**: For production deployment
+- **Show custom operations**: Raw SQL, data migration
+- **Explain best practices**: Review, test, handle data loss
+- **Discuss deployment**: Manual scripts vs automated
+
+## Summary
+
+Migrations in EF Core provide version control for your database schema, allowing incremental updates while preserving data. They generate Up and Down methods for applying and rolling back changes, support custom SQL operations, and can be deployed through generated scripts or automated processes. Always review generated migrations and test them before production deployment.

@@ -1,0 +1,129 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: process.nextTick() vs setImmediate()
+---
+
+# process.nextTick() vs setImmediate()
+
+## process.nextTick()
+
+Executes callback **after current operation completes**, before event loop continues.
+
+```javascript
+console.log('Start');
+
+process.nextTick(() => {
+  console.log('nextTick');
+});
+
+console.log('End');
+
+// Output:
+// Start
+// End
+// nextTick
+```
+
+## setImmediate()
+
+Executes callback in **check phase** of event loop.
+
+```javascript
+console.log('Start');
+
+setImmediate(() => {
+  console.log('setImmediate');
+});
+
+console.log('End');
+
+// Output:
+// Start
+// End
+// setImmediate
+```
+
+## Key Differences
+
+| Feature | process.nextTick() | setImmediate() |
+|---------|-------------------|----------------|
+| **When** | After current operation | Check phase of event loop |
+| **Priority** | Higher | Lower |
+| **Phase** | Before event loop | In event loop |
+| **Use Case** | Emit events, cleanup | I/O operations |
+
+## Execution Order
+
+```javascript
+console.log('1');
+
+setTimeout(() => console.log('2'), 0);
+
+setImmediate(() => console.log('3'));
+
+process.nextTick(() => console.log('4'));
+
+Promise.resolve().then(() => console.log('5'));
+
+console.log('6');
+
+// Output:
+// 1
+// 6
+// 4
+// 5
+// 2
+// 3
+```
+
+## In I/O Cycle
+
+```javascript
+const fs = require('fs');
+
+fs.readFile('file.txt', () => {
+  setTimeout(() => console.log('setTimeout'), 0);
+  setImmediate(() => console.log('setImmediate'));
+});
+
+// Output (always):
+// setImmediate
+// setTimeout
+```
+
+## Recursive nextTick (Dangerous)
+
+```javascript
+// BAD - Blocks event loop
+process.nextTick(function foo() {
+  process.nextTick(foo);
+});
+
+// GOOD - Allows event loop to continue
+setImmediate(function foo() {
+  setImmediate(foo);
+});
+```
+
+## Use Cases
+
+### process.nextTick()
+- Emit events after construction
+- Cleanup operations
+- Error handling
+
+### setImmediate()
+- Break up long operations
+- I/O operations
+- Prevent blocking
+
+## Interview Tips
+
+- **Explain timing**: nextTick before event loop, setImmediate in check phase
+- **Show execution order**: nextTick has higher priority
+- **Discuss use cases**: When to use each
+- **Mention dangers**: Recursive nextTick blocks event loop
+
+## Summary
+
+process.nextTick() executes before event loop continues (higher priority). setImmediate() executes in check phase of event loop. Use nextTick for immediate execution, setImmediate to avoid blocking event loop.

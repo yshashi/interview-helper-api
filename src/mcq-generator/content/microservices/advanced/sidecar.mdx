@@ -1,0 +1,331 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Sidecar Pattern
+---
+
+# Sidecar Pattern
+
+## What is Sidecar Pattern?
+
+The **Sidecar Pattern** deploys helper components alongside the main application container to provide supporting features without modifying the application code.
+
+## Architecture
+
+```
+┌─────────────────────────────┐
+│          Pod                │
+│  ┌──────────┐  ┌─────────┐ │
+│  │   App    │  │ Sidecar │ │
+│  │Container │  │Container│ │
+│  └──────────┘  └─────────┘ │
+└─────────────────────────────┘
+```
+
+## Common Use Cases
+
+### 1. Logging Sidecar
+
+```yaml
+# Kubernetes Pod with logging sidecar
+apiVersion: v1
+kind: Pod
+metadata:
+  name: app-with-logging
+spec:
+  containers:
+    # Main application
+    - name: app
+      image: my-app:latest
+      volumeMounts:
+        - name: logs
+          mountPath: /var/log/app
+    
+    # Logging sidecar
+    - name: log-shipper
+      image: fluentd:latest
+      volumeMounts:
+        - name: logs
+          mountPath: /var/log/app
+      env:
+        - name: FLUENT_ELASTICSEARCH_HOST
+          value: "elasticsearch"
+  
+  volumes:
+    - name: logs
+      emptyDir: {}
+```
+
+### 2. Proxy Sidecar (Envoy)
+
+```yaml
+# Service mesh sidecar
+apiVersion: v1
+kind: Pod
+metadata:
+  name: app-with-proxy
+spec:
+  containers:
+    # Main application
+    - name: app
+      image: my-app:latest
+      ports:
+        - containerPort: 8080
+    
+    # Envoy proxy sidecar
+    - name: envoy
+      image: envoyproxy/envoy:latest
+      ports:
+        - containerPort: 15001  # Proxy port
+      volumeMounts:
+        - name: envoy-config
+          mountPath: /etc/envoy
+  
+  volumes:
+    - name: envoy-config
+      configMap:
+        name: envoy-config
+```
+
+### 3. Configuration Sidecar
+
+```yaml
+# Config sync sidecar
+apiVersion: v1
+kind: Pod
+metadata:
+  name: app-with-config
+spec:
+  containers:
+    # Main application
+    - name: app
+      image: my-app:latest
+      volumeMounts:
+        - name: config
+          mountPath: /etc/config
+    
+    # Config sync sidecar
+    - name: config-sync
+      image: config-sync:latest
+      volumeMounts:
+        - name: config
+          mountPath: /etc/config
+      env:
+        - name: CONFIG_SOURCE
+          value: "consul://consul:8500"
+  
+  volumes:
+    - name: config
+      emptyDir: {}
+```
+
+## Implementation Examples
+
+### Metrics Collection Sidecar
+
+```javascript
+// Main application
+const express = require('express');
+const app = express();
+
+app.get('/api/users', async (req, res) => {
+  const users = await User.find();
+  res.json(users);
+});
+
+app.listen(8080);
+
+// Metrics sidecar (separate container)
+const express = require('express');
+const prometheus = require('prom-client');
+
+const app = express();
+const register = new prometheus.Registry();
+
+// Collect default metrics
+prometheus.collectDefaultMetrics({ register });
+
+// Expose metrics endpoint
+app.get('/metrics', async (req, res) => {
+  res.set('Content-Type', register.contentType);
+  res.end(await register.metrics());
+});
+
+app.listen(9090);
+```
+
+### Security Sidecar
+
+```yaml
+# mTLS sidecar
+apiVersion: v1
+kind: Pod
+metadata:
+  name: app-with-mtls
+spec:
+  containers:
+    # Main application (no TLS logic)
+    - name: app
+      image: my-app:latest
+      ports:
+        - containerPort: 8080
+    
+    # TLS termination sidecar
+    - name: tls-proxy
+      image: nginx:latest
+      ports:
+        - containerPort: 443
+      volumeMounts:
+        - name: tls-certs
+          mountPath: /etc/nginx/certs
+        - name: nginx-config
+          mountPath: /etc/nginx/nginx.conf
+          subPath: nginx.conf
+  
+  volumes:
+    - name: tls-certs
+      secret:
+        secretName: tls-secret
+    - name: nginx-config
+      configMap:
+        name: nginx-config
+```
+
+### Caching Sidecar
+
+```yaml
+# Redis cache sidecar
+apiVersion: v1
+kind: Pod
+metadata:
+  name: app-with-cache
+spec:
+  containers:
+    # Main application
+    - name: app
+      image: my-app:latest
+      env:
+        - name: REDIS_HOST
+          value: "localhost"
+        - name: REDIS_PORT
+          value: "6379"
+    
+    # Redis sidecar
+    - name: redis
+      image: redis:latest
+      ports:
+        - containerPort: 6379
+```
+
+## Benefits
+
+1. **Separation of Concerns**: Cross-cutting features separate from business logic
+2. **Reusability**: Same sidecar across multiple services
+3. **Independent Updates**: Update sidecar without changing app
+4. **Language Agnostic**: Works with any application language
+5. **Resource Isolation**: Separate resource limits
+
+## Sidecar vs Library
+
+```javascript
+// Library approach (tight coupling)
+const logger = require('logging-library');
+const metrics = require('metrics-library');
+const tracing = require('tracing-library');
+
+app.use(logger.middleware());
+app.use(metrics.middleware());
+app.use(tracing.middleware());
+
+// Sidecar approach (loose coupling)
+// Application code stays simple
+app.get('/api/users', async (req, res) => {
+  const users = await User.find();
+  res.json(users);
+});
+
+// Logging, metrics, tracing handled by sidecars
+```
+
+## Service Mesh Sidecar
+
+```yaml
+# Istio sidecar injection
+apiVersion: v1
+kind: Pod
+metadata:
+  name: my-app
+  annotations:
+    sidecar.istio.io/inject: "true"
+spec:
+  containers:
+    - name: app
+      image: my-app:latest
+
+# Istio automatically injects Envoy sidecar:
+# - Traffic management
+# - Security (mTLS)
+# - Observability
+# - Retry logic
+# - Circuit breaking
+```
+
+## Resource Management
+
+```yaml
+# Sidecar resource limits
+apiVersion: v1
+kind: Pod
+metadata:
+  name: app-with-sidecar
+spec:
+  containers:
+    - name: app
+      image: my-app:latest
+      resources:
+        requests:
+          memory: "256Mi"
+          cpu: "500m"
+        limits:
+          memory: "512Mi"
+          cpu: "1000m"
+    
+    - name: sidecar
+      image: sidecar:latest
+      resources:
+        requests:
+          memory: "64Mi"
+          cpu: "100m"
+        limits:
+          memory: "128Mi"
+          cpu: "200m"
+```
+
+## Challenges
+
+1. **Resource Overhead**: Extra containers per pod
+2. **Complexity**: More components to manage
+3. **Debugging**: Multiple containers to troubleshoot
+4. **Latency**: Additional network hop
+5. **Version Management**: Keep sidecars updated
+
+## Best Practices
+
+1. **Keep sidecars lightweight**
+2. **Use shared volumes for communication**
+3. **Set appropriate resource limits**
+4. **Monitor sidecar health**
+5. **Version sidecars independently**
+6. **Document sidecar responsibilities**
+
+## Interview Tips
+
+- **Explain pattern**: Helper container alongside main app
+- **Show use cases**: Logging, proxy, config, metrics
+- **Demonstrate benefits**: Separation of concerns, reusability
+- **Discuss service mesh**: Istio/Linkerd sidecars
+- **Mention challenges**: Resource overhead, complexity
+- **Show alternatives**: Libraries vs sidecars
+
+## Summary
+
+Sidecar Pattern deploys helper containers alongside application containers. Provides cross-cutting features like logging, metrics, proxying, and configuration without modifying application code. Common in service mesh implementations. Benefits include separation of concerns and reusability. Challenges include resource overhead and complexity. Essential pattern for Kubernetes-based microservices.

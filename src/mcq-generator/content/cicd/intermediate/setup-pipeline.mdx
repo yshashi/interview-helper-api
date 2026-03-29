@@ -1,0 +1,414 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: How to Set Up a CI/CD Pipeline
+---
+
+# How to Set Up a CI/CD Pipeline
+
+## Pipeline Setup Steps
+
+1. **Choose CI/CD Platform**: GitHub Actions, Jenkins, GitLab CI
+2. **Define Stages**: Build, test, deploy
+3. **Configure Triggers**: Push, PR, schedule
+4. **Set Up Environments**: Dev, staging, production
+5. **Manage Secrets**: API keys, credentials
+6. **Monitor & Optimize**: Track metrics, improve speed
+
+## GitHub Actions Setup
+
+```yaml
+# .github/workflows/main.yml
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 0 * * 0'  # Weekly
+
+env:
+  NODE_VERSION: '18'
+  DOTNET_VERSION: '8.0.x'
+
+jobs:
+  # Angular Build & Test
+  angular:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./frontend
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Lint
+        run: npm run lint
+      
+      - name: Test
+        run: npm run test:ci
+      
+      - name: Build
+        run: npm run build --prod
+      
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: angular-dist
+          path: frontend/dist/
+  
+  # .NET API Build & Test
+  dotnet-api:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./api
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v3
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+      
+      - name: Restore
+        run: dotnet restore
+      
+      - name: Build
+        run: dotnet build --no-restore -c Release
+      
+      - name: Test
+        run: dotnet test --no-build -c Release
+      
+      - name: Publish
+        run: dotnet publish -c Release -o ./publish
+      
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: dotnet-api
+          path: api/publish/
+  
+  # Node.js Service Build & Test
+  nodejs-service:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./service
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+      
+      redis:
+        image: redis:7
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: service/package-lock.json
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Run migrations
+        run: npm run migrate
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test
+      
+      - name: Test
+        run: npm test
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test
+          REDIS_URL: redis://localhost:6379
+      
+      - name: Build
+        run: npm run build
+      
+      - name: Build Docker image
+        run: docker build -t service:${{ github.sha }} .
+  
+  # Deploy to Staging
+  deploy-staging:
+    needs: [angular, dotnet-api, nodejs-service]
+    if: github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+      url: https://staging.example.com
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Download Angular artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: angular-dist
+          path: ./dist
+      
+      - name: Deploy Angular to S3
+        run: |
+          aws s3 sync ./dist s3://staging-frontend
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      
+      - name: Download .NET artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: dotnet-api
+      
+      - name: Deploy .NET to Azure
+        uses: azure/webapps-deploy@v2
+        with:
+          app-name: staging-api
+          publish-profile: ${{ secrets.AZURE_PUBLISH_PROFILE_STAGING }}
+      
+      - name: Deploy Node.js to Kubernetes
+        run: |
+          kubectl set image deployment/service service=service:${{ github.sha }} -n staging
+  
+  # Deploy to Production
+  deploy-production:
+    needs: deploy-staging
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://example.com
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Download artifacts
+        uses: actions/download-artifact@v3
+      
+      - name: Deploy to Production
+        run: |
+          # Deploy Angular
+          aws s3 sync ./angular-dist s3://prod-frontend
+          
+          # Deploy .NET API
+          az webapp deploy --name prod-api --resource-group myapp
+          
+          # Deploy Node.js
+          kubectl set image deployment/service service=service:${{ github.sha }} -n production
+      
+      - name: Run smoke tests
+        run: npm run test:smoke
+        env:
+          BASE_URL: https://example.com
+      
+      - name: Notify team
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          text: 'Deployed to production'
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+```
+
+## Jenkins Setup
+
+```groovy
+// Jenkinsfile
+pipeline {
+    agent any
+    
+    environment {
+        NODE_VERSION = '18'
+        DOTNET_VERSION = '8.0'
+    }
+    
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+        
+        stage('Build & Test') {
+            parallel {
+                stage('Angular') {
+                    steps {
+                        dir('frontend') {
+                            sh 'npm ci'
+                            sh 'npm run lint'
+                            sh 'npm test'
+                            sh 'npm run build --prod'
+                        }
+                    }
+                }
+                
+                stage('.NET API') {
+                    steps {
+                        dir('api') {
+                            sh 'dotnet restore'
+                            sh 'dotnet build -c Release'
+                            sh 'dotnet test -c Release'
+                            sh 'dotnet publish -c Release -o ./publish'
+                        }
+                    }
+                }
+                
+                stage('Node.js Service') {
+                    steps {
+                        dir('service') {
+                            sh 'npm ci'
+                            sh 'npm test'
+                            sh 'npm run build'
+                            sh 'docker build -t service:${BUILD_NUMBER} .'
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('Deploy Staging') {
+            when {
+                branch 'develop'
+            }
+            steps {
+                sh './deploy-staging.sh'
+            }
+        }
+        
+        stage('Deploy Production') {
+            when {
+                branch 'main'
+            }
+            steps {
+                input message: 'Deploy to production?'
+                sh './deploy-production.sh'
+            }
+        }
+    }
+    
+    post {
+        success {
+            slackSend color: 'good', message: "Build ${BUILD_NUMBER} succeeded"
+        }
+        failure {
+            slackSend color: 'danger', message: "Build ${BUILD_NUMBER} failed"
+        }
+    }
+}
+```
+
+## GitLab CI Setup
+
+```yaml
+# .gitlab-ci.yml
+stages:
+  - build
+  - test
+  - deploy-staging
+  - deploy-production
+
+variables:
+  NODE_VERSION: "18"
+  DOTNET_VERSION: "8.0"
+
+# Angular
+angular-build:
+  stage: build
+  image: node:18
+  script:
+    - cd frontend
+    - npm ci
+    - npm run lint
+    - npm test
+    - npm run build --prod
+  artifacts:
+    paths:
+      - frontend/dist/
+
+# .NET API
+dotnet-build:
+  stage: build
+  image: mcr.microsoft.com/dotnet/sdk:8.0
+  script:
+    - cd api
+    - dotnet restore
+    - dotnet build -c Release
+    - dotnet test -c Release
+    - dotnet publish -c Release -o ./publish
+  artifacts:
+    paths:
+      - api/publish/
+
+# Node.js Service
+nodejs-build:
+  stage: build
+  image: node:18
+  services:
+    - postgres:15
+    - redis:7
+  script:
+    - cd service
+    - npm ci
+    - npm run migrate
+    - npm test
+    - npm run build
+    - docker build -t service:$CI_COMMIT_SHA .
+
+# Deploy Staging
+deploy-staging:
+  stage: deploy-staging
+  only:
+    - develop
+  script:
+    - ./deploy-staging.sh
+
+# Deploy Production
+deploy-production:
+  stage: deploy-production
+  only:
+    - main
+  when: manual
+  script:
+    - ./deploy-production.sh
+```
+
+## Best Practices
+
+1. **Use caching**: Speed up builds
+2. **Parallel execution**: Run jobs concurrently
+3. **Fail fast**: Stop on first failure
+4. **Secrets management**: Use secure variables
+5. **Environment separation**: Dev, staging, prod
+6. **Monitoring**: Track pipeline metrics
+7. **Notifications**: Alert team on failures
+
+## Interview Tips
+
+- **Explain setup**: Platform, stages, triggers
+- **Show multi-stack**: Angular, .NET, Node.js
+- **Demonstrate databases**: PostgreSQL, Redis integration
+- **Discuss environments**: Staging, production
+- **Mention best practices**: Caching, parallel execution
+- **Show monitoring**: Notifications, metrics
+
+## Summary
+
+Setting up CI/CD pipeline involves choosing platform, defining stages, configuring triggers, and managing secrets. Support multiple tech stacks with parallel execution. Use caching for speed. Implement proper environment separation. Monitor pipeline health and notify team. Works across GitHub Actions, Jenkins, and GitLab CI.

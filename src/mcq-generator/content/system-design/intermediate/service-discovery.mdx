@@ -1,0 +1,508 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Service Discovery
+---
+
+# Service Discovery
+
+## What is Service Discovery?
+
+Service discovery is the automatic detection of services and their network locations in a distributed system. It enables services to find and communicate with each other without hardcoded addresses, essential for dynamic cloud environments where instances come and go.
+
+## Why Service Discovery?
+
+**Dynamic Environments:** Cloud instances have changing IP addresses
+
+**Auto-Scaling:** New instances added/removed automatically
+
+**Load Distribution:** Discover all available instances for load balancing
+
+**Health Awareness:** Only route to healthy instances
+
+**Multi-Region:** Discover services across different regions
+
+**Microservices:** Services need to find each other without manual configuration
+
+## Service Discovery Patterns
+
+### Client-Side Discovery
+
+**How it works:** Client queries service registry, chooses instance, makes direct request
+
+**Flow:**
+1. Service registers itself with registry (IP, port, health endpoint)
+2. Client queries registry for service location
+3. Client selects instance (load balancing logic in client)
+4. Client makes direct request to service
+
+**Advantages:**
+- Client controls load balancing
+- No additional network hop
+- Flexible routing logic
+
+**Disadvantages:**
+- Client must implement discovery logic
+- Couples client to registry
+- More complex client code
+
+**Example:** Netflix Eureka
+
+### Server-Side Discovery
+
+**How it works:** Client requests load balancer, load balancer queries registry and routes
+
+**Flow:**
+1. Service registers with registry
+2. Client requests load balancer
+3. Load balancer queries registry
+4. Load balancer routes to healthy instance
+
+**Advantages:**
+- Simple client (just knows load balancer)
+- Centralized routing logic
+- Language-agnostic
+
+**Disadvantages:**
+- Additional network hop
+- Load balancer is potential bottleneck
+- Load balancer must be highly available
+
+**Example:** Kubernetes Service, AWS ELB
+
+## Service Registry
+
+**Purpose:** Central database of available service instances
+
+**Information Stored:**
+- Service name
+- IP address and port
+- Health status
+- Metadata (version, region, tags)
+- Registration timestamp
+
+**Requirements:**
+- Highly available
+- Eventually consistent
+- Fast reads
+- Support for health checks
+
+**Popular Solutions:**
+- Consul
+- etcd
+- ZooKeeper
+- Eureka
+
+## Health Checks
+
+**Purpose:** Ensure only healthy instances receive traffic
+
+**Types:**
+
+**Passive Health Checks:**
+- Monitor actual requests
+- Mark instance unhealthy after N failures
+- No additional traffic
+
+**Active Health Checks:**
+- Registry pings health endpoint periodically
+- Instance must respond within timeout
+- Generates additional traffic
+
+**Health Check Endpoint Example:**
+
+```javascript
+// Service health endpoint
+app.get('/health', async (req, res) => {
+  try {
+    // Check database connection
+    await db.ping();
+    
+    // Check external dependencies
+    await externalAPI.ping();
+    
+    // Check disk space
+    const diskSpace = await checkDiskSpace();
+    if (diskSpace < 10) {
+      throw new Error('Low disk space');
+    }
+    
+    res.status(200).json({
+      status: 'healthy',
+      timestamp: Date.now(),
+      checks: {
+        database: 'ok',
+        externalAPI: 'ok',
+        diskSpace: `${diskSpace}%`
+      }
+    });
+  } catch (error) {
+    res.status(503).json({
+      status: 'unhealthy',
+      error: error.message
+    });
+  }
+});
+```
+
+## Service Registration
+
+### Self-Registration
+
+**How it works:** Service registers itself on startup
+
+**Example:**
+
+```javascript
+const consul = require('consul')();
+
+async function registerService() {
+  const serviceId = `user-service-${process.env.INSTANCE_ID}`;
+  
+  await consul.agent.service.register({
+    id: serviceId,
+    name: 'user-service',
+    address: process.env.SERVICE_IP,
+    port: parseInt(process.env.SERVICE_PORT),
+    tags: ['v1', 'production'],
+    check: {
+      http: `http://${process.env.SERVICE_IP}:${process.env.SERVICE_PORT}/health`,
+      interval: '10s',
+      timeout: '5s',
+      deregistertimeout: '1m'
+    }
+  });
+  
+  console.log(`Service registered: ${serviceId}`);
+  
+  // Deregister on shutdown
+  process.on('SIGTERM', async () => {
+    await consul.agent.service.deregister(serviceId);
+    console.log('Service deregistered');
+    process.exit(0);
+  });
+}
+
+// Register on startup
+registerService();
+```
+
+### Third-Party Registration
+
+**How it works:** External registrar monitors services and registers them
+
+**Example:** Kubernetes automatically registers pods as services
+
+**Advantages:**
+- Service code doesn't need registry logic
+- Centralized registration management
+- Works with legacy services
+
+**Disadvantages:**
+- Additional component to manage
+- Potential delay in registration
+
+## Service Discovery Implementation
+
+### Consul Example
+
+```javascript
+const Consul = require('consul');
+const consul = new Consul();
+
+class ServiceDiscovery {
+  // Discover service instances
+  async discoverService(serviceName) {
+    const result = await consul.health.service({
+      service: serviceName,
+      passing: true // Only healthy instances
+    });
+    
+    return result.map(entry => ({
+      id: entry.Service.ID,
+      address: entry.Service.Address,
+      port: entry.Service.Port,
+      tags: entry.Service.Tags
+    }));
+  }
+  
+  // Get service with load balancing
+  async getServiceInstance(serviceName) {
+    const instances = await this.discoverService(serviceName);
+    
+    if (instances.length === 0) {
+      throw new Error(`No healthy instances of ${serviceName}`);
+    }
+    
+    // Simple round-robin
+    const index = Math.floor(Math.random() * instances.length);
+    return instances[index];
+  }
+  
+  // Make request to service
+  async callService(serviceName, path) {
+    const instance = await this.getServiceInstance(serviceName);
+    const url = `http://${instance.address}:${instance.port}${path}`;
+    
+    const response = await fetch(url);
+    return await response.json();
+  }
+}
+
+// Usage
+const discovery = new ServiceDiscovery();
+
+// Call user service
+const user = await discovery.callService('user-service', '/api/users/123');
+```
+
+### etcd Example
+
+```javascript
+const { Etcd3 } = require('etcd3');
+const client = new Etcd3();
+
+class EtcdServiceDiscovery {
+  // Register service
+  async register(serviceName, serviceInfo) {
+    const key = `/services/${serviceName}/${serviceInfo.id}`;
+    const lease = client.lease(10); // 10 second TTL
+    
+    await lease.put(key).value(JSON.stringify(serviceInfo));
+    
+    // Keep-alive to maintain registration
+    lease.on('lost', () => {
+      console.log('Lease lost, re-registering...');
+      this.register(serviceName, serviceInfo);
+    });
+    
+    return lease;
+  }
+  
+  // Discover services
+  async discover(serviceName) {
+    const prefix = `/services/${serviceName}/`;
+    const services = await client.getAll().prefix(prefix).strings();
+    
+    return Object.values(services).map(s => JSON.parse(s));
+  }
+  
+  // Watch for service changes
+  watchService(serviceName, callback) {
+    const prefix = `/services/${serviceName}/`;
+    const watcher = client.watch().prefix(prefix).create();
+    
+    watcher.on('put', event => {
+      const service = JSON.parse(event.value.toString());
+      callback('added', service);
+    });
+    
+    watcher.on('delete', event => {
+      callback('removed', event.key.toString());
+    });
+  }
+}
+```
+
+## DNS-Based Service Discovery
+
+**How it works:** Use DNS to resolve service names to IP addresses
+
+**Example:**
+- Service name: `user-service.default.svc.cluster.local`
+- DNS returns: `10.0.1.5, 10.0.1.6, 10.0.1.7`
+
+**Advantages:**
+- Standard protocol
+- No special client library needed
+- Works with any language
+
+**Disadvantages:**
+- DNS caching can cause stale data
+- Limited health check integration
+- No advanced load balancing
+
+**Kubernetes DNS Example:**
+
+```javascript
+const dns = require('dns').promises;
+
+async function discoverService(serviceName) {
+  // Kubernetes DNS format
+  const hostname = `${serviceName}.default.svc.cluster.local`;
+  
+  const addresses = await dns.resolve4(hostname);
+  
+  return addresses.map(ip => ({
+    address: ip,
+    port: 8080 // Default port
+  }));
+}
+
+// Usage
+const instances = await discoverService('user-service');
+console.log('Available instances:', instances);
+```
+
+## Kubernetes Service Discovery
+
+**Built-in:** Kubernetes provides automatic service discovery
+
+**How it works:**
+1. Create Service resource
+2. Kubernetes assigns cluster IP
+3. DNS entry created automatically
+4. Pods can access via service name
+
+**Example:**
+
+```yaml
+# Service definition
+apiVersion: v1
+kind: Service
+metadata:
+  name: user-service
+spec:
+  selector:
+    app: user-service
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080
+  type: ClusterIP
+
+---
+# Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-service
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: user-service
+  template:
+    metadata:
+      labels:
+        app: user-service
+    spec:
+      containers:
+      - name: user-service
+        image: user-service:1.0
+        ports:
+        - containerPort: 8080
+```
+
+**Access from another pod:**
+
+```javascript
+// Simply use service name
+const response = await fetch('http://user-service/api/users/123');
+```
+
+## .NET Service Discovery
+
+```csharp
+using Consul;
+
+public class ServiceDiscoveryClient
+{
+    private readonly IConsulClient _consul;
+    private readonly HttpClient _httpClient;
+    
+    public ServiceDiscoveryClient()
+    {
+        _consul = new ConsulClient(config =>
+        {
+            config.Address = new Uri("http://consul:8500");
+        });
+        _httpClient = new HttpClient();
+    }
+    
+    // Register service
+    public async Task RegisterAsync(string serviceName, string serviceId, 
+        string address, int port)
+    {
+        var registration = new AgentServiceRegistration
+        {
+            ID = serviceId,
+            Name = serviceName,
+            Address = address,
+            Port = port,
+            Check = new AgentServiceCheck
+            {
+                HTTP = $"http://{address}:{port}/health",
+                Interval = TimeSpan.FromSeconds(10),
+                Timeout = TimeSpan.FromSeconds(5),
+                DeregisterCriticalServiceAfter = TimeSpan.FromMinutes(1)
+            }
+        };
+        
+        await _consul.Agent.ServiceRegister(registration);
+    }
+    
+    // Discover service
+    public async Task<ServiceInstance> DiscoverAsync(string serviceName)
+    {
+        var services = await _consul.Health.Service(serviceName, null, true);
+        
+        if (!services.Response.Any())
+        {
+            throw new Exception($"No healthy instances of {serviceName}");
+        }
+        
+        // Random selection
+        var service = services.Response[Random.Shared.Next(services.Response.Length)];
+        
+        return new ServiceInstance
+        {
+            Address = service.Service.Address,
+            Port = service.Service.Port
+        };
+    }
+    
+    // Call service
+    public async Task<T> CallServiceAsync<T>(string serviceName, string path)
+    {
+        var instance = await DiscoverAsync(serviceName);
+        var url = $"http://{instance.Address}:{instance.Port}{path}";
+        
+        var response = await _httpClient.GetAsync(url);
+        response.EnsureSuccessStatusCode();
+        
+        return await response.Content.ReadFromJsonAsync<T>();
+    }
+}
+
+public class ServiceInstance
+{
+    public string Address { get; set; }
+    public int Port { get; set; }
+}
+```
+
+## Best Practices
+
+- **Implement health checks** - Only route to healthy instances
+- **Use heartbeats** - Regular updates to registry
+- **Handle failures gracefully** - Fallback when service unavailable
+- **Cache discovery results** - Reduce registry load
+- **Set appropriate TTLs** - Balance freshness and performance
+- **Monitor registry health** - Registry is critical component
+- **Use tags/metadata** - Version, region, environment
+- **Implement circuit breakers** - Prevent cascading failures
+- **Test failure scenarios** - Service down, registry down
+- **Document service contracts** - Clear APIs
+
+## Interview Tips
+
+- **Explain the problem**: Dynamic IP addresses in cloud
+- **Show patterns**: Client-side vs server-side discovery
+- **Demonstrate registration**: Self-registration vs third-party
+- **Discuss health checks**: Active vs passive
+- **Mention solutions**: Consul, etcd, Kubernetes
+- **Show implementation**: Service registration and discovery
+
+## Summary
+
+Service discovery enables services to find each other dynamically in cloud environments. Client-side discovery gives clients control but adds complexity. Server-side discovery simplifies clients but adds network hop. Services register themselves with registry (Consul, etcd, ZooKeeper). Registry stores service locations and health status. Implement health checks to route only to healthy instances. Use heartbeats to maintain registration. Kubernetes provides built-in service discovery via DNS. Cache discovery results to reduce load. Essential for building dynamic, scalable microservices architectures.

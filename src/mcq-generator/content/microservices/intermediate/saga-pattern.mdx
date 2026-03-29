@@ -1,0 +1,366 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Saga Pattern
+---
+
+# Saga Pattern
+
+## What is the Saga Pattern?
+
+The **Saga Pattern** manages distributed transactions by breaking them into a sequence of local transactions. Each local transaction updates the database and publishes an event or message to trigger the next step.
+
+## Why Saga Pattern?
+
+```javascript
+// Problem: Distributed transaction
+async function bookTrip(tripData) {
+  await bookFlight(tripData.flight);      // Service 1
+  await bookHotel(tripData.hotel);        // Service 2
+  await bookCar(tripData.car);            // Service 3
+  
+  // What if hotel booking fails after flight is booked?
+  // Need to cancel flight (compensation)
+}
+```
+
+## Choreography-Based Saga
+
+Services communicate through events without central coordinator.
+
+```javascript
+// Flight Service
+async function bookFlight(flightData) {
+  const booking = await FlightBooking.create(flightData);
+  
+  await eventBus.publish('FlightBooked', {
+    tripId: flightData.tripId,
+    flightBookingId: booking.id
+  });
+  
+  return booking;
+}
+
+// Hotel Service
+eventBus.subscribe('FlightBooked', async (event) => {
+  try {
+    const booking = await HotelBooking.create({
+      tripId: event.data.tripId
+    });
+    
+    await eventBus.publish('HotelBooked', {
+      tripId: event.data.tripId,
+      hotelBookingId: booking.id
+    });
+  } catch (error) {
+    await eventBus.publish('HotelBookingFailed', {
+      tripId: event.data.tripId
+    });
+  }
+});
+
+// Car Service
+eventBus.subscribe('HotelBooked', async (event) => {
+  try {
+    const booking = await CarBooking.create({
+      tripId: event.data.tripId
+    });
+    
+    await eventBus.publish('CarBooked', {
+      tripId: event.data.tripId,
+      carBookingId: booking.id
+    });
+  } catch (error) {
+    await eventBus.publish('CarBookingFailed', {
+      tripId: event.data.tripId
+    });
+  }
+});
+
+// Compensation: Flight Service
+eventBus.subscribe('HotelBookingFailed', async (event) => {
+  await cancelFlight(event.data.tripId);
+  
+  await eventBus.publish('FlightCancelled', {
+    tripId: event.data.tripId
+  });
+});
+
+// Compensation: Hotel Service
+eventBus.subscribe('CarBookingFailed', async (event) => {
+  await cancelHotel(event.data.tripId);
+  
+  await eventBus.publish('HotelCancelled', {
+    tripId: event.data.tripId
+  });
+});
+```
+
+## Orchestration-Based Saga
+
+Central orchestrator coordinates the saga.
+
+```javascript
+class TripBookingSaga {
+  constructor(tripId) {
+    this.tripId = tripId;
+    this.state = 'STARTED';
+    this.bookings = {};
+  }
+  
+  async execute(tripData) {
+    try {
+      // Step 1: Book flight
+      this.bookings.flight = await this.bookFlight(tripData.flight);
+      this.state = 'FLIGHT_BOOKED';
+      
+      // Step 2: Book hotel
+      this.bookings.hotel = await this.bookHotel(tripData.hotel);
+      this.state = 'HOTEL_BOOKED';
+      
+      // Step 3: Book car
+      this.bookings.car = await this.bookCar(tripData.car);
+      this.state = 'CAR_BOOKED';
+      
+      // Complete
+      this.state = 'COMPLETED';
+      return { success: true, bookings: this.bookings };
+      
+    } catch (error) {
+      await this.compensate();
+      this.state = 'FAILED';
+      return { success: false, error: error.message };
+    }
+  }
+  
+  async bookFlight(flightData) {
+    const response = await axios.post('http://flight-service/book', {
+      ...flightData,
+      tripId: this.tripId
+    });
+    
+    if (!response.data.success) {
+      throw new Error('Flight booking failed');
+    }
+    
+    return response.data.booking;
+  }
+  
+  async bookHotel(hotelData) {
+    const response = await axios.post('http://hotel-service/book', {
+      ...hotelData,
+      tripId: this.tripId
+    });
+    
+    if (!response.data.success) {
+      throw new Error('Hotel booking failed');
+    }
+    
+    return response.data.booking;
+  }
+  
+  async bookCar(carData) {
+    const response = await axios.post('http://car-service/book', {
+      ...carData,
+      tripId: this.tripId
+    });
+    
+    if (!response.data.success) {
+      throw new Error('Car booking failed');
+    }
+    
+    return response.data.booking;
+  }
+  
+  async compensate() {
+    console.log(`Compensating saga for trip ${this.tripId}`);
+    
+    // Compensate in reverse order
+    if (this.bookings.car) {
+      await this.cancelCar(this.bookings.car.id);
+    }
+    
+    if (this.bookings.hotel) {
+      await this.cancelHotel(this.bookings.hotel.id);
+    }
+    
+    if (this.bookings.flight) {
+      await this.cancelFlight(this.bookings.flight.id);
+    }
+  }
+  
+  async cancelFlight(bookingId) {
+    await axios.post('http://flight-service/cancel', { bookingId });
+  }
+  
+  async cancelHotel(bookingId) {
+    await axios.post('http://hotel-service/cancel', { bookingId });
+  }
+  
+  async cancelCar(bookingId) {
+    await axios.post('http://car-service/cancel', { bookingId });
+  }
+}
+
+// Usage
+const saga = new TripBookingSaga('trip_123');
+const result = await saga.execute({
+  flight: { from: 'NYC', to: 'LAX' },
+  hotel: { name: 'Hotel California' },
+  car: { type: 'SUV' }
+});
+```
+
+## Saga Execution Coordinator
+
+```javascript
+class SagaExecutionCoordinator {
+  constructor() {
+    this.sagas = new Map();
+  }
+  
+  async execute(sagaId, steps) {
+    const execution = {
+      sagaId,
+      steps,
+      currentStep: 0,
+      completedSteps: [],
+      status: 'RUNNING'
+    };
+    
+    this.sagas.set(sagaId, execution);
+    
+    try {
+      for (let i = 0; i < steps.length; i++) {
+        execution.currentStep = i;
+        
+        const step = steps[i];
+        const result = await step.execute();
+        
+        execution.completedSteps.push({
+          step: i,
+          result,
+          compensation: step.compensate
+        });
+      }
+      
+      execution.status = 'COMPLETED';
+      return { success: true };
+      
+    } catch (error) {
+      execution.status = 'COMPENSATING';
+      await this.compensate(execution);
+      execution.status = 'FAILED';
+      return { success: false, error };
+    }
+  }
+  
+  async compensate(execution) {
+    // Execute compensations in reverse order
+    for (const completed of execution.completedSteps.reverse()) {
+      try {
+        await completed.compensation();
+      } catch (error) {
+        console.error('Compensation failed:', error);
+      }
+    }
+  }
+}
+
+// Define saga steps
+const orderSagaSteps = [
+  {
+    execute: async () => await reserveInventory(),
+    compensate: async () => await releaseInventory()
+  },
+  {
+    execute: async () => await processPayment(),
+    compensate: async () => await refundPayment()
+  },
+  {
+    execute: async () => await createOrder(),
+    compensate: async () => await cancelOrder()
+  }
+];
+
+// Execute saga
+const coordinator = new SagaExecutionCoordinator();
+await coordinator.execute('saga_123', orderSagaSteps);
+```
+
+## Saga State Machine
+
+```javascript
+class OrderSagaStateMachine {
+  constructor(orderId) {
+    this.orderId = orderId;
+    this.state = 'INITIAL';
+  }
+  
+  async transition(event) {
+    switch(this.state) {
+      case 'INITIAL':
+        if (event === 'START') {
+          await this.reserveInventory();
+          this.state = 'INVENTORY_RESERVED';
+        }
+        break;
+      
+      case 'INVENTORY_RESERVED':
+        if (event === 'INVENTORY_SUCCESS') {
+          await this.processPayment();
+          this.state = 'PAYMENT_PROCESSING';
+        } else if (event === 'INVENTORY_FAILED') {
+          this.state = 'FAILED';
+        }
+        break;
+      
+      case 'PAYMENT_PROCESSING':
+        if (event === 'PAYMENT_SUCCESS') {
+          await this.createOrder();
+          this.state = 'COMPLETED';
+        } else if (event === 'PAYMENT_FAILED') {
+          await this.releaseInventory();
+          this.state = 'COMPENSATING';
+        }
+        break;
+      
+      case 'COMPENSATING':
+        this.state = 'FAILED';
+        break;
+    }
+  }
+}
+```
+
+## Comparison
+
+| Aspect | Choreography | Orchestration |
+|--------|--------------|---------------|
+| **Coordination** | Decentralized | Centralized |
+| **Coupling** | Loose | Tighter |
+| **Complexity** | Distributed | Centralized |
+| **Visibility** | Harder to track | Easy to track |
+| **Failure Handling** | Complex | Simpler |
+
+## Best Practices
+
+1. **Make operations idempotent**
+2. **Use unique transaction IDs**
+3. **Implement timeout handling**
+4. **Log all saga steps**
+5. **Monitor saga execution**
+6. **Handle partial failures**
+7. **Test compensation logic**
+
+## Interview Tips
+
+- **Explain Saga**: Sequence of local transactions
+- **Show both types**: Choreography vs orchestration
+- **Demonstrate compensation**: Rollback mechanism
+- **Discuss trade-offs**: Coupling vs visibility
+- **Mention state machine**: Track saga progress
+- **Show best practices**: Idempotency, logging
+
+## Summary
+
+Saga Pattern manages distributed transactions through local transactions and compensations. Choreography uses events for decentralized coordination. Orchestration uses central coordinator for better visibility. Implement compensating transactions for rollback. Ensure idempotency and proper error handling. Choose based on complexity and coordination needs.

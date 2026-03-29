@@ -1,0 +1,773 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Design Patterns in JavaScript
+---
+
+# Design Patterns in JavaScript
+
+## What are Design Patterns?
+
+Design patterns are reusable solutions to commonly occurring problems in software design. They represent best practices and provide a template for how to solve problems in various situations.
+
+## Why Use Design Patterns?
+
+- **Proven solutions**: Time-tested approaches to common problems
+- **Code reusability**: Write less code, reuse more
+- **Maintainability**: Easier to understand and modify
+- **Communication**: Common vocabulary for developers
+- **Scalability**: Better architecture for growing applications
+
+## Categories of Design Patterns
+
+### 1. Creational Patterns
+Deal with object creation mechanisms
+
+### 2. Structural Patterns
+Deal with object composition and relationships
+
+### 3. Behavioral Patterns
+Deal with communication between objects
+
+## Creational Patterns
+
+### 1. Singleton Pattern
+
+Ensures a class has only one instance and provides global access to it.
+
+```javascript
+class Database {
+  constructor() {
+    if (Database.instance) {
+      return Database.instance;
+    }
+    
+    this.connection = null;
+    Database.instance = this;
+  }
+  
+  connect() {
+    if (!this.connection) {
+      this.connection = 'Connected to database';
+      console.log(this.connection);
+    }
+    return this.connection;
+  }
+}
+
+// Usage
+const db1 = new Database();
+const db2 = new Database();
+
+console.log(db1 === db2); // true - same instance
+```
+
+**Modern ES6 Module Singleton:**
+
+```javascript
+// database.js
+class Database {
+  constructor() {
+    this.connection = null;
+  }
+  
+  connect() {
+    if (!this.connection) {
+      this.connection = 'Connected to database';
+    }
+    return this.connection;
+  }
+}
+
+export default new Database();
+
+// Usage in other files
+import database from './database.js';
+database.connect();
+```
+
+### 2. Factory Pattern
+
+Creates objects without specifying the exact class to create.
+
+```javascript
+class Car {
+  constructor(options) {
+    this.doors = options.doors || 4;
+    this.state = options.state || 'brand new';
+    this.color = options.color || 'silver';
+  }
+}
+
+class Truck {
+  constructor(options) {
+    this.doors = options.doors || 2;
+    this.state = options.state || 'used';
+    this.wheelSize = options.wheelSize || 'large';
+  }
+}
+
+class VehicleFactory {
+  createVehicle(type, options) {
+    switch(type) {
+      case 'car':
+        return new Car(options);
+      case 'truck':
+        return new Truck(options);
+      default:
+        throw new Error('Unknown vehicle type');
+    }
+  }
+}
+
+// Usage
+const factory = new VehicleFactory();
+const car = factory.createVehicle('car', { color: 'blue', doors: 2 });
+const truck = factory.createVehicle('truck', { wheelSize: 'medium' });
+```
+
+### 3. Builder Pattern
+
+Constructs complex objects step by step.
+
+```javascript
+class QueryBuilder {
+  constructor() {
+    this.query = '';
+    this.conditions = [];
+    this.orderBy = '';
+    this.limitValue = null;
+  }
+  
+  select(fields) {
+    this.query = `SELECT ${fields.join(', ')}`;
+    return this;
+  }
+  
+  from(table) {
+    this.query += ` FROM ${table}`;
+    return this;
+  }
+  
+  where(condition) {
+    this.conditions.push(condition);
+    return this;
+  }
+  
+  order(field, direction = 'ASC') {
+    this.orderBy = ` ORDER BY ${field} ${direction}`;
+    return this;
+  }
+  
+  limit(count) {
+    this.limitValue = ` LIMIT ${count}`;
+    return this;
+  }
+  
+  build() {
+    let sql = this.query;
+    
+    if (this.conditions.length > 0) {
+      sql += ` WHERE ${this.conditions.join(' AND ')}`;
+    }
+    
+    if (this.orderBy) {
+      sql += this.orderBy;
+    }
+    
+    if (this.limitValue) {
+      sql += this.limitValue;
+    }
+    
+    return sql;
+  }
+}
+
+// Usage
+const query = new QueryBuilder()
+  .select(['id', 'name', 'email'])
+  .from('users')
+  .where('age > 18')
+  .where('active = true')
+  .order('name', 'ASC')
+  .limit(10)
+  .build();
+
+console.log(query);
+// SELECT id, name, email FROM users WHERE age > 18 AND active = true ORDER BY name ASC LIMIT 10
+```
+
+### 4. Prototype Pattern
+
+Creates objects based on a template of an existing object.
+
+```javascript
+const carPrototype = {
+  init(model, year) {
+    this.model = model;
+    this.year = year;
+  },
+  
+  getInfo() {
+    return `${this.model} (${this.year})`;
+  }
+};
+
+// Create new objects from prototype
+const car1 = Object.create(carPrototype);
+car1.init('Tesla Model 3', 2023);
+
+const car2 = Object.create(carPrototype);
+car2.init('BMW i4', 2024);
+
+console.log(car1.getInfo()); // Tesla Model 3 (2023)
+console.log(car2.getInfo()); // BMW i4 (2024)
+```
+
+## Structural Patterns
+
+### 1. Module Pattern
+
+Encapsulates private and public members.
+
+```javascript
+const UserModule = (function() {
+  // Private variables and functions
+  let users = [];
+  
+  function validateUser(user) {
+    return user.name && user.email;
+  }
+  
+  // Public API
+  return {
+    addUser(user) {
+      if (validateUser(user)) {
+        users.push(user);
+        return true;
+      }
+      return false;
+    },
+    
+    getUsers() {
+      return [...users]; // Return copy
+    },
+    
+    getUserCount() {
+      return users.length;
+    }
+  };
+})();
+
+// Usage
+UserModule.addUser({ name: 'John', email: 'john@example.com' });
+console.log(UserModule.getUserCount()); // 1
+```
+
+**Modern ES6 Module:**
+
+```javascript
+// userModule.js
+let users = [];
+
+function validateUser(user) {
+  return user.name && user.email;
+}
+
+export function addUser(user) {
+  if (validateUser(user)) {
+    users.push(user);
+    return true;
+  }
+  return false;
+}
+
+export function getUsers() {
+  return [...users];
+}
+
+export function getUserCount() {
+  return users.length;
+}
+```
+
+### 2. Decorator Pattern
+
+Adds new functionality to existing objects dynamically.
+
+```javascript
+class Coffee {
+  cost() {
+    return 5;
+  }
+  
+  description() {
+    return 'Simple coffee';
+  }
+}
+
+class MilkDecorator {
+  constructor(coffee) {
+    this.coffee = coffee;
+  }
+  
+  cost() {
+    return this.coffee.cost() + 2;
+  }
+  
+  description() {
+    return this.coffee.description() + ', milk';
+  }
+}
+
+class SugarDecorator {
+  constructor(coffee) {
+    this.coffee = coffee;
+  }
+  
+  cost() {
+    return this.coffee.cost() + 1;
+  }
+  
+  description() {
+    return this.coffee.description() + ', sugar';
+  }
+}
+
+// Usage
+let myCoffee = new Coffee();
+console.log(myCoffee.description(), '-', myCoffee.cost()); // Simple coffee - 5
+
+myCoffee = new MilkDecorator(myCoffee);
+console.log(myCoffee.description(), '-', myCoffee.cost()); // Simple coffee, milk - 7
+
+myCoffee = new SugarDecorator(myCoffee);
+console.log(myCoffee.description(), '-', myCoffee.cost()); // Simple coffee, milk, sugar - 8
+```
+
+### 3. Facade Pattern
+
+Provides a simplified interface to a complex subsystem.
+
+```javascript
+class CPU {
+  freeze() { console.log('CPU: Freezing...'); }
+  jump(position) { console.log(`CPU: Jumping to ${position}`); }
+  execute() { console.log('CPU: Executing...'); }
+}
+
+class Memory {
+  load(position, data) {
+    console.log(`Memory: Loading ${data} at ${position}`);
+  }
+}
+
+class HardDrive {
+  read(sector, size) {
+    console.log(`HardDrive: Reading ${size} bytes from sector ${sector}`);
+    return 'boot data';
+  }
+}
+
+// Facade
+class ComputerFacade {
+  constructor() {
+    this.cpu = new CPU();
+    this.memory = new Memory();
+    this.hardDrive = new HardDrive();
+  }
+  
+  start() {
+    console.log('Starting computer...');
+    this.cpu.freeze();
+    const bootData = this.hardDrive.read(0, 1024);
+    this.memory.load(0, bootData);
+    this.cpu.jump(0);
+    this.cpu.execute();
+    console.log('Computer started!');
+  }
+}
+
+// Usage - Simple interface to complex system
+const computer = new ComputerFacade();
+computer.start();
+```
+
+### 4. Proxy Pattern
+
+Provides a placeholder or surrogate for another object.
+
+```javascript
+class RealImage {
+  constructor(filename) {
+    this.filename = filename;
+    this.loadFromDisk();
+  }
+  
+  loadFromDisk() {
+    console.log(`Loading image: ${this.filename}`);
+  }
+  
+  display() {
+    console.log(`Displaying image: ${this.filename}`);
+  }
+}
+
+class ProxyImage {
+  constructor(filename) {
+    this.filename = filename;
+    this.realImage = null;
+  }
+  
+  display() {
+    // Lazy loading - only load when needed
+    if (!this.realImage) {
+      this.realImage = new RealImage(this.filename);
+    }
+    this.realImage.display();
+  }
+}
+
+// Usage
+const image = new ProxyImage('photo.jpg');
+// Image not loaded yet
+
+image.display(); // Loads and displays
+// Loading image: photo.jpg
+// Displaying image: photo.jpg
+
+image.display(); // Just displays (already loaded)
+// Displaying image: photo.jpg
+```
+
+## Behavioral Patterns
+
+### 1. Observer Pattern
+
+Defines a one-to-many dependency between objects.
+
+```javascript
+class Subject {
+  constructor() {
+    this.observers = [];
+  }
+  
+  subscribe(observer) {
+    this.observers.push(observer);
+  }
+  
+  unsubscribe(observer) {
+    this.observers = this.observers.filter(obs => obs !== observer);
+  }
+  
+  notify(data) {
+    this.observers.forEach(observer => observer.update(data));
+  }
+}
+
+class Observer {
+  constructor(name) {
+    this.name = name;
+  }
+  
+  update(data) {
+    console.log(`${this.name} received:`, data);
+  }
+}
+
+// Usage
+const subject = new Subject();
+
+const observer1 = new Observer('Observer 1');
+const observer2 = new Observer('Observer 2');
+
+subject.subscribe(observer1);
+subject.subscribe(observer2);
+
+subject.notify('Hello observers!');
+// Observer 1 received: Hello observers!
+// Observer 2 received: Hello observers!
+```
+
+### 2. Strategy Pattern
+
+Defines a family of algorithms and makes them interchangeable.
+
+```javascript
+// Strategies
+class CreditCardStrategy {
+  pay(amount) {
+    console.log(`Paid $${amount} using Credit Card`);
+  }
+}
+
+class PayPalStrategy {
+  pay(amount) {
+    console.log(`Paid $${amount} using PayPal`);
+  }
+}
+
+class CryptoStrategy {
+  pay(amount) {
+    console.log(`Paid $${amount} using Cryptocurrency`);
+  }
+}
+
+// Context
+class ShoppingCart {
+  constructor(paymentStrategy) {
+    this.paymentStrategy = paymentStrategy;
+  }
+  
+  setPaymentStrategy(strategy) {
+    this.paymentStrategy = strategy;
+  }
+  
+  checkout(amount) {
+    this.paymentStrategy.pay(amount);
+  }
+}
+
+// Usage
+const cart = new ShoppingCart(new CreditCardStrategy());
+cart.checkout(100); // Paid $100 using Credit Card
+
+cart.setPaymentStrategy(new PayPalStrategy());
+cart.checkout(50); // Paid $50 using PayPal
+```
+
+### 3. Command Pattern
+
+Encapsulates a request as an object.
+
+```javascript
+// Receiver
+class Light {
+  turnOn() {
+    console.log('Light is ON');
+  }
+  
+  turnOff() {
+    console.log('Light is OFF');
+  }
+}
+
+// Commands
+class TurnOnCommand {
+  constructor(light) {
+    this.light = light;
+  }
+  
+  execute() {
+    this.light.turnOn();
+  }
+  
+  undo() {
+    this.light.turnOff();
+  }
+}
+
+class TurnOffCommand {
+  constructor(light) {
+    this.light = light;
+  }
+  
+  execute() {
+    this.light.turnOff();
+  }
+  
+  undo() {
+    this.light.turnOn();
+  }
+}
+
+// Invoker
+class RemoteControl {
+  constructor() {
+    this.history = [];
+  }
+  
+  execute(command) {
+    command.execute();
+    this.history.push(command);
+  }
+  
+  undo() {
+    const command = this.history.pop();
+    if (command) {
+      command.undo();
+    }
+  }
+}
+
+// Usage
+const light = new Light();
+const remote = new RemoteControl();
+
+remote.execute(new TurnOnCommand(light));  // Light is ON
+remote.execute(new TurnOffCommand(light)); // Light is OFF
+remote.undo(); // Light is ON
+```
+
+### 4. Iterator Pattern
+
+Provides a way to access elements sequentially without exposing underlying representation.
+
+```javascript
+class Iterator {
+  constructor(items) {
+    this.items = items;
+    this.index = 0;
+  }
+  
+  hasNext() {
+    return this.index < this.items.length;
+  }
+  
+  next() {
+    return this.items[this.index++];
+  }
+  
+  reset() {
+    this.index = 0;
+  }
+}
+
+class Collection {
+  constructor() {
+    this.items = [];
+  }
+  
+  add(item) {
+    this.items.push(item);
+  }
+  
+  createIterator() {
+    return new Iterator(this.items);
+  }
+}
+
+// Usage
+const collection = new Collection();
+collection.add('Item 1');
+collection.add('Item 2');
+collection.add('Item 3');
+
+const iterator = collection.createIterator();
+
+while (iterator.hasNext()) {
+  console.log(iterator.next());
+}
+// Item 1
+// Item 2
+// Item 3
+```
+
+## Modern JavaScript Patterns
+
+### 1. Revealing Module Pattern
+
+```javascript
+const Calculator = (function() {
+  // Private
+  let result = 0;
+  
+  function validateNumber(num) {
+    return typeof num === 'number';
+  }
+  
+  // Public
+  function add(num) {
+    if (validateNumber(num)) {
+      result += num;
+    }
+    return this;
+  }
+  
+  function subtract(num) {
+    if (validateNumber(num)) {
+      result -= num;
+    }
+    return this;
+  }
+  
+  function getResult() {
+    return result;
+  }
+  
+  function reset() {
+    result = 0;
+    return this;
+  }
+  
+  // Reveal public methods
+  return {
+    add,
+    subtract,
+    getResult,
+    reset
+  };
+})();
+
+// Usage
+Calculator.add(5).add(3).subtract(2);
+console.log(Calculator.getResult()); // 6
+```
+
+### 2. Mixin Pattern
+
+```javascript
+const canEat = {
+  eat(food) {
+    console.log(`Eating ${food}`);
+  }
+};
+
+const canWalk = {
+  walk() {
+    console.log('Walking...');
+  }
+};
+
+const canSwim = {
+  swim() {
+    console.log('Swimming...');
+  }
+};
+
+// Create object with mixins
+class Person {
+  constructor(name) {
+    this.name = name;
+  }
+}
+
+Object.assign(Person.prototype, canEat, canWalk);
+
+const person = new Person('John');
+person.eat('pizza'); // Eating pizza
+person.walk();       // Walking...
+```
+
+## Best Practices
+
+1. **Don't overuse patterns**: Use them when they solve a real problem
+2. **Keep it simple**: Choose the simplest solution that works
+3. **Understand the problem**: Know why you're using a pattern
+4. **Consider alternatives**: Modern JavaScript features may be better
+5. **Document your patterns**: Make it clear which patterns you're using
+6. **Test thoroughly**: Patterns add complexity, ensure they work correctly
+
+## Interview Tips
+
+- **Explain the purpose** of design patterns in software development
+- **Categorize patterns** into creational, structural, and behavioral
+- **Provide real-world examples** of when to use each pattern
+- **Show code implementation** of common patterns
+- **Discuss trade-offs** between different patterns
+- **Mention modern alternatives** using ES6+ features
+- **Explain anti-patterns** and when patterns shouldn't be used
+- **Demonstrate understanding** of SOLID principles
+
+## Summary
+
+Design patterns are proven solutions to common software design problems. They improve code maintainability, reusability, and communication among developers. Key patterns include Singleton, Factory, Observer, Strategy, and many others. Modern JavaScript features like modules, classes, and async/await have made some patterns easier to implement while making others less necessary.

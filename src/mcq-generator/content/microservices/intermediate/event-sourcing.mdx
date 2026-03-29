@@ -1,0 +1,360 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Event Sourcing
+---
+
+# Event Sourcing
+
+## What is Event Sourcing?
+
+**Event Sourcing** stores the state of an entity as a sequence of events rather than just the current state. The current state is derived by replaying all events.
+
+## Traditional State Storage
+
+```javascript
+// Traditional: Store current state only
+const order = {
+  id: 'order_123',
+  status: 'SHIPPED',  // Only current state
+  total: 99.99
+};
+```
+
+## Event Sourcing Approach
+
+```javascript
+// Event Sourcing: Store all events
+const events = [
+  { type: 'OrderCreated', data: { orderId: 'order_123', total: 99.99 } },
+  { type: 'OrderPaid', data: { orderId: 'order_123', paymentId: 'pay_456' } },
+  { type: 'OrderShipped', data: { orderId: 'order_123', trackingId: 'track_789' } }
+];
+
+// Rebuild state by replaying events
+function rebuildState(events) {
+  let state = { status: 'PENDING' };
+  
+  for (const event of events) {
+    state = applyEvent(state, event);
+  }
+  
+  return state;
+}
+```
+
+## Event Store Implementation
+
+```javascript
+class EventStore {
+  constructor() {
+    this.events = new Map();
+  }
+  
+  append(aggregateId, event) {
+    if (!this.events.has(aggregateId)) {
+      this.events.set(aggregateId, []);
+    }
+    
+    this.events.get(aggregateId).push({
+      ...event,
+      timestamp: new Date(),
+      version: this.events.get(aggregateId).length + 1
+    });
+  }
+  
+  getEvents(aggregateId) {
+    return this.events.get(aggregateId) || [];
+  }
+  
+  getEventsFromVersion(aggregateId, version) {
+    const events = this.getEvents(aggregateId);
+    return events.filter(e => e.version > version);
+  }
+}
+
+const eventStore = new EventStore();
+```
+
+## Aggregate with Event Sourcing
+
+```javascript
+class OrderAggregate {
+  constructor(orderId) {
+    this.orderId = orderId;
+    this.version = 0;
+    this.uncommittedEvents = [];
+    this.state = {
+      status: 'PENDING',
+      items: [],
+      total: 0
+    };
+  }
+  
+  // Load from event store
+  static async load(orderId, eventStore) {
+    const order = new OrderAggregate(orderId);
+    const events = eventStore.getEvents(orderId);
+    
+    for (const event of events) {
+      order.applyEvent(event, false);
+    }
+    
+    return order;
+  }
+  
+  // Commands
+  create(items, total) {
+    this.raiseEvent({
+      type: 'OrderCreated',
+      data: { orderId: this.orderId, items, total }
+    });
+  }
+  
+  pay(paymentId) {
+    if (this.state.status !== 'PENDING') {
+      throw new Error('Order already paid');
+    }
+    
+    this.raiseEvent({
+      type: 'OrderPaid',
+      data: { orderId: this.orderId, paymentId }
+    });
+  }
+  
+  ship(trackingId) {
+    if (this.state.status !== 'PAID') {
+      throw new Error('Order not paid');
+    }
+    
+    this.raiseEvent({
+      type: 'OrderShipped',
+      data: { orderId: this.orderId, trackingId }
+    });
+  }
+  
+  // Event handling
+  raiseEvent(event) {
+    this.applyEvent(event, true);
+  }
+  
+  applyEvent(event, isNew) {
+    // Update state based on event
+    switch(event.type) {
+      case 'OrderCreated':
+        this.state.status = 'PENDING';
+        this.state.items = event.data.items;
+        this.state.total = event.data.total;
+        break;
+      
+      case 'OrderPaid':
+        this.state.status = 'PAID';
+        this.state.paymentId = event.data.paymentId;
+        break;
+      
+      case 'OrderShipped':
+        this.state.status = 'SHIPPED';
+        this.state.trackingId = event.data.trackingId;
+        break;
+    }
+    
+    this.version++;
+    
+    if (isNew) {
+      this.uncommittedEvents.push(event);
+    }
+  }
+  
+  // Save to event store
+  async save(eventStore) {
+    for (const event of this.uncommittedEvents) {
+      eventStore.append(this.orderId, event);
+    }
+    
+    this.uncommittedEvents = [];
+  }
+  
+  getUncommittedEvents() {
+    return this.uncommittedEvents;
+  }
+}
+```
+
+## Usage Example
+
+```javascript
+// Create new order
+const order = new OrderAggregate('order_123');
+order.create([{ productId: 'prod_1', quantity: 2 }], 99.99);
+await order.save(eventStore);
+
+// Load existing order
+const existingOrder = await OrderAggregate.load('order_123', eventStore);
+console.log(existingOrder.state); // { status: 'PENDING', items: [...], total: 99.99 }
+
+// Process payment
+existingOrder.pay('pay_456');
+await existingOrder.save(eventStore);
+
+// Ship order
+existingOrder.ship('track_789');
+await existingOrder.save(eventStore);
+
+// View all events
+const events = eventStore.getEvents('order_123');
+console.log(events);
+// [
+//   { type: 'OrderCreated', ... },
+//   { type: 'OrderPaid', ... },
+//   { type: 'OrderShipped', ... }
+// ]
+```
+
+## Snapshots
+
+```javascript
+class SnapshotStore {
+  constructor() {
+    this.snapshots = new Map();
+  }
+  
+  save(aggregateId, state, version) {
+    this.snapshots.set(aggregateId, {
+      state,
+      version,
+      timestamp: new Date()
+    });
+  }
+  
+  get(aggregateId) {
+    return this.snapshots.get(aggregateId);
+  }
+}
+
+// Load with snapshot
+class OrderAggregate {
+  static async load(orderId, eventStore, snapshotStore) {
+    const order = new OrderAggregate(orderId);
+    
+    // Try to load snapshot
+    const snapshot = snapshotStore.get(orderId);
+    
+    if (snapshot) {
+      order.state = snapshot.state;
+      order.version = snapshot.version;
+      
+      // Only replay events after snapshot
+      const events = eventStore.getEventsFromVersion(orderId, snapshot.version);
+      
+      for (const event of events) {
+        order.applyEvent(event, false);
+      }
+    } else {
+      // No snapshot, replay all events
+      const events = eventStore.getEvents(orderId);
+      
+      for (const event of events) {
+        order.applyEvent(event, false);
+      }
+    }
+    
+    return order;
+  }
+  
+  async save(eventStore, snapshotStore) {
+    // Save events
+    for (const event of this.uncommittedEvents) {
+      eventStore.append(this.orderId, event);
+    }
+    
+    // Create snapshot every 10 events
+    if (this.version % 10 === 0) {
+      snapshotStore.save(this.orderId, this.state, this.version);
+    }
+    
+    this.uncommittedEvents = [];
+  }
+}
+```
+
+## Projections
+
+```javascript
+// Build read models from events
+class OrderProjection {
+  constructor() {
+    this.orders = new Map();
+  }
+  
+  project(event) {
+    switch(event.type) {
+      case 'OrderCreated':
+        this.orders.set(event.data.orderId, {
+          id: event.data.orderId,
+          status: 'PENDING',
+          total: event.data.total,
+          createdAt: event.timestamp
+        });
+        break;
+      
+      case 'OrderPaid':
+        const order = this.orders.get(event.data.orderId);
+        order.status = 'PAID';
+        order.paidAt = event.timestamp;
+        break;
+      
+      case 'OrderShipped':
+        const shippedOrder = this.orders.get(event.data.orderId);
+        shippedOrder.status = 'SHIPPED';
+        shippedOrder.shippedAt = event.timestamp;
+        break;
+    }
+  }
+  
+  getOrder(orderId) {
+    return this.orders.get(orderId);
+  }
+  
+  getAllOrders() {
+    return Array.from(this.orders.values());
+  }
+}
+
+// Build projection
+const projection = new OrderProjection();
+const events = eventStore.getEvents('order_123');
+
+for (const event of events) {
+  projection.project(event);
+}
+
+const orderView = projection.getOrder('order_123');
+```
+
+## Benefits
+
+1. **Complete Audit Trail**: Every change is recorded
+2. **Time Travel**: Rebuild state at any point
+3. **Event Replay**: Reprocess events for new features
+4. **Debugging**: See exactly what happened
+5. **Analytics**: Rich event data for analysis
+
+## Challenges
+
+1. **Complexity**: More complex than CRUD
+2. **Event Schema**: Managing event versions
+3. **Performance**: Replaying many events
+4. **Storage**: Events accumulate over time
+5. **Learning Curve**: New paradigm
+
+## Interview Tips
+
+- **Explain concept**: Store events, not state
+- **Show implementation**: Event store, aggregates
+- **Demonstrate replay**: Rebuild state from events
+- **Discuss snapshots**: Performance optimization
+- **Mention benefits**: Audit trail, time travel
+- **Acknowledge challenges**: Complexity, performance
+
+## Summary
+
+Event Sourcing stores entity state as sequence of events. Current state derived by replaying events. Provides complete audit trail and time travel capabilities. Use snapshots for performance. Build projections for read models. Adds complexity but valuable for domains requiring full history and auditability.

@@ -1,0 +1,393 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Indexing in NoSQL
+---
+
+# Indexing in NoSQL
+
+## Why Indexes?
+
+Indexes improve query performance by allowing the database to quickly locate data without scanning entire collections.
+
+```javascript
+// Without index: O(n) - scans all documents
+db.users.find({ email: "john@example.com" });
+
+// With index: O(log n) - uses B-tree
+db.users.createIndex({ email: 1 });
+db.users.find({ email: "john@example.com" });
+```
+
+## MongoDB Indexes
+
+### Single Field Index
+
+```javascript
+// Create index on single field
+db.users.createIndex({ email: 1 });  // Ascending
+db.users.createIndex({ age: -1 });   // Descending
+
+// Unique index
+db.users.createIndex({ email: 1 }, { unique: true });
+
+// Sparse index (only documents with field)
+db.users.createIndex({ phone: 1 }, { sparse: true });
+
+// TTL index (auto-delete after time)
+db.sessions.createIndex(
+  { createdAt: 1 },
+  { expireAfterSeconds: 3600 }
+);
+```
+
+### Compound Index
+
+```javascript
+// Index on multiple fields
+db.users.createIndex({ status: 1, createdAt: -1 });
+
+// Query uses compound index
+db.users.find({ status: "active" }).sort({ createdAt: -1 });
+
+// Prefix queries also use index
+db.users.find({ status: "active" });  // Uses index
+
+// Non-prefix doesn't use index
+db.users.find({ createdAt: { $gt: date } });  // Doesn't use index
+```
+
+### Multikey Index
+
+```javascript
+// Index on array fields
+db.users.createIndex({ tags: 1 });
+
+// Queries on array elements use index
+db.users.find({ tags: "premium" });
+db.users.find({ tags: { $in: ["premium", "verified"] } });
+```
+
+### Text Index
+
+```javascript
+// Full-text search index
+db.articles.createIndex({ title: "text", content: "text" });
+
+// Text search
+db.articles.find({ $text: { $search: "mongodb tutorial" } });
+
+// Text search with score
+db.articles.find(
+  { $text: { $search: "mongodb" } },
+  { score: { $meta: "textScore" } }
+).sort({ score: { $meta: "textScore" } });
+```
+
+### Geospatial Index
+
+```javascript
+// 2dsphere index for location data
+db.places.createIndex({ location: "2dsphere" });
+
+// Find nearby places
+db.places.find({
+  location: {
+    $near: {
+      $geometry: {
+        type: "Point",
+        coordinates: [-73.97, 40.77]
+      },
+      $maxDistance: 1000  // meters
+    }
+  }
+});
+```
+
+## Index Management
+
+```javascript
+// List all indexes
+db.users.getIndexes();
+
+// Drop index
+db.users.dropIndex("email_1");
+db.users.dropIndex({ email: 1 });
+
+// Drop all indexes (except _id)
+db.users.dropIndexes();
+
+// Rebuild indexes
+db.users.reIndex();
+
+// Check index usage
+db.users.find({ email: "john@example.com" }).explain("executionStats");
+```
+
+## Index Performance
+
+```javascript
+// Analyze query performance
+const explain = db.users.find({ email: "john@example.com" }).explain("executionStats");
+
+console.log({
+  executionTimeMillis: explain.executionStats.executionTimeMillis,
+  totalDocsExamined: explain.executionStats.totalDocsExamined,
+  totalKeysExamined: explain.executionStats.totalKeysExamined,
+  indexUsed: explain.executionStats.executionStages.indexName
+});
+
+// Good: Uses index
+// totalDocsExamined: 1
+// totalKeysExamined: 1
+
+// Bad: Collection scan
+// totalDocsExamined: 10000
+// totalKeysExamined: 0
+```
+
+## Cassandra Indexes
+
+### Primary Key Index
+
+```sql
+-- Partition key automatically indexed
+CREATE TABLE users (
+  user_id UUID PRIMARY KEY,
+  name TEXT,
+  email TEXT
+);
+
+-- Query by partition key (fast)
+SELECT * FROM users WHERE user_id = ?;
+```
+
+### Secondary Index
+
+```sql
+-- Create secondary index
+CREATE INDEX ON users (email);
+
+-- Query by indexed column
+SELECT * FROM users WHERE email = 'john@example.com';
+
+-- Note: Secondary indexes in Cassandra are not recommended
+-- for high-cardinality columns or heavy write workloads
+```
+
+### Materialized View
+
+```sql
+-- Better alternative to secondary index
+CREATE MATERIALIZED VIEW users_by_email AS
+  SELECT * FROM users
+  WHERE email IS NOT NULL
+  PRIMARY KEY (email, user_id);
+
+-- Query materialized view
+SELECT * FROM users_by_email WHERE email = 'john@example.com';
+```
+
+## Redis Indexes (RediSearch)
+
+```javascript
+const redis = require('redis');
+const client = redis.createClient();
+
+// Create index
+await client.ft.create('idx:users', {
+  name: { type: 'TEXT' },
+  email: { type: 'TAG' },
+  age: { type: 'NUMERIC' }
+}, {
+  ON: 'HASH',
+  PREFIX: 'user:'
+});
+
+// Search
+const results = await client.ft.search('idx:users', '@email:{john@example.com}');
+
+// Numeric range
+const ageResults = await client.ft.search('idx:users', '@age:[25 35]');
+
+// Text search
+const nameResults = await client.ft.search('idx:users', '@name:john');
+```
+
+## DynamoDB Indexes
+
+### Global Secondary Index (GSI)
+
+```javascript
+// Create table with GSI
+const params = {
+  TableName: 'Users',
+  KeySchema: [
+    { AttributeName: 'userId', KeyType: 'HASH' }
+  ],
+  AttributeDefinitions: [
+    { AttributeName: 'userId', AttributeType: 'S' },
+    { AttributeName: 'email', AttributeType: 'S' }
+  ],
+  GlobalSecondaryIndexes: [{
+    IndexName: 'EmailIndex',
+    KeySchema: [
+      { AttributeName: 'email', KeyType: 'HASH' }
+    ],
+    Projection: { ProjectionType: 'ALL' }
+  }]
+};
+
+// Query GSI
+const command = new QueryCommand({
+  TableName: 'Users',
+  IndexName: 'EmailIndex',
+  KeyConditionExpression: 'email = :email',
+  ExpressionAttributeValues: {
+    ':email': 'john@example.com'
+  }
+});
+```
+
+### Local Secondary Index (LSI)
+
+```javascript
+// LSI - same partition key, different sort key
+const lsiParams = {
+  TableName: 'UserPosts',
+  KeySchema: [
+    { AttributeName: 'userId', KeyType: 'HASH' },
+    { AttributeName: 'timestamp', KeyType: 'RANGE' }
+  ],
+  LocalSecondaryIndexes: [{
+    IndexName: 'TitleIndex',
+    KeySchema: [
+      { AttributeName: 'userId', KeyType: 'HASH' },
+      { AttributeName: 'title', KeyType: 'RANGE' }
+    ],
+    Projection: { ProjectionType: 'ALL' }
+  }]
+};
+```
+
+## Index Best Practices
+
+```javascript
+const indexBestPractices = {
+  mongodb: [
+    'Index fields used in queries',
+    'Create compound indexes for multiple fields',
+    'Use covered queries (return only indexed fields)',
+    'Limit number of indexes (impacts writes)',
+    'Use sparse indexes for optional fields',
+    'Monitor index usage with explain()',
+    'Drop unused indexes'
+  ],
+  
+  cassandra: [
+    'Avoid secondary indexes on high-cardinality columns',
+    'Use materialized views instead of secondary indexes',
+    'Design partition keys for even distribution',
+    'Use clustering keys for sorting'
+  ],
+  
+  dynamodb: [
+    'Use GSI for alternate access patterns',
+    'Project only needed attributes',
+    'Monitor GSI capacity separately',
+    'Limit number of GSIs (max 20 per table)'
+  ]
+};
+```
+
+## Covered Queries
+
+```javascript
+// MongoDB - Query covered by index
+db.users.createIndex({ email: 1, name: 1 });
+
+// Covered query (no document fetch needed)
+db.users.find(
+  { email: "john@example.com" },
+  { _id: 0, email: 1, name: 1 }
+);
+
+// Check if covered
+const explain = db.users.find(
+  { email: "john@example.com" },
+  { _id: 0, email: 1, name: 1 }
+).explain("executionStats");
+
+console.log(explain.executionStats.totalDocsExamined);  // Should be 0
+```
+
+## Index Size and Memory
+
+```javascript
+// Check index size
+db.users.stats().indexSizes;
+
+// Indexes should fit in RAM for best performance
+const indexSize = db.users.stats().indexSizes.email_1;
+const ramSize = db.serverStatus().mem.resident * 1024 * 1024;
+
+if (indexSize > ramSize) {
+  console.warn('Index larger than RAM - performance may suffer');
+}
+```
+
+## .NET with Indexes
+
+```csharp
+using MongoDB.Driver;
+
+public class IndexService
+{
+    private readonly IMongoCollection<User> _users;
+    
+    public async Task CreateIndexes()
+    {
+        // Single field index
+        await _users.Indexes.CreateOneAsync(
+            new CreateIndexModel<User>(
+                Builders<User>.IndexKeys.Ascending(u => u.Email),
+                new CreateIndexOptions { Unique = true }
+            )
+        );
+        
+        // Compound index
+        await _users.Indexes.CreateOneAsync(
+            new CreateIndexModel<User>(
+                Builders<User>.IndexKeys
+                    .Ascending(u => u.Status)
+                    .Descending(u => u.CreatedAt)
+            )
+        );
+        
+        // Text index
+        await _users.Indexes.CreateOneAsync(
+            new CreateIndexModel<User>(
+                Builders<User>.IndexKeys.Text(u => u.Name)
+            )
+        );
+    }
+    
+    public async Task<List<string>> ListIndexes()
+    {
+        var indexes = await _users.Indexes.List().ToListAsync();
+        return indexes.Select(i => i["name"].AsString).ToList();
+    }
+}
+```
+
+## Interview Tips
+
+- **Explain indexes**: Improve query performance
+- **Show types**: Single, compound, multikey, text, geo
+- **Demonstrate creation**: MongoDB, Cassandra, DynamoDB
+- **Discuss trade-offs**: Query speed vs write speed
+- **Mention covered queries**: Return only indexed fields
+- **Show analysis**: explain() for performance
+
+## Summary
+
+Indexes improve NoSQL query performance by avoiding full collection scans. MongoDB supports single field, compound, multikey, text, and geospatial indexes. Cassandra uses partition keys and materialized views. DynamoDB offers GSI and LSI. Create indexes on frequently queried fields. Use compound indexes for multiple fields. Monitor with explain(). Trade-off: faster reads, slower writes. Covered queries return only indexed fields. Essential for production NoSQL performance.

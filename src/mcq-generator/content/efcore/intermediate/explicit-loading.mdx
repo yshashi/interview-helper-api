@@ -1,0 +1,231 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Explicit Loading in EF Core
+---
+
+# Explicit Loading in EF Core
+
+## What is Explicit Loading?
+
+**Explicit loading** allows you to load related entities on demand after the principal entity has been retrieved. You explicitly tell EF Core which navigation properties to load using the `Load()` method.
+
+## Basic Explicit Loading
+
+```csharp
+// Load blog first
+var blog = context.Blogs.Find(1);
+
+// Explicitly load posts later
+context.Entry(blog)
+    .Collection(b => b.Posts)
+    .Load();
+
+// Now posts are loaded
+foreach (var post in blog.Posts)
+{
+    Console.WriteLine(post.Title);
+}
+```
+
+## Loading Collections
+
+```csharp
+var blog = context.Blogs.First();
+
+// Load collection navigation property
+context.Entry(blog)
+    .Collection(b => b.Posts)
+    .Load();
+
+// Load with query
+context.Entry(blog)
+    .Collection(b => b.Posts)
+    .Query()
+    .Where(p => p.IsPublished)
+    .OrderByDescending(p => p.PublishedDate)
+    .Load();
+```
+
+## Loading References
+
+```csharp
+var post = context.Posts.First();
+
+// Load reference navigation property
+context.Entry(post)
+    .Reference(p => p.Blog)
+    .Load();
+
+// Load author
+context.Entry(post)
+    .Reference(p => p.Author)
+    .Load();
+```
+
+## Querying Before Loading
+
+```csharp
+var blog = context.Blogs.Find(blogId);
+
+// Query related data before loading
+var publishedPostsCount = context.Entry(blog)
+    .Collection(b => b.Posts)
+    .Query()
+    .Count(p => p.IsPublished);
+
+// Load filtered posts
+context.Entry(blog)
+    .Collection(b => b.Posts)
+    .Query()
+    .Where(p => p.IsPublished)
+    .Load();
+```
+
+## Async Explicit Loading
+
+```csharp
+var blog = await context.Blogs.FindAsync(blogId);
+
+// Load asynchronously
+await context.Entry(blog)
+    .Collection(b => b.Posts)
+    .LoadAsync();
+
+// Query and load asynchronously
+await context.Entry(blog)
+    .Collection(b => b.Posts)
+    .Query()
+    .Where(p => p.IsPublished)
+    .LoadAsync();
+```
+
+## Checking if Loaded
+
+```csharp
+var blog = context.Blogs.Find(blogId);
+
+// Check if collection is loaded
+bool isLoaded = context.Entry(blog)
+    .Collection(b => b.Posts)
+    .IsLoaded;
+
+if (!isLoaded)
+{
+    context.Entry(blog).Collection(b => b.Posts).Load();
+}
+```
+
+## Loading Multiple Levels
+
+```csharp
+var blog = context.Blogs.Find(blogId);
+
+// Load posts
+context.Entry(blog)
+    .Collection(b => b.Posts)
+    .Load();
+
+// Load authors for each post
+foreach (var post in blog.Posts)
+{
+    context.Entry(post)
+        .Reference(p => p.Author)
+        .Load();
+}
+```
+
+## Practical Examples
+
+### Conditional Loading
+
+```csharp
+public async Task<Blog> GetBlogWithDetails(int blogId, bool includePosts, bool includeAuthors)
+{
+    var blog = await context.Blogs.FindAsync(blogId);
+    
+    if (includePosts)
+    {
+        await context.Entry(blog)
+            .Collection(b => b.Posts)
+            .LoadAsync();
+        
+        if (includeAuthors)
+        {
+            foreach (var post in blog.Posts)
+            {
+                await context.Entry(post)
+                    .Reference(p => p.Author)
+                    .LoadAsync();
+            }
+        }
+    }
+    
+    return blog;
+}
+```
+
+### Pagination with Explicit Loading
+
+```csharp
+var blog = await context.Blogs.FindAsync(blogId);
+
+// Load paginated posts
+var posts = await context.Entry(blog)
+    .Collection(b => b.Posts)
+    .Query()
+    .OrderByDescending(p => p.PublishedDate)
+    .Skip(pageIndex * pageSize)
+    .Take(pageSize)
+    .ToListAsync();
+```
+
+## Advantages
+
+1. **Control**: Load data only when needed
+2. **Flexibility**: Apply filters before loading
+3. **Performance**: Avoid loading unnecessary data
+4. **No N+1**: Better than lazy loading
+
+## When to Use
+
+```csharp
+// Good: Conditional loading based on user action
+public async Task DisplayBlogDetails(int blogId, bool showComments)
+{
+    var blog = await context.Blogs.FindAsync(blogId);
+    
+    if (showComments)
+    {
+        await context.Entry(blog)
+            .Collection(b => b.Posts)
+            .Query()
+            .Include(p => p.Comments)
+            .LoadAsync();
+    }
+}
+
+// Good: Loading with specific filters
+public async Task GetActiveProducts(int categoryId)
+{
+    var category = await context.Categories.FindAsync(categoryId);
+    
+    await context.Entry(category)
+        .Collection(c => c.Products)
+        .Query()
+        .Where(p => p.IsActive && p.Stock > 0)
+        .LoadAsync();
+}
+```
+
+## Interview Tips
+
+- **Explain explicit loading**: Manual loading of related data
+- **Show Load method**: Using Entry().Collection/Reference
+- **Demonstrate querying**: Filter before loading
+- **Compare with eager/lazy**: Different loading strategies
+- **Show async support**: LoadAsync for async operations
+- **Mention use cases**: Conditional loading, pagination
+
+## Summary
+
+Explicit loading in EF Core allows manual loading of related entities using `Entry().Collection().Load()` or `Entry().Reference().Load()`. It provides control over when and how data is loaded, supports filtering and querying before loading, and is useful for conditional loading scenarios.

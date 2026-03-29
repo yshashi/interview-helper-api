@@ -1,0 +1,316 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Retry Pattern
+---
+
+# Retry Pattern
+
+## What is Retry Pattern?
+
+The **Retry Pattern** automatically retries failed operations with configurable delays and limits to handle transient failures.
+
+## Basic Implementation
+
+```javascript
+async function retry(fn, options = {}) {
+  const maxAttempts = options.maxAttempts || 3;
+  const delay = options.delay || 1000;
+  
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (attempt === maxAttempts) {
+        throw error;
+      }
+      
+      console.log(`Attempt ${attempt} failed, retrying...`);
+      await sleep(delay);
+    }
+  }
+}
+
+// Usage
+const user = await retry(
+  () => axios.get('http://user-service/users/123'),
+  { maxAttempts: 3, delay: 1000 }
+);
+```
+
+## Exponential Backoff
+
+```javascript
+async function retryWithBackoff(fn, options = {}) {
+  const maxAttempts = options.maxAttempts || 3;
+  const baseDelay = options.baseDelay || 1000;
+  const maxDelay = options.maxDelay || 10000;
+  
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (attempt === maxAttempts) {
+        throw error;
+      }
+      
+      // Exponential backoff: 1s, 2s, 4s, 8s...
+      const delay = Math.min(
+        baseDelay * Math.pow(2, attempt - 1),
+        maxDelay
+      );
+      
+      console.log(`Attempt ${attempt} failed, waiting ${delay}ms`);
+      await sleep(delay);
+    }
+  }
+}
+
+// Usage
+await retryWithBackoff(
+  () => axios.post('http://payment-service/charge', data),
+  { maxAttempts: 5, baseDelay: 1000, maxDelay: 30000 }
+);
+```
+
+## Jittered Backoff
+
+```javascript
+async function retryWithJitter(fn, options = {}) {
+  const maxAttempts = options.maxAttempts || 3;
+  const baseDelay = options.baseDelay || 1000;
+  
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (attempt === maxAttempts) {
+        throw error;
+      }
+      
+      // Add random jitter to prevent thundering herd
+      const exponentialDelay = baseDelay * Math.pow(2, attempt - 1);
+      const jitter = Math.random() * exponentialDelay;
+      const delay = exponentialDelay + jitter;
+      
+      await sleep(delay);
+    }
+  }
+}
+```
+
+## Conditional Retry
+
+```javascript
+async function retryOnCondition(fn, options = {}) {
+  const maxAttempts = options.maxAttempts || 3;
+  const retryableErrors = options.retryableErrors || [
+    'ECONNREFUSED',
+    'ETIMEDOUT',
+    'ENOTFOUND'
+  ];
+  
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      // Only retry on specific errors
+      const shouldRetry = retryableErrors.includes(error.code) ||
+                         (error.response?.status >= 500);
+      
+      if (!shouldRetry || attempt === maxAttempts) {
+        throw error;
+      }
+      
+      await sleep(1000 * attempt);
+    }
+  }
+}
+
+// Don't retry on 4xx errors
+await retryOnCondition(
+  () => axios.get('http://api/users/123'),
+  {
+    maxAttempts: 3,
+    retryableErrors: ['ECONNREFUSED', 'ETIMEDOUT']
+  }
+);
+```
+
+## Axios Retry
+
+```javascript
+const axios = require('axios');
+const axiosRetry = require('axios-retry');
+
+// Configure retry
+axiosRetry(axios, {
+  retries: 3,
+  retryDelay: axiosRetry.exponentialDelay,
+  retryCondition: (error) => {
+    return axiosRetry.isNetworkOrIdempotentRequestError(error) ||
+           error.response?.status >= 500;
+  }
+});
+
+// Automatic retry
+const response = await axios.get('http://user-service/users/123');
+```
+
+## Circuit Breaker + Retry
+
+```javascript
+class ResilientClient {
+  constructor() {
+    this.breaker = new CircuitBreaker(this.makeRequest, {
+      failureThreshold: 5,
+      timeout: 3000
+    });
+  }
+  
+  async makeRequest(url) {
+    return await retryWithBackoff(
+      () => axios.get(url),
+      { maxAttempts: 3 }
+    );
+  }
+  
+  async get(url) {
+    return await this.breaker.execute(url);
+  }
+}
+
+const client = new ResilientClient();
+const user = await client.get('http://user-service/users/123');
+```
+
+## Retry with Timeout
+
+```javascript
+async function retryWithTimeout(fn, options = {}) {
+  const maxAttempts = options.maxAttempts || 3;
+  const timeout = options.timeout || 5000;
+  
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await Promise.race([
+        fn(),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Timeout')), timeout)
+        )
+      ]);
+    } catch (error) {
+      if (attempt === maxAttempts) {
+        throw error;
+      }
+      
+      await sleep(1000 * attempt);
+    }
+  }
+}
+```
+
+## Idempotency
+
+```javascript
+// Ensure operations are idempotent
+class PaymentService {
+  async charge(orderId, amount, idempotencyKey) {
+    // Check if already processed
+    const existing = await Payment.findOne({ idempotencyKey });
+    
+    if (existing) {
+      return existing; // Idempotent - safe to retry
+    }
+    
+    // Process payment
+    const payment = await Payment.create({
+      orderId,
+      amount,
+      idempotencyKey,
+      status: 'COMPLETED'
+    });
+    
+    return payment;
+  }
+}
+
+// Retry with idempotency key
+const idempotencyKey = generateId();
+
+await retry(
+  () => paymentService.charge(orderId, amount, idempotencyKey),
+  { maxAttempts: 3 }
+);
+```
+
+## Monitoring Retries
+
+```javascript
+class RetryMonitor {
+  constructor() {
+    this.metrics = {
+      attempts: 0,
+      successes: 0,
+      failures: 0,
+      retries: 0
+    };
+  }
+  
+  async execute(fn, options = {}) {
+    const maxAttempts = options.maxAttempts || 3;
+    
+    this.metrics.attempts++;
+    
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const result = await fn();
+        this.metrics.successes++;
+        
+        if (attempt > 1) {
+          this.metrics.retries++;
+        }
+        
+        return result;
+      } catch (error) {
+        if (attempt === maxAttempts) {
+          this.metrics.failures++;
+          throw error;
+        }
+        
+        await sleep(1000 * attempt);
+      }
+    }
+  }
+  
+  getMetrics() {
+    return {
+      ...this.metrics,
+      successRate: this.metrics.successes / this.metrics.attempts,
+      retryRate: this.metrics.retries / this.metrics.attempts
+    };
+  }
+}
+```
+
+## Best Practices
+
+1. **Use exponential backoff**: Avoid overwhelming service
+2. **Add jitter**: Prevent thundering herd
+3. **Limit retries**: Don't retry forever
+4. **Retry only transient errors**: Not 4xx errors
+5. **Ensure idempotency**: Safe to retry
+6. **Set timeouts**: Prevent hanging
+7. **Monitor retry rates**: Track failures
+
+## Interview Tips
+
+- **Explain pattern**: Automatic retry on failure
+- **Show backoff**: Exponential with jitter
+- **Demonstrate conditions**: Retry only transient errors
+- **Discuss idempotency**: Safe retry operations
+- **Mention circuit breaker**: Combine patterns
+- **Show monitoring**: Track retry metrics
+
+## Summary
+
+Retry Pattern automatically retries failed operations with exponential backoff and jitter. Only retry transient errors (network, 5xx). Ensure operations are idempotent for safe retries. Combine with circuit breaker for better resilience. Set maximum attempts and timeouts. Monitor retry rates to detect systemic issues. Essential for handling transient failures in distributed systems.

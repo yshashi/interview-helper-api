@@ -1,0 +1,447 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Graph Databases
+---
+
+# Graph Databases
+
+## What are Graph Databases?
+
+**Graph databases** store data as nodes (entities) and relationships (edges), optimized for querying connected data.
+
+```
+    (User)──[FOLLOWS]──>(User)
+      │
+      └──[POSTED]──>(Post)──[TAGGED]──>(Tag)
+```
+
+## Neo4j Basics
+
+### Create Nodes and Relationships
+
+```javascript
+const neo4j = require('neo4j-driver');
+
+const driver = neo4j.driver(
+  'bolt://localhost:7687',
+  neo4j.auth.basic('neo4j', 'password')
+);
+
+const session = driver.session();
+
+// Create nodes
+await session.run(`
+  CREATE (u:User {id: $id, name: $name, email: $email})
+  RETURN u
+`, { id: 'user1', name: 'John Doe', email: 'john@example.com' });
+
+// Create relationship
+await session.run(`
+  MATCH (u1:User {id: $userId1})
+  MATCH (u2:User {id: $userId2})
+  CREATE (u1)-[:FOLLOWS {since: $since}]->(u2)
+`, { userId1: 'user1', userId2: 'user2', since: new Date().toISOString() });
+
+await session.close();
+```
+
+### Query Patterns
+
+```javascript
+// Find friends
+const friends = await session.run(`
+  MATCH (u:User {id: $userId})-[:FOLLOWS]->(friend)
+  RETURN friend.name AS name
+`, { userId: 'user1' });
+
+// Find friends of friends
+const fof = await session.run(`
+  MATCH (u:User {id: $userId})-[:FOLLOWS]->()-[:FOLLOWS]->(fof)
+  WHERE NOT (u)-[:FOLLOWS]->(fof) AND u <> fof
+  RETURN DISTINCT fof.name AS name, COUNT(*) AS mutualFriends
+  ORDER BY mutualFriends DESC
+  LIMIT 10
+`, { userId: 'user1' });
+
+// Shortest path
+const path = await session.run(`
+  MATCH path = shortestPath(
+    (u1:User {id: $userId1})-[:FOLLOWS*]-(u2:User {id: $userId2})
+  )
+  RETURN path
+`, { userId1: 'user1', userId2: 'user2' });
+```
+
+## Social Network Example
+
+```javascript
+class SocialNetworkService {
+  constructor(driver) {
+    this.driver = driver;
+  }
+  
+  async createUser(userId, name, email) {
+    const session = this.driver.session();
+    try {
+      await session.run(`
+        CREATE (u:User {id: $id, name: $name, email: $email, createdAt: datetime()})
+      `, { id: userId, name, email });
+    } finally {
+      await session.close();
+    }
+  }
+  
+  async followUser(followerId, followeeId) {
+    const session = this.driver.session();
+    try {
+      await session.run(`
+        MATCH (follower:User {id: $followerId})
+        MATCH (followee:User {id: $followeeId})
+        MERGE (follower)-[:FOLLOWS {since: datetime()}]->(followee)
+      `, { followerId, followeeId });
+    } finally {
+      await session.close();
+    }
+  }
+  
+  async getFollowers(userId) {
+    const session = this.driver.session();
+    try {
+      const result = await session.run(`
+        MATCH (follower:User)-[:FOLLOWS]->(u:User {id: $userId})
+        RETURN follower.id AS id, follower.name AS name
+      `, { userId });
+      
+      return result.records.map(r => ({
+        id: r.get('id'),
+        name: r.get('name')
+      }));
+    } finally {
+      await session.close();
+    }
+  }
+  
+  async getRecommendations(userId) {
+    const session = this.driver.session();
+    try {
+      const result = await session.run(`
+        MATCH (u:User {id: $userId})-[:FOLLOWS]->()-[:FOLLOWS]->(recommended)
+        WHERE NOT (u)-[:FOLLOWS]->(recommended) AND u <> recommended
+        RETURN recommended.id AS id, 
+               recommended.name AS name,
+               COUNT(*) AS mutualFriends
+        ORDER BY mutualFriends DESC
+        LIMIT 10
+      `, { userId });
+      
+      return result.records.map(r => ({
+        id: r.get('id'),
+        name: r.get('name'),
+        mutualFriends: r.get('mutualFriends').toNumber()
+      }));
+    } finally {
+      await session.close();
+    }
+  }
+  
+  async getInfluencers() {
+    const session = this.driver.session();
+    try {
+      const result = await session.run(`
+        MATCH (u:User)<-[:FOLLOWS]-(follower)
+        RETURN u.id AS id, 
+               u.name AS name,
+               COUNT(follower) AS followers
+        ORDER BY followers DESC
+        LIMIT 10
+      `);
+      
+      return result.records.map(r => ({
+        id: r.get('id'),
+        name: r.get('name'),
+        followers: r.get('followers').toNumber()
+      }));
+    } finally {
+      await session.close();
+    }
+  }
+}
+```
+
+## Recommendation Engine
+
+```javascript
+// Product recommendations based on purchases
+await session.run(`
+  MATCH (u:User {id: $userId})-[:PURCHASED]->(p:Product)
+  MATCH (p)<-[:PURCHASED]-(other:User)-[:PURCHASED]->(recommendation)
+  WHERE NOT (u)-[:PURCHASED]->(recommendation)
+  RETURN recommendation.name AS product,
+         COUNT(*) AS score
+  ORDER BY score DESC
+  LIMIT 5
+`, { userId });
+
+// Collaborative filtering
+await session.run(`
+  MATCH (u:User {id: $userId})-[r1:RATED]->(p:Product)
+  MATCH (p)<-[r2:RATED]-(other:User)
+  WHERE abs(r1.rating - r2.rating) < 2
+  MATCH (other)-[r3:RATED]->(recommendation)
+  WHERE NOT (u)-[:RATED]->(recommendation) AND r3.rating >= 4
+  RETURN recommendation.name AS product,
+         AVG(r3.rating) AS avgRating,
+         COUNT(*) AS count
+  ORDER BY avgRating DESC, count DESC
+  LIMIT 10
+`, { userId });
+```
+
+## Fraud Detection
+
+```javascript
+// Detect suspicious patterns
+await session.run(`
+  MATCH (account:Account)-[:TRANSFERRED]->(intermediate:Account)
+        -[:TRANSFERRED]->(destination:Account)
+  WHERE account.id = $accountId
+    AND intermediate.createdAt > datetime() - duration({days: 7})
+    AND destination.country <> account.country
+  RETURN intermediate, destination
+`, { accountId });
+
+// Find circular transfers
+await session.run(`
+  MATCH path = (a:Account)-[:TRANSFERRED*3..5]->(a)
+  WHERE ALL(r IN relationships(path) WHERE r.amount > 10000)
+  RETURN path
+`);
+```
+
+## Knowledge Graph
+
+```javascript
+// Create knowledge graph
+await session.run(`
+  CREATE (p:Person {name: 'Albert Einstein'})
+  CREATE (c:Concept {name: 'Relativity'})
+  CREATE (i:Institution {name: 'Princeton University'})
+  CREATE (p)-[:DEVELOPED]->(c)
+  CREATE (p)-[:WORKED_AT]->(i)
+`);
+
+// Query knowledge
+await session.run(`
+  MATCH (p:Person {name: $name})-[r]->(related)
+  RETURN type(r) AS relationship, 
+         labels(related) AS type,
+         related.name AS name
+`, { name: 'Albert Einstein' });
+```
+
+## ArangoDB (Multi-Model)
+
+```javascript
+const { Database } = require('arangojs');
+
+const db = new Database({
+  url: 'http://localhost:8529',
+  databaseName: 'social'
+});
+
+// Create graph
+const graph = db.graph('social_network');
+await graph.create({
+  edgeDefinitions: [{
+    collection: 'follows',
+    from: ['users'],
+    to: ['users']
+  }]
+});
+
+// Add vertices and edges
+const users = db.collection('users');
+await users.save({ _key: 'user1', name: 'John' });
+await users.save({ _key: 'user2', name: 'Jane' });
+
+const follows = db.collection('follows');
+await follows.save({
+  _from: 'users/user1',
+  _to: 'users/user2',
+  since: new Date()
+});
+
+// Traverse graph
+const result = await db.query(`
+  FOR v, e, p IN 1..3 OUTBOUND 'users/user1' follows
+    RETURN { vertex: v, edge: e, path: p }
+`);
+```
+
+## Amazon Neptune
+
+```javascript
+const gremlin = require('gremlin');
+
+const DriverRemoteConnection = gremlin.driver.DriverRemoteConnection;
+const Graph = gremlin.structure.Graph;
+
+const graph = new Graph();
+const connection = new DriverRemoteConnection('wss://your-neptune-endpoint:8182/gremlin');
+const g = graph.traversal().withRemote(connection);
+
+// Add vertices
+await g.addV('user')
+  .property('userId', 'user1')
+  .property('name', 'John')
+  .next();
+
+// Add edge
+await g.V().has('user', 'userId', 'user1')
+  .addE('follows')
+  .to(g.V().has('user', 'userId', 'user2'))
+  .next();
+
+// Traverse
+const followers = await g.V()
+  .has('user', 'userId', 'user1')
+  .in_('follows')
+  .values('name')
+  .toList();
+
+await connection.close();
+```
+
+## Graph Algorithms
+
+```javascript
+// PageRank (influence)
+await session.run(`
+  CALL gds.pageRank.stream('social_graph')
+  YIELD nodeId, score
+  RETURN gds.util.asNode(nodeId).name AS name, score
+  ORDER BY score DESC
+  LIMIT 10
+`);
+
+// Community detection
+await session.run(`
+  CALL gds.louvain.stream('social_graph')
+  YIELD nodeId, communityId
+  RETURN communityId, 
+         collect(gds.util.asNode(nodeId).name) AS members
+  ORDER BY size(members) DESC
+`);
+
+// Centrality
+await session.run(`
+  CALL gds.betweenness.stream('social_graph')
+  YIELD nodeId, score
+  RETURN gds.util.asNode(nodeId).name AS name, score
+  ORDER BY score DESC
+  LIMIT 10
+`);
+```
+
+## .NET with Neo4j
+
+```csharp
+using Neo4j.Driver;
+
+public class GraphService
+{
+    private readonly IDriver _driver;
+    
+    public GraphService()
+    {
+        _driver = GraphDatabase.Driver(
+            "bolt://localhost:7687",
+            AuthTokens.Basic("neo4j", "password")
+        );
+    }
+    
+    public async Task CreateUser(string userId, string name)
+    {
+        await using var session = _driver.AsyncSession();
+        
+        await session.ExecuteWriteAsync(async tx =>
+        {
+            await tx.RunAsync(
+                "CREATE (u:User {id: $id, name: $name})",
+                new { id = userId, name }
+            );
+        });
+    }
+    
+    public async Task<List<string>> GetFriends(string userId)
+    {
+        await using var session = _driver.AsyncSession();
+        
+        return await session.ExecuteReadAsync(async tx =>
+        {
+            var cursor = await tx.RunAsync(
+                "MATCH (u:User {id: $userId})-[:FOLLOWS]->(friend) RETURN friend.name AS name",
+                new { userId }
+            );
+            
+            var friends = new List<string>();
+            await foreach (var record in cursor)
+            {
+                friends.Add(record["name"].As<string>());
+            }
+            return friends;
+        });
+    }
+}
+```
+
+## When to Use Graph Databases
+
+```javascript
+const graphUseCases = {
+  good: [
+    'Social networks',
+    'Recommendation engines',
+    'Fraud detection',
+    'Knowledge graphs',
+    'Network analysis',
+    'Access control (permissions)',
+    'Route optimization'
+  ],
+  
+  notIdeal: [
+    'Simple CRUD operations',
+    'Aggregations on large datasets',
+    'Time series data',
+    'Document storage'
+  ]
+};
+```
+
+## Best Practices
+
+```javascript
+const graphBestPractices = [
+  'Model relationships explicitly',
+  'Use indexes on frequently queried properties',
+  'Limit traversal depth',
+  'Use parameters in queries',
+  'Batch operations when possible',
+  'Monitor query performance',
+  'Use appropriate relationship types',
+  'Consider data volume for algorithms'
+];
+```
+
+## Interview Tips
+
+- **Explain graphs**: Nodes and relationships
+- **Show Neo4j**: Cypher queries, patterns
+- **Demonstrate use cases**: Social networks, recommendations
+- **Discuss algorithms**: PageRank, community detection
+- **Mention traversals**: Shortest path, friends of friends
+- **Show examples**: Node.js, .NET implementations
+
+## Summary
+
+Graph databases store data as nodes and relationships, optimized for connected data queries. Neo4j uses Cypher query language for pattern matching. Common use cases include social networks, recommendations, fraud detection, and knowledge graphs. Support graph algorithms like PageRank and community detection. Efficient for traversals and relationship queries. ArangoDB offers multi-model support. Amazon Neptune provides managed graph database. Essential for applications with complex relationships and network analysis.

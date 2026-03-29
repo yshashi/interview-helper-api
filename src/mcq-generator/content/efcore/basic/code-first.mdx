@@ -1,0 +1,489 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Code First Approach in EF Core
+---
+
+# Code First Approach in EF Core
+
+## What is Code First?
+
+**Code First** is an approach where you define your domain model using C# classes, and Entity Framework Core creates the database schema based on these classes. This approach gives developers full control over the domain model and database structure through code.
+
+## Basic Code First Workflow
+
+1. Create entity classes (POCOs)
+2. Create DbContext
+3. Configure entities (optional)
+4. Create migration
+5. Update database
+
+## Creating Entity Classes
+
+```csharp
+public class Product
+{
+    public int Id { get; set; }
+    public string Name { get; set; }
+    public string Description { get; set; }
+    public decimal Price { get; set; }
+    public int Stock { get; set; }
+    public bool IsActive { get; set; }
+    public DateTime CreatedAt { get; set; }
+    
+    // Navigation properties
+    public int CategoryId { get; set; }
+    public Category Category { get; set; }
+    public ICollection<OrderItem> OrderItems { get; set; }
+}
+
+public class Category
+{
+    public int Id { get; set; }
+    public string Name { get; set; }
+    public string Description { get; set; }
+    
+    public ICollection<Product> Products { get; set; }
+}
+
+public class Order
+{
+    public int Id { get; set; }
+    public DateTime OrderDate { get; set; }
+    public decimal TotalAmount { get; set; }
+    public string CustomerName { get; set; }
+    
+    public ICollection<OrderItem> OrderItems { get; set; }
+}
+
+public class OrderItem
+{
+    public int Id { get; set; }
+    public int Quantity { get; set; }
+    public decimal UnitPrice { get; set; }
+    
+    public int OrderId { get; set; }
+    public Order Order { get; set; }
+    
+    public int ProductId { get; set; }
+    public Product Product { get; set; }
+}
+```
+
+## Creating DbContext
+
+```csharp
+public class ApplicationDbContext : DbContext
+{
+    public ApplicationDbContext(DbContextOptions<ApplicationDbContext> options)
+        : base(options)
+    {
+    }
+    
+    public DbSet<Product> Products { get; set; }
+    public DbSet<Category> Categories { get; set; }
+    public DbSet<Order> Orders { get; set; }
+    public DbSet<OrderItem> OrderItems { get; set; }
+    
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        base.OnModelCreating(modelBuilder);
+        
+        // Apply configurations
+        modelBuilder.ApplyConfigurationsFromAssembly(typeof(ApplicationDbContext).Assembly);
+    }
+}
+```
+
+## Configuration Methods
+
+### 1. Data Annotations
+
+```csharp
+using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
+
+public class Product
+{
+    [Key]
+    public int Id { get; set; }
+    
+    [Required]
+    [MaxLength(200)]
+    public string Name { get; set; }
+    
+    [Column(TypeName = "decimal(18,2)")]
+    public decimal Price { get; set; }
+    
+    [Column("ProductDescription")]
+    public string Description { get; set; }
+    
+    [ForeignKey("Category")]
+    public int CategoryId { get; set; }
+    
+    public Category Category { get; set; }
+}
+```
+
+### 2. Fluent API
+
+```csharp
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    modelBuilder.Entity<Product>(entity =>
+    {
+        // Primary key
+        entity.HasKey(e => e.Id);
+        
+        // Properties
+        entity.Property(e => e.Name)
+            .IsRequired()
+            .HasMaxLength(200);
+        
+        entity.Property(e => e.Price)
+            .HasColumnType("decimal(18,2)")
+            .IsRequired();
+        
+        entity.Property(e => e.Description)
+            .HasColumnName("ProductDescription")
+            .HasMaxLength(1000);
+        
+        // Indexes
+        entity.HasIndex(e => e.Name);
+        entity.HasIndex(e => new { e.CategoryId, e.IsActive });
+        
+        // Relationships
+        entity.HasOne(e => e.Category)
+            .WithMany(c => c.Products)
+            .HasForeignKey(e => e.CategoryId)
+            .OnDelete(DeleteBehavior.Restrict);
+        
+        // Table name
+        entity.ToTable("Products");
+    });
+}
+```
+
+### 3. Separate Configuration Classes
+
+```csharp
+public class ProductConfiguration : IEntityTypeConfiguration<Product>
+{
+    public void Configure(EntityTypeBuilder<Product> builder)
+    {
+        builder.HasKey(p => p.Id);
+        
+        builder.Property(p => p.Name)
+            .IsRequired()
+            .HasMaxLength(200);
+        
+        builder.Property(p => p.Price)
+            .HasColumnType("decimal(18,2)");
+        
+        builder.HasOne(p => p.Category)
+            .WithMany(c => c.Products)
+            .HasForeignKey(p => p.CategoryId);
+        
+        builder.ToTable("Products");
+    }
+}
+
+// Apply in OnModelCreating
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    modelBuilder.ApplyConfiguration(new ProductConfiguration());
+    // Or apply all configurations from assembly
+    modelBuilder.ApplyConfigurationsFromAssembly(typeof(ApplicationDbContext).Assembly);
+}
+```
+
+## Creating Migrations
+
+### Using .NET CLI
+
+```bash
+# Add a new migration
+dotnet ef migrations add InitialCreate
+
+# Update database
+dotnet ef database update
+
+# Add another migration
+dotnet ef migrations add AddProductDescription
+
+# Update to specific migration
+dotnet ef database update AddProductDescription
+
+# Remove last migration (if not applied)
+dotnet ef migrations remove
+
+# Generate SQL script
+dotnet ef migrations script
+```
+
+### Using Package Manager Console
+
+```powershell
+# Add migration
+Add-Migration InitialCreate
+
+# Update database
+Update-Database
+
+# Remove migration
+Remove-Migration
+
+# Generate script
+Script-Migration
+```
+
+## Seeding Data
+
+```csharp
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    // Seed categories
+    modelBuilder.Entity<Category>().HasData(
+        new Category { Id = 1, Name = "Electronics", Description = "Electronic devices" },
+        new Category { Id = 2, Name = "Books", Description = "Books and magazines" },
+        new Category { Id = 3, Name = "Clothing", Description = "Apparel and accessories" }
+    );
+    
+    // Seed products
+    modelBuilder.Entity<Product>().HasData(
+        new Product 
+        { 
+            Id = 1, 
+            Name = "Laptop", 
+            Price = 999.99m, 
+            CategoryId = 1,
+            Stock = 10,
+            IsActive = true,
+            CreatedAt = DateTime.UtcNow
+        },
+        new Product 
+        { 
+            Id = 2, 
+            Name = "C# Programming Book", 
+            Price = 49.99m, 
+            CategoryId = 2,
+            Stock = 50,
+            IsActive = true,
+            CreatedAt = DateTime.UtcNow
+        }
+    );
+}
+```
+
+## Relationship Configurations
+
+### One-to-Many
+
+```csharp
+modelBuilder.Entity<Product>()
+    .HasOne(p => p.Category)
+    .WithMany(c => c.Products)
+    .HasForeignKey(p => p.CategoryId)
+    .OnDelete(DeleteBehavior.Cascade);
+```
+
+### One-to-One
+
+```csharp
+public class User
+{
+    public int Id { get; set; }
+    public string Username { get; set; }
+    public UserProfile Profile { get; set; }
+}
+
+public class UserProfile
+{
+    public int Id { get; set; }
+    public string Bio { get; set; }
+    public int UserId { get; set; }
+    public User User { get; set; }
+}
+
+modelBuilder.Entity<User>()
+    .HasOne(u => u.Profile)
+    .WithOne(p => p.User)
+    .HasForeignKey<UserProfile>(p => p.UserId);
+```
+
+### Many-to-Many
+
+```csharp
+public class Student
+{
+    public int Id { get; set; }
+    public string Name { get; set; }
+    public ICollection<Course> Courses { get; set; }
+}
+
+public class Course
+{
+    public int Id { get; set; }
+    public string Title { get; set; }
+    public ICollection<Student> Students { get; set; }
+}
+
+// EF Core 5.0+ automatically creates join table
+modelBuilder.Entity<Student>()
+    .HasMany(s => s.Courses)
+    .WithMany(c => c.Students);
+
+// Or configure explicitly
+modelBuilder.Entity<Student>()
+    .HasMany(s => s.Courses)
+    .WithMany(c => c.Students)
+    .UsingEntity(j => j.ToTable("StudentCourses"));
+```
+
+## Advanced Configurations
+
+### Composite Keys
+
+```csharp
+public class OrderItem
+{
+    public int OrderId { get; set; }
+    public int ProductId { get; set; }
+    public int Quantity { get; set; }
+}
+
+modelBuilder.Entity<OrderItem>()
+    .HasKey(oi => new { oi.OrderId, oi.ProductId });
+```
+
+### Indexes
+
+```csharp
+modelBuilder.Entity<Product>()
+    .HasIndex(p => p.Name)
+    .IsUnique();
+
+modelBuilder.Entity<Product>()
+    .HasIndex(p => new { p.CategoryId, p.IsActive })
+    .HasDatabaseName("IX_Product_Category_Active");
+```
+
+### Default Values
+
+```csharp
+modelBuilder.Entity<Product>()
+    .Property(p => p.CreatedAt)
+    .HasDefaultValueSql("GETUTCDATE()");
+
+modelBuilder.Entity<Product>()
+    .Property(p => p.IsActive)
+    .HasDefaultValue(true);
+```
+
+### Computed Columns
+
+```csharp
+modelBuilder.Entity<OrderItem>()
+    .Property(oi => oi.TotalPrice)
+    .HasComputedColumnSql("[Quantity] * [UnitPrice]");
+```
+
+## Connection String Configuration
+
+### appsettings.json
+
+```json
+{
+  "ConnectionStrings": {
+    "DefaultConnection": "Server=.;Database=MyAppDb;Trusted_Connection=true;TrustServerCertificate=true;"
+  }
+}
+```
+
+### Program.cs / Startup.cs
+
+```csharp
+builder.Services.AddDbContext<ApplicationDbContext>(options =>
+    options.UseSqlServer(
+        builder.Configuration.GetConnectionString("DefaultConnection"),
+        sqlOptions =>
+        {
+            sqlOptions.EnableRetryOnFailure(
+                maxRetryCount: 5,
+                maxRetryDelay: TimeSpan.FromSeconds(30),
+                errorNumbersToAdd: null);
+        }));
+```
+
+## Migration Best Practices
+
+### 1. Review Generated Migrations
+
+```csharp
+public partial class AddProductDescription : Migration
+{
+    protected override void Up(MigrationBuilder migrationBuilder)
+    {
+        migrationBuilder.AddColumn<string>(
+            name: "Description",
+            table: "Products",
+            type: "nvarchar(1000)",
+            maxLength: 1000,
+            nullable: true);
+    }
+    
+    protected override void Down(MigrationBuilder migrationBuilder)
+    {
+        migrationBuilder.DropColumn(
+            name: "Description",
+            table: "Products");
+    }
+}
+```
+
+### 2. Custom Migration Logic
+
+```csharp
+protected override void Up(MigrationBuilder migrationBuilder)
+{
+    // Add column
+    migrationBuilder.AddColumn<string>(
+        name: "FullName",
+        table: "Users",
+        nullable: true);
+    
+    // Populate with existing data
+    migrationBuilder.Sql(
+        @"UPDATE Users 
+          SET FullName = FirstName + ' ' + LastName");
+    
+    // Make required
+    migrationBuilder.AlterColumn<string>(
+        name: "FullName",
+        table: "Users",
+        nullable: false);
+}
+```
+
+## Advantages of Code First
+
+1. **Full control over domain model**
+2. **Version control for database schema**
+3. **Easy team collaboration**
+4. **Automated database updates**
+5. **Type safety and IntelliSense**
+6. **Refactoring support**
+7. **Test-driven development friendly**
+
+## Interview Tips
+
+- **Explain Code First concept**: Define model in code, generate database
+- **Show entity creation**: POCO classes with properties
+- **Demonstrate configuration**: Data annotations vs Fluent API
+- **Explain migrations**: Version control for database schema
+- **Show relationship setup**: One-to-many, one-to-one, many-to-many
+- **Discuss seeding**: Initial data population
+- **Mention best practices**: Separate configurations, review migrations
+
+## Summary
+
+Code First approach in EF Core allows developers to define the database schema using C# classes and configurations. It provides full control over the domain model, supports version control through migrations, and enables automated database updates. This approach is ideal for new projects and teams that prefer working with code rather than database designers.

@@ -1,0 +1,282 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Service Mesh in Microservices
+---
+
+# Service Mesh in Microservices
+
+## What is a Service Mesh?
+
+A **Service Mesh** is a dedicated infrastructure layer that handles service-to-service communication, providing features like load balancing, service discovery, encryption, observability, and resilience without requiring changes to application code.
+
+## Architecture
+
+```
+┌─────────────────────────────────────┐
+│         Service Mesh                │
+│                                     │
+│  ┌──────┐  ┌──────┐  ┌──────┐     │
+│  │Sidecar│ │Sidecar│ │Sidecar│    │
+│  │Proxy  │ │Proxy  │ │Proxy  │    │
+│  └───┬──┘  └───┬──┘  └───┬──┘     │
+│      │         │         │          │
+│  ┌───▼──┐  ┌──▼───┐  ┌──▼───┐    │
+│  │User  │  │Order │  │Product│    │
+│  │Svc   │  │Svc   │  │Svc    │    │
+│  └──────┘  └──────┘  └───────┘    │
+└─────────────────────────────────────┘
+```
+
+## Key Features
+
+### 1. Traffic Management
+- Load balancing
+- Circuit breaking
+- Retries and timeouts
+- Traffic splitting
+
+### 2. Security
+- mTLS encryption
+- Authentication
+- Authorization
+
+### 3. Observability
+- Distributed tracing
+- Metrics collection
+- Logging
+
+## Popular Service Mesh Solutions
+
+### Istio
+
+```yaml
+# Install Istio
+apiVersion: install.istio.io/v1alpha1
+kind: IstioOperator
+metadata:
+  name: istio-control-plane
+spec:
+  profile: default
+```
+
+```yaml
+# Virtual Service for traffic routing
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: user-service
+spec:
+  hosts:
+    - user-service
+  http:
+    - match:
+        - headers:
+            version:
+              exact: v2
+      route:
+        - destination:
+            host: user-service
+            subset: v2
+    - route:
+        - destination:
+            host: user-service
+            subset: v1
+```
+
+### Linkerd
+
+```bash
+# Install Linkerd
+linkerd install | kubectl apply -f -
+
+# Inject sidecar proxy
+kubectl get deploy -o yaml | linkerd inject - | kubectl apply -f -
+```
+
+### Consul Connect
+
+```hcl
+service {
+  name = "user-service"
+  port = 3001
+  
+  connect {
+    sidecar_service {}
+  }
+}
+```
+
+## Sidecar Pattern
+
+```yaml
+# Kubernetes pod with sidecar
+apiVersion: v1
+kind: Pod
+metadata:
+  name: user-service
+spec:
+  containers:
+    # Application container
+    - name: user-service
+      image: user-service:latest
+      ports:
+        - containerPort: 3001
+    
+    # Sidecar proxy (Envoy)
+    - name: envoy-proxy
+      image: envoyproxy/envoy:latest
+      ports:
+        - containerPort: 15001
+```
+
+## Traffic Management
+
+### Load Balancing
+
+```yaml
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: user-service
+spec:
+  host: user-service
+  trafficPolicy:
+    loadBalancer:
+      simple: ROUND_ROBIN
+```
+
+### Circuit Breaking
+
+```yaml
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: order-service
+spec:
+  host: order-service
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 100
+      http:
+        http1MaxPendingRequests: 50
+        maxRequestsPerConnection: 2
+    outlierDetection:
+      consecutiveErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+```
+
+### Retries
+
+```yaml
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: payment-service
+spec:
+  hosts:
+    - payment-service
+  http:
+    - route:
+        - destination:
+            host: payment-service
+      retries:
+        attempts: 3
+        perTryTimeout: 2s
+```
+
+## Security Features
+
+### mTLS Encryption
+
+```yaml
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: default
+spec:
+  mtls:
+    mode: STRICT
+```
+
+### Authorization
+
+```yaml
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: user-service-policy
+spec:
+  selector:
+    matchLabels:
+      app: user-service
+  rules:
+    - from:
+        - source:
+            principals: ["cluster.local/ns/default/sa/order-service"]
+      to:
+        - operation:
+            methods: ["GET", "POST"]
+```
+
+## Observability
+
+### Distributed Tracing
+
+```yaml
+# Jaeger integration
+apiVersion: install.istio.io/v1alpha1
+kind: IstioOperator
+spec:
+  meshConfig:
+    enableTracing: true
+    defaultConfig:
+      tracing:
+        sampling: 100
+        zipkin:
+          address: jaeger-collector:9411
+```
+
+### Metrics
+
+```yaml
+# Prometheus metrics
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+spec:
+  ports:
+    - port: 9090
+  selector:
+    app: prometheus
+```
+
+## Benefits
+
+1. **No Code Changes**: Features added via configuration
+2. **Consistent Policies**: Apply across all services
+3. **Enhanced Security**: Automatic mTLS
+4. **Better Observability**: Built-in tracing and metrics
+5. **Traffic Control**: Advanced routing capabilities
+
+## Challenges
+
+1. **Complexity**: Additional layer to manage
+2. **Performance Overhead**: Sidecar proxy latency
+3. **Learning Curve**: New concepts and tools
+4. **Resource Usage**: Extra containers per pod
+
+## Interview Tips
+
+- **Explain purpose**: Infrastructure layer for service communication
+- **Show architecture**: Sidecar proxy pattern
+- **Demonstrate features**: Traffic management, security, observability
+- **Discuss tools**: Istio, Linkerd, Consul
+- **Mention benefits**: No code changes, consistent policies
+- **Acknowledge challenges**: Complexity, performance overhead
+
+## Summary
+
+Service Mesh provides infrastructure layer for service-to-service communication with features like load balancing, circuit breaking, mTLS encryption, and distributed tracing. Uses sidecar proxy pattern. Popular solutions include Istio, Linkerd, and Consul Connect. Adds complexity but provides powerful traffic management and security features.

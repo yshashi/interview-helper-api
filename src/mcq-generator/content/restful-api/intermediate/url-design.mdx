@@ -1,0 +1,350 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: RESTful URL Design
+---
+
+# RESTful URL Design
+
+## URL Design Principles
+
+1. **Use nouns, not verbs**
+2. **Use plural for collections**
+3. **Use hierarchies for relationships**
+4. **Keep URLs simple and intuitive**
+5. **Use lowercase**
+6. **Use hyphens for readability**
+
+## Good vs Bad URLs
+
+```javascript
+// ✅ Good - Nouns, plural, hierarchical
+GET    /api/users
+GET    /api/users/123
+GET    /api/users/123/orders
+POST   /api/users
+PUT    /api/users/123
+DELETE /api/users/123
+
+// ❌ Bad - Verbs, inconsistent
+GET    /api/getUsers
+GET    /api/user/123
+GET    /api/getUserOrders/123
+POST   /api/createUser
+PUT    /api/updateUser/123
+DELETE /api/deleteUser/123
+```
+
+## Resource Collections
+
+```javascript
+// Node.js/Express
+// Collection
+app.get('/api/users', async (req, res) => {
+  const users = await User.find();
+  res.json(users);
+});
+
+// Single resource
+app.get('/api/users/:id', async (req, res) => {
+  const user = await User.findById(req.params.id);
+  res.json(user);
+});
+```
+
+```csharp
+// .NET
+[Route("api/[controller]")]
+public class UsersController : ControllerBase
+{
+    // GET api/users
+    [HttpGet]
+    public async Task<ActionResult<IEnumerable<User>>> GetUsers()
+    {
+        return await _context.Users.ToListAsync();
+    }
+    
+    // GET api/users/5
+    [HttpGet("{id}")]
+    public async Task<ActionResult<User>> GetUser(int id)
+    {
+        return await _context.Users.FindAsync(id);
+    }
+}
+```
+
+## Nested Resources
+
+```javascript
+// Parent-child relationships
+GET    /api/users/123/orders           // User's orders
+GET    /api/users/123/orders/456       // Specific order
+POST   /api/users/123/orders           // Create order for user
+DELETE /api/users/123/orders/456       // Delete user's order
+
+// Implementation
+app.get('/api/users/:userId/orders', async (req, res) => {
+  const orders = await Order.find({ userId: req.params.userId });
+  res.json(orders);
+});
+
+app.get('/api/users/:userId/orders/:orderId', async (req, res) => {
+  const order = await Order.findOne({
+    _id: req.params.orderId,
+    userId: req.params.userId
+  });
+  res.json(order);
+});
+```
+
+## Filtering
+
+```javascript
+// Query parameters for filtering
+GET /api/users?role=admin
+GET /api/users?status=active
+GET /api/users?role=admin&status=active
+
+app.get('/api/users', async (req, res) => {
+  const { role, status, city } = req.query;
+  
+  const filter = {};
+  if (role) filter.role = role;
+  if (status) filter.status = status;
+  if (city) filter.city = city;
+  
+  const users = await User.find(filter);
+  res.json(users);
+});
+```
+
+## Sorting
+
+```javascript
+// Sort by field
+GET /api/users?sort=name
+GET /api/users?sort=-createdAt  // Descending
+
+app.get('/api/users', async (req, res) => {
+  const { sort } = req.query;
+  
+  let sortObj = {};
+  if (sort) {
+    const order = sort.startsWith('-') ? -1 : 1;
+    const field = sort.replace('-', '');
+    sortObj[field] = order;
+  }
+  
+  const users = await User.find().sort(sortObj);
+  res.json(users);
+});
+```
+
+## Pagination
+
+```javascript
+// Page-based
+GET /api/users?page=2&limit=10
+
+// Offset-based
+GET /api/users?offset=20&limit=10
+
+app.get('/api/users', async (req, res) => {
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 10;
+  const skip = (page - 1) * limit;
+  
+  const users = await User.find()
+    .skip(skip)
+    .limit(limit);
+  
+  const total = await User.countDocuments();
+  
+  res.json({
+    data: users,
+    pagination: {
+      page,
+      limit,
+      total,
+      pages: Math.ceil(total / limit)
+    }
+  });
+});
+```
+
+## Field Selection
+
+```javascript
+// Select specific fields
+GET /api/users?fields=name,email
+GET /api/users/123?fields=name,email,role
+
+app.get('/api/users', async (req, res) => {
+  const { fields } = req.query;
+  
+  let select = {};
+  if (fields) {
+    fields.split(',').forEach(field => {
+      select[field] = 1;
+    });
+  }
+  
+  const users = await User.find().select(select);
+  res.json(users);
+});
+```
+
+## Search
+
+```javascript
+// Search query
+GET /api/users?q=john
+GET /api/products?search=laptop
+
+app.get('/api/users', async (req, res) => {
+  const { q } = req.query;
+  
+  if (q) {
+    const users = await User.find({
+      $or: [
+        { name: { $regex: q, $options: 'i' } },
+        { email: { $regex: q, $options: 'i' } }
+      ]
+    });
+    return res.json(users);
+  }
+  
+  const users = await User.find();
+  res.json(users);
+});
+```
+
+## Actions on Resources
+
+```javascript
+// ✅ Good - Use sub-resources for actions
+POST /api/orders/123/cancel
+POST /api/orders/123/refund
+POST /api/users/123/activate
+POST /api/users/123/deactivate
+
+// Implementation
+app.post('/api/orders/:id/cancel', async (req, res) => {
+  const order = await Order.findById(req.params.id);
+  order.status = 'cancelled';
+  await order.save();
+  res.json(order);
+});
+
+// ❌ Bad - Verbs in URL
+POST /api/cancelOrder/123
+POST /api/refundOrder/123
+```
+
+## Versioning in URLs
+
+```javascript
+// Version in URL path
+GET /api/v1/users
+GET /api/v2/users
+
+// Implementation
+app.get('/api/v1/users', async (req, res) => {
+  const users = await User.find();
+  res.json(users);
+});
+
+app.get('/api/v2/users', async (req, res) => {
+  const users = await User.find();
+  res.json({
+    version: 2,
+    data: users,
+    metadata: { ... }
+  });
+});
+```
+
+## URL Naming Conventions
+
+```javascript
+// ✅ Good - Lowercase with hyphens
+/api/user-profiles
+/api/order-items
+/api/product-categories
+
+// ❌ Bad - Mixed case, underscores
+/api/UserProfiles
+/api/user_profiles
+/api/orderItems
+```
+
+## Complex Queries
+
+```javascript
+// Combine multiple parameters
+GET /api/users?role=admin&status=active&sort=-createdAt&page=2&limit=20
+
+app.get('/api/users', async (req, res) => {
+  const { role, status, sort, page = 1, limit = 10 } = req.query;
+  
+  // Build filter
+  const filter = {};
+  if (role) filter.role = role;
+  if (status) filter.status = status;
+  
+  // Build sort
+  let sortObj = {};
+  if (sort) {
+    const order = sort.startsWith('-') ? -1 : 1;
+    const field = sort.replace('-', '');
+    sortObj[field] = order;
+  }
+  
+  // Pagination
+  const skip = (page - 1) * limit;
+  
+  const users = await User.find(filter)
+    .sort(sortObj)
+    .skip(skip)
+    .limit(parseInt(limit));
+  
+  res.json(users);
+});
+```
+
+## Angular Service
+
+```typescript
+@Injectable()
+export class UserService {
+  getUsers(params: {
+    role?: string;
+    status?: string;
+    sort?: string;
+    page?: number;
+    limit?: number;
+  }): Observable<User[]> {
+    let httpParams = new HttpParams();
+    
+    if (params.role) httpParams = httpParams.set('role', params.role);
+    if (params.status) httpParams = httpParams.set('status', params.status);
+    if (params.sort) httpParams = httpParams.set('sort', params.sort);
+    if (params.page) httpParams = httpParams.set('page', params.page.toString());
+    if (params.limit) httpParams = httpParams.set('limit', params.limit.toString());
+    
+    return this.http.get<User[]>(`${this.apiUrl}/users`, { params: httpParams });
+  }
+}
+```
+
+## Interview Tips
+
+- **Explain principles**: Nouns, plural, hierarchical
+- **Show good vs bad**: Clear examples
+- **Demonstrate filtering**: Query parameters
+- **Discuss pagination**: Page-based, offset-based
+- **Mention versioning**: URL path versioning
+- **Show implementation**: Node.js, .NET, Angular
+
+## Summary
+
+RESTful URL design uses nouns for resources, plural for collections, and hierarchies for relationships. Use query parameters for filtering, sorting, pagination, and search. Keep URLs lowercase with hyphens. Avoid verbs in URLs. Use sub-resources for actions. Version APIs in URL path. Essential for intuitive and maintainable REST APIs.

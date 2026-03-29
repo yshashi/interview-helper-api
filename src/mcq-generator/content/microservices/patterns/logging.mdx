@@ -1,0 +1,308 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Logging in Microservices
+---
+
+# Logging in Microservices
+
+## Challenges
+
+- Logs scattered across multiple services
+- Difficult to trace requests
+- No centralized view
+- Different log formats
+
+## Structured Logging
+
+```javascript
+const winston = require('winston');
+
+const logger = winston.createLogger({
+  format: winston.format.combine(
+    winston.format.timestamp(),
+    winston.format.json()
+  ),
+  transports: [
+    new winston.transports.Console(),
+    new winston.transports.File({ filename: 'app.log' })
+  ]
+});
+
+// Structured log entries
+logger.info('User created', {
+  userId: '123',
+  email: 'user@example.com',
+  service: 'user-service',
+  correlationId: 'abc-123'
+});
+
+logger.error('Payment failed', {
+  orderId: '456',
+  amount: 99.99,
+  error: 'Insufficient funds',
+  service: 'payment-service',
+  correlationId: 'abc-123'
+});
+```
+
+## Correlation ID
+
+```javascript
+// Middleware to add correlation ID
+app.use((req, res, next) => {
+  const correlationId = req.headers['x-correlation-id'] || generateId();
+  req.correlationId = correlationId;
+  res.setHeader('x-correlation-id', correlationId);
+  
+  // Add to all logs
+  req.logger = logger.child({ correlationId });
+  
+  next();
+});
+
+// Use in routes
+app.post('/orders', async (req, res) => {
+  req.logger.info('Creating order', {
+    userId: req.body.userId,
+    amount: req.body.amount
+  });
+  
+  const order = await Order.create(req.body);
+  
+  req.logger.info('Order created', {
+    orderId: order.id
+  });
+  
+  res.json(order);
+});
+
+// Propagate to downstream services
+async function callService(url, data, req) {
+  return axios.post(url, data, {
+    headers: {
+      'x-correlation-id': req.correlationId
+    }
+  });
+}
+```
+
+## Centralized Logging (ELK Stack)
+
+```javascript
+// Logstash configuration
+const { createLogger, transports } = require('winston');
+const LogstashTransport = require('winston-logstash/lib/winston-logstash-latest');
+
+const logger = createLogger({
+  transports: [
+    new LogstashTransport({
+      port: 5000,
+      host: 'logstash',
+      node_name: 'user-service'
+    })
+  ]
+});
+
+// Logs automatically sent to Logstash
+logger.info('User logged in', {
+  userId: '123',
+  ip: req.ip
+});
+```
+
+## Log Levels
+
+```javascript
+// Different levels for different environments
+const level = process.env.NODE_ENV === 'production' ? 'info' : 'debug';
+
+const logger = winston.createLogger({
+  level,
+  format: winston.format.json(),
+  transports: [
+    new winston.transports.Console()
+  ]
+});
+
+// Usage
+logger.debug('Detailed debug info');  // Development only
+logger.info('User action');           // Always logged
+logger.warn('Potential issue');       // Always logged
+logger.error('Error occurred');       // Always logged
+```
+
+## Context Logging
+
+```javascript
+class LoggerContext {
+  constructor(baseLogger, context) {
+    this.logger = baseLogger.child(context);
+  }
+  
+  info(message, meta = {}) {
+    this.logger.info(message, meta);
+  }
+  
+  error(message, meta = {}) {
+    this.logger.error(message, meta);
+  }
+  
+  child(additionalContext) {
+    return new LoggerContext(this.logger, additionalContext);
+  }
+}
+
+// Service-level context
+const serviceLogger = new LoggerContext(logger, {
+  service: 'user-service',
+  version: '1.0.0'
+});
+
+// Request-level context
+app.use((req, res, next) => {
+  req.logger = serviceLogger.child({
+    correlationId: req.correlationId,
+    userId: req.user?.id,
+    path: req.path,
+    method: req.method
+  });
+  
+  next();
+});
+
+// All logs include context automatically
+app.post('/users', async (req, res) => {
+  req.logger.info('Creating user');  // Includes all context
+  const user = await User.create(req.body);
+  req.logger.info('User created', { userId: user.id });
+  res.json(user);
+});
+```
+
+## Performance Logging
+
+```javascript
+// Log slow operations
+function logPerformance(operation) {
+  return async (req, res, next) => {
+    const start = Date.now();
+    
+    res.on('finish', () => {
+      const duration = Date.now() - start;
+      
+      if (duration > 1000) {
+        req.logger.warn('Slow operation', {
+          operation,
+          duration,
+          threshold: 1000
+        });
+      }
+    });
+    
+    next();
+  };
+}
+
+app.get('/users', logPerformance('get-users'), async (req, res) => {
+  const users = await User.find();
+  res.json(users);
+});
+```
+
+## Error Logging
+
+```javascript
+// Error logging middleware
+app.use((err, req, res, next) => {
+  req.logger.error('Error occurred', {
+    error: err.message,
+    stack: err.stack,
+    statusCode: err.statusCode || 500
+  });
+  
+  res.status(err.statusCode || 500).json({
+    error: err.message
+  });
+});
+
+// Unhandled errors
+process.on('uncaughtException', (err) => {
+  logger.error('Uncaught exception', {
+    error: err.message,
+    stack: err.stack
+  });
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  logger.error('Unhandled rejection', {
+    reason,
+    promise
+  });
+});
+```
+
+## Log Aggregation
+
+```yaml
+# Fluentd configuration
+<source>
+  @type forward
+  port 24224
+</source>
+
+<match **>
+  @type elasticsearch
+  host elasticsearch
+  port 9200
+  logstash_format true
+  logstash_prefix microservices
+</match>
+```
+
+## Sensitive Data Filtering
+
+```javascript
+// Filter sensitive data
+function sanitize(data) {
+  const sanitized = { ...data };
+  
+  const sensitiveFields = ['password', 'creditCard', 'ssn'];
+  
+  for (const field of sensitiveFields) {
+    if (sanitized[field]) {
+      sanitized[field] = '***REDACTED***';
+    }
+  }
+  
+  return sanitized;
+}
+
+logger.info('User created', sanitize({
+  email: 'user@example.com',
+  password: 'secret123'  // Will be redacted
+}));
+```
+
+## Best Practices
+
+1. **Use structured logging**: JSON format
+2. **Include correlation IDs**: Track requests
+3. **Log at appropriate levels**: Debug, info, warn, error
+4. **Centralize logs**: ELK, Splunk, CloudWatch
+5. **Filter sensitive data**: PII, credentials
+6. **Monitor log volume**: Avoid excessive logging
+7. **Set retention policies**: Storage management
+
+## Interview Tips
+
+- **Explain challenges**: Distributed logs
+- **Show correlation**: Track requests across services
+- **Demonstrate structure**: JSON logging
+- **Discuss centralization**: ELK stack
+- **Mention filtering**: Sensitive data protection
+- **Show context**: Service, request metadata
+
+## Summary
+
+Microservices logging requires structured JSON format with correlation IDs to track requests across services. Centralize logs using ELK stack or similar. Include context (service, user, request). Filter sensitive data. Use appropriate log levels. Monitor log volume and set retention policies. Essential for debugging distributed systems.

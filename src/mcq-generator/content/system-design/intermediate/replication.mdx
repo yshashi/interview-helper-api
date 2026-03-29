@@ -1,0 +1,377 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Data Replication
+---
+
+# Data Replication
+
+## What is Data Replication?
+
+Data replication is the process of copying and maintaining database objects in multiple database servers. It ensures data availability, improves read performance, and provides disaster recovery capabilities.
+
+## Why Replicate Data?
+
+**High Availability:** If primary server fails, replica takes over
+
+**Read Scalability:** Distribute read queries across multiple replicas
+
+**Disaster Recovery:** Geographic replicas protect against regional failures
+
+**Reduced Latency:** Serve users from nearest replica
+
+**Backup:** Replicas can be used for backups without impacting primary
+
+## Replication Strategies
+
+### 1. Master-Slave (Primary-Replica)
+
+**Architecture:** One primary server handles writes, multiple replicas handle reads
+
+**How it works:**
+- All writes go to primary
+- Primary replicates changes to replicas
+- Reads distributed across replicas
+- Replicas are read-only
+
+**Advantages:**
+- Simple to implement
+- Good for read-heavy workloads
+- Clear write path
+
+**Disadvantages:**
+- Single point of failure for writes
+- Replication lag (eventual consistency)
+- Primary can become bottleneck
+
+**Use Cases:**
+- Content management systems
+- Reporting databases
+- Analytics workloads
+
+### 2. Master-Master (Multi-Primary)
+
+**Architecture:** Multiple servers accept writes, replicate to each other
+
+**How it works:**
+- Any server can handle writes
+- Changes replicated to all other servers
+- Conflict resolution required
+
+**Advantages:**
+- No single point of failure for writes
+- Better write scalability
+- Geographic distribution
+
+**Disadvantages:**
+- Complex conflict resolution
+- Potential data inconsistencies
+- More difficult to implement
+
+**Use Cases:**
+- Global applications
+- High availability requirements
+- Collaborative applications
+
+### 3. Peer-to-Peer
+
+**Architecture:** All nodes are equal, each can read and write
+
+**How it works:**
+- Nodes replicate changes to each other
+- No designated primary
+- Eventual consistency
+
+**Advantages:**
+- Highly available
+- No single point of failure
+- Scales horizontally
+
+**Disadvantages:**
+- Complex consistency management
+- Conflict resolution challenges
+- Network overhead
+
+**Use Cases:**
+- Distributed databases (Cassandra, DynamoDB)
+- Blockchain systems
+
+## Replication Methods
+
+### Synchronous Replication
+
+**How it works:** Primary waits for replica acknowledgment before confirming write
+
+**Characteristics:**
+- Strong consistency
+- Higher latency (wait for replicas)
+- Guaranteed data on replicas
+
+**Example Flow:**
+1. Client writes to primary
+2. Primary sends to replicas
+3. Replicas acknowledge
+4. Primary confirms to client
+
+**Use Cases:** Financial transactions, critical data
+
+### Asynchronous Replication
+
+**How it works:** Primary confirms write immediately, replicates in background
+
+**Characteristics:**
+- Lower latency
+- Eventual consistency
+- Risk of data loss if primary fails
+
+**Example Flow:**
+1. Client writes to primary
+2. Primary confirms immediately
+3. Primary replicates to replicas asynchronously
+
+**Use Cases:** Social media, content delivery, analytics
+
+### Semi-Synchronous Replication
+
+**How it works:** Wait for at least one replica, others asynchronous
+
+**Characteristics:**
+- Balance between consistency and performance
+- Some data protection
+- Better latency than full synchronous
+
+**Use Cases:** Most production databases
+
+## Replication Lag
+
+**Definition:** Time delay between write on primary and availability on replica
+
+**Causes:**
+- Network latency
+- Replica processing speed
+- High write volume
+- Large transactions
+
+**Impact:**
+- Read-after-write inconsistency (user writes, immediately reads from replica, doesn't see their write)
+- Stale data on replicas
+- User confusion
+
+**Solutions:**
+- Read from primary for critical reads
+- Session consistency (same user reads from same replica)
+- Causal consistency (track dependencies)
+- Monitor lag and alert
+
+## MongoDB Replication Example
+
+```javascript
+// MongoDB Replica Set configuration
+rs.initiate({
+  _id: "myReplicaSet",
+  members: [
+    { _id: 0, host: "mongo1:27017", priority: 2 }, // Primary
+    { _id: 1, host: "mongo2:27017", priority: 1 }, // Secondary
+    { _id: 2, host: "mongo3:27017", priority: 1 }  // Secondary
+  ]
+});
+
+// Connection with replica set
+const { MongoClient } = require('mongodb');
+
+const client = new MongoClient('mongodb://mongo1:27017,mongo2:27017,mongo3:27017/mydb?replicaSet=myReplicaSet');
+
+// Write to primary
+await client.db('mydb').collection('users').insertOne({
+  name: 'John',
+  email: 'john@example.com'
+});
+
+// Read from secondary (eventual consistency)
+const user = await client.db('mydb').collection('users')
+  .findOne({ email: 'john@example.com' }, { readPreference: 'secondary' });
+
+// Read from primary (strong consistency)
+const userPrimary = await client.db('mydb').collection('users')
+  .findOne({ email: 'john@example.com' }, { readPreference: 'primary' });
+```
+
+## PostgreSQL Replication
+
+```sql
+-- Primary server configuration (postgresql.conf)
+wal_level = replica
+max_wal_senders = 3
+wal_keep_size = 64
+
+-- Create replication user
+CREATE ROLE replicator WITH REPLICATION LOGIN PASSWORD 'password';
+
+-- Replica server configuration
+primary_conninfo = 'host=primary_host port=5432 user=replicator password=password'
+hot_standby = on
+
+-- Check replication status
+SELECT * FROM pg_stat_replication;
+
+-- Check replication lag
+SELECT 
+  now() - pg_last_xact_replay_timestamp() AS replication_lag;
+```
+
+## Conflict Resolution
+
+**Problem:** In multi-master replication, same data modified on different servers
+
+**Strategies:**
+
+**Last Write Wins (LWW):**
+- Use timestamp to determine winner
+- Simple but can lose data
+- Example: User A updates at 10:00, User B at 10:01 → B wins
+
+**Version Vectors:**
+- Track version per node
+- Detect concurrent updates
+- Require manual resolution
+
+**Application-Level Resolution:**
+- Application decides how to merge
+- Custom logic per use case
+- Example: Shopping cart merges items
+
+**Operational Transformation:**
+- Transform operations to apply in any order
+- Used in collaborative editing
+- Complex to implement
+
+## Read Preferences
+
+**Primary:** Always read from primary (strong consistency)
+
+**Primary Preferred:** Read from primary, fallback to secondary if unavailable
+
+**Secondary:** Always read from secondary (eventual consistency, best for read scaling)
+
+**Secondary Preferred:** Read from secondary, fallback to primary
+
+**Nearest:** Read from server with lowest latency
+
+```javascript
+// MongoDB read preferences
+const options = {
+  readPreference: 'secondaryPreferred',
+  maxStalenessSeconds: 120 // Don't read from replica more than 2 min behind
+};
+
+const users = await db.collection('users').find({}, options).toArray();
+```
+
+## .NET Replication Example
+
+```csharp
+using MongoDB.Driver;
+
+public class ReplicationService
+{
+    private readonly IMongoClient _client;
+    
+    public ReplicationService()
+    {
+        // Connect to replica set
+        var settings = MongoClientSettings.FromConnectionString(
+            "mongodb://mongo1:27017,mongo2:27017,mongo3:27017/?replicaSet=myReplicaSet"
+        );
+        
+        _client = new MongoClient(settings);
+    }
+    
+    // Write to primary
+    public async Task CreateUser(User user)
+    {
+        var database = _client.GetDatabase("mydb");
+        var collection = database.GetCollection<User>("users");
+        
+        await collection.InsertOneAsync(user);
+    }
+    
+    // Read from secondary
+    public async Task<User> GetUser(string id)
+    {
+        var database = _client.GetDatabase("mydb");
+        var collection = database.GetCollection<User>("users")
+            .WithReadPreference(ReadPreference.SecondaryPreferred);
+        
+        return await collection.Find(u => u.Id == id).FirstOrDefaultAsync();
+    }
+    
+    // Read from primary (strong consistency)
+    public async Task<User> GetUserConsistent(string id)
+    {
+        var database = _client.GetDatabase("mydb");
+        var collection = database.GetCollection<User>("users")
+            .WithReadPreference(ReadPreference.Primary);
+        
+        return await collection.Find(u => u.Id == id).FirstOrDefaultAsync();
+    }
+}
+```
+
+## Monitoring Replication
+
+**Key Metrics:**
+- Replication lag (time behind primary)
+- Replica status (healthy, down, recovering)
+- Replication throughput
+- Network bandwidth usage
+- Disk space on replicas
+
+**Alerts:**
+- Lag exceeds threshold (e.g., > 60 seconds)
+- Replica goes down
+- Replication stops
+- Disk space low
+
+## Failover
+
+**Automatic Failover:** System detects primary failure, promotes replica automatically
+
+**Manual Failover:** DBA manually promotes replica to primary
+
+**Failover Process:**
+1. Detect primary failure
+2. Elect new primary (usually most up-to-date replica)
+3. Promote replica to primary
+4. Redirect writes to new primary
+5. Reconfigure other replicas to follow new primary
+
+**Considerations:**
+- Data loss risk (if async replication)
+- Downtime during failover
+- Split-brain scenario (two primaries)
+- Client reconnection
+
+## Best Practices
+
+- **Use at least 3 replicas** - Allows majority for elections
+- **Monitor replication lag** - Alert on excessive lag
+- **Test failover regularly** - Ensure process works
+- **Use semi-synchronous replication** - Balance consistency and performance
+- **Geographic distribution** - Replicas in different regions
+- **Separate read and write connections** - Route appropriately
+- **Set read preferences carefully** - Balance consistency needs and performance
+- **Plan for split-brain** - Use quorum-based systems
+- **Monitor replica health** - Automated health checks
+- **Document failover procedures** - Clear runbooks
+
+## Interview Tips
+
+- **Explain replication purpose**: Availability, scalability, disaster recovery
+- **Show strategies**: Master-slave vs master-master
+- **Demonstrate methods**: Synchronous vs asynchronous
+- **Discuss replication lag**: Causes and solutions
+- **Mention conflict resolution**: Multi-master challenges
+- **Show failover**: Automatic promotion of replicas
+
+## Summary
+
+Data replication copies data across multiple servers for high availability and read scalability. Master-slave has one primary for writes, multiple replicas for reads. Master-master allows writes on multiple servers but requires conflict resolution. Synchronous replication ensures consistency but higher latency. Asynchronous replication is faster but eventual consistency. Monitor replication lag and set appropriate read preferences. Implement automatic failover for high availability. Use at least 3 replicas for quorum. Geographic distribution protects against regional failures. Essential for building highly available, scalable systems.

@@ -1,0 +1,378 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Bulkhead Pattern
+---
+
+# Bulkhead Pattern
+
+## What is Bulkhead Pattern?
+
+The **Bulkhead Pattern** isolates resources to prevent failures in one part from affecting the entire system, similar to bulkheads in a ship that prevent flooding.
+
+## Problem
+
+```javascript
+// Single thread pool for all services
+async function handleRequest(req) {
+  if (req.path === '/users') {
+    return await callUserService();      // Slow
+  } else if (req.path === '/products') {
+    return await callProductService();   // Fast
+  }
+}
+
+// If user service is slow, it blocks product service requests
+```
+
+## Thread Pool Isolation
+
+```javascript
+class ThreadPool {
+  constructor(size) {
+    this.size = size;
+    this.active = 0;
+    this.queue = [];
+  }
+  
+  async execute(fn) {
+    if (this.active >= this.size) {
+      // Wait in queue
+      await new Promise(resolve => this.queue.push(resolve));
+    }
+    
+    this.active++;
+    
+    try {
+      return await fn();
+    } finally {
+      this.active--;
+      
+      if (this.queue.length > 0) {
+        const resolve = this.queue.shift();
+        resolve();
+      }
+    }
+  }
+  
+  getStats() {
+    return {
+      size: this.size,
+      active: this.active,
+      queued: this.queue.length
+    };
+  }
+}
+
+// Separate pools for each service
+const userServicePool = new ThreadPool(10);
+const productServicePool = new ThreadPool(20);
+const orderServicePool = new ThreadPool(15);
+
+// Use isolated pools
+async function callUserService() {
+  return await userServicePool.execute(async () => {
+    return await axios.get('http://user-service/users');
+  });
+}
+
+async function callProductService() {
+  return await productServicePool.execute(async () => {
+    return await axios.get('http://product-service/products');
+  });
+}
+```
+
+## Connection Pool Isolation
+
+```javascript
+// Separate database connection pools
+const userDB = mongoose.createConnection('mongodb://localhost/users', {
+  maxPoolSize: 10,
+  minPoolSize: 2
+});
+
+const orderDB = mongoose.createConnection('mongodb://localhost/orders', {
+  maxPoolSize: 20,
+  minPoolSize: 5
+});
+
+const productDB = mongoose.createConnection('mongodb://localhost/products', {
+  maxPoolSize: 15,
+  minPoolSize: 3
+});
+```
+
+## Semaphore-Based Bulkhead
+
+```javascript
+class Semaphore {
+  constructor(max) {
+    this.max = max;
+    this.current = 0;
+    this.queue = [];
+  }
+  
+  async acquire() {
+    if (this.current < this.max) {
+      this.current++;
+      return;
+    }
+    
+    await new Promise(resolve => this.queue.push(resolve));
+    this.current++;
+  }
+  
+  release() {
+    this.current--;
+    
+    if (this.queue.length > 0) {
+      const resolve = this.queue.shift();
+      resolve();
+    }
+  }
+  
+  async execute(fn) {
+    await this.acquire();
+    
+    try {
+      return await fn();
+    } finally {
+      this.release();
+    }
+  }
+}
+
+// Service-specific semaphores
+const userServiceSemaphore = new Semaphore(5);
+const orderServiceSemaphore = new Semaphore(10);
+
+async function callUserService() {
+  return await userServiceSemaphore.execute(async () => {
+    return await axios.get('http://user-service/users');
+  });
+}
+```
+
+## Resource Allocation
+
+```javascript
+class ResourceBulkhead {
+  constructor(config) {
+    this.pools = new Map();
+    
+    for (const [name, size] of Object.entries(config)) {
+      this.pools.set(name, new ThreadPool(size));
+    }
+  }
+  
+  async execute(poolName, fn) {
+    const pool = this.pools.get(poolName);
+    
+    if (!pool) {
+      throw new Error(`Pool ${poolName} not found`);
+    }
+    
+    return await pool.execute(fn);
+  }
+  
+  getStats() {
+    const stats = {};
+    
+    for (const [name, pool] of this.pools.entries()) {
+      stats[name] = pool.getStats();
+    }
+    
+    return stats;
+  }
+}
+
+// Configure bulkheads
+const bulkhead = new ResourceBulkhead({
+  'user-service': 10,
+  'order-service': 20,
+  'product-service': 15,
+  'payment-service': 5
+});
+
+// Use bulkhead
+async function callService(serviceName, fn) {
+  return await bulkhead.execute(serviceName, fn);
+}
+```
+
+## With Circuit Breaker
+
+```javascript
+class BulkheadWithCircuitBreaker {
+  constructor(poolSize, breakerOptions) {
+    this.pool = new ThreadPool(poolSize);
+    this.breaker = new CircuitBreaker(
+      async (fn) => await this.pool.execute(fn),
+      breakerOptions
+    );
+  }
+  
+  async execute(fn) {
+    return await this.breaker.execute(fn);
+  }
+}
+
+const userService = new BulkheadWithCircuitBreaker(10, {
+  failureThreshold: 5,
+  timeout: 30000
+});
+
+await userService.execute(async () => {
+  return await axios.get('http://user-service/users');
+});
+```
+
+## Kubernetes Resource Limits
+
+```yaml
+# Pod resource limits (bulkhead at infrastructure level)
+apiVersion: v1
+kind: Pod
+metadata:
+  name: user-service
+spec:
+  containers:
+    - name: user-service
+      image: user-service:latest
+      resources:
+        requests:
+          memory: "256Mi"
+          cpu: "500m"
+        limits:
+          memory: "512Mi"
+          cpu: "1000m"
+```
+
+## Rate Limiting Bulkhead
+
+```javascript
+class RateLimitedBulkhead {
+  constructor(maxConcurrent, maxPerSecond) {
+    this.semaphore = new Semaphore(maxConcurrent);
+    this.tokens = maxPerSecond;
+    this.maxTokens = maxPerSecond;
+    
+    // Refill tokens every second
+    setInterval(() => {
+      this.tokens = this.maxTokens;
+    }, 1000);
+  }
+  
+  async execute(fn) {
+    // Wait for token
+    while (this.tokens <= 0) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    
+    this.tokens--;
+    
+    // Execute with semaphore
+    return await this.semaphore.execute(fn);
+  }
+}
+
+const apiService = new RateLimitedBulkhead(10, 100);
+```
+
+## Monitoring
+
+```javascript
+class MonitoredBulkhead extends ResourceBulkhead {
+  constructor(config) {
+    super(config);
+    this.metrics = new Map();
+    
+    for (const name of Object.keys(config)) {
+      this.metrics.set(name, {
+        requests: 0,
+        successes: 0,
+        failures: 0,
+        rejections: 0
+      });
+    }
+  }
+  
+  async execute(poolName, fn) {
+    const metrics = this.metrics.get(poolName);
+    metrics.requests++;
+    
+    try {
+      const result = await super.execute(poolName, fn);
+      metrics.successes++;
+      return result;
+    } catch (error) {
+      if (error.message.includes('Pool full')) {
+        metrics.rejections++;
+      } else {
+        metrics.failures++;
+      }
+      throw error;
+    }
+  }
+  
+  getMetrics() {
+    const result = {};
+    
+    for (const [name, metrics] of this.metrics.entries()) {
+      result[name] = {
+        ...metrics,
+        stats: this.pools.get(name).getStats()
+      };
+    }
+    
+    return result;
+  }
+}
+```
+
+## Health Endpoint
+
+```javascript
+app.get('/health/bulkheads', (req, res) => {
+  const stats = bulkhead.getStats();
+  
+  const overloaded = Object.values(stats).some(
+    s => s.queued > s.size
+  );
+  
+  res.status(overloaded ? 503 : 200).json({
+    status: overloaded ? 'overloaded' : 'healthy',
+    bulkheads: stats
+  });
+});
+```
+
+## Benefits
+
+1. **Fault Isolation**: Failures don't cascade
+2. **Resource Protection**: Prevent resource exhaustion
+3. **Performance**: Critical services unaffected
+4. **Predictability**: Known resource limits
+5. **Resilience**: System remains partially functional
+
+## Best Practices
+
+1. **Size pools appropriately**
+2. **Monitor pool utilization**
+3. **Combine with circuit breaker**
+4. **Set timeouts**
+5. **Implement queue limits**
+6. **Test under load**
+
+## Interview Tips
+
+- **Explain pattern**: Isolate resources
+- **Show implementation**: Thread pools, semaphores
+- **Demonstrate isolation**: Separate pools per service
+- **Discuss benefits**: Fault isolation, resilience
+- **Mention monitoring**: Track pool utilization
+- **Show combination**: With circuit breaker
+
+## Summary
+
+Bulkhead Pattern isolates resources to prevent failures from cascading. Use separate thread pools, connection pools, or semaphores for each service. Combine with circuit breakers for better resilience. Monitor pool utilization and set appropriate limits. Essential for preventing resource exhaustion in microservices.

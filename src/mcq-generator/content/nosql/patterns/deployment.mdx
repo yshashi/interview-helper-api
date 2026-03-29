@@ -1,0 +1,599 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Deployment Best Practices
+---
+
+# Deployment Best Practices
+
+## Production Deployment Checklist
+
+```javascript
+const deploymentChecklist = [
+  'Enable authentication and authorization',
+  'Configure replication (minimum 3 nodes)',
+  'Set up monitoring and alerting',
+  'Implement backup strategy',
+  'Enable encryption (at rest and in transit)',
+  'Configure connection pooling',
+  'Set appropriate write concerns',
+  'Create necessary indexes',
+  'Plan for disaster recovery',
+  'Document runbooks',
+  'Load test before go-live',
+  'Set up log aggregation'
+];
+```
+
+## MongoDB Production Setup
+
+### Replica Set Configuration
+
+```yaml
+# docker-compose.yml
+version: '3.8'
+
+services:
+  mongo-primary:
+    image: mongo:7
+    command: mongod --replSet rs0 --bind_ip_all
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-primary-data:/data/db
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD}
+  
+  mongo-secondary1:
+    image: mongo:7
+    command: mongod --replSet rs0 --bind_ip_all
+    ports:
+      - "27018:27017"
+    volumes:
+      - mongo-secondary1-data:/data/db
+    depends_on:
+      - mongo-primary
+  
+  mongo-secondary2:
+    image: mongo:7
+    command: mongod --replSet rs0 --bind_ip_all
+    ports:
+      - "27019:27017"
+    volumes:
+      - mongo-secondary2-data:/data/db
+    depends_on:
+      - mongo-primary
+
+volumes:
+  mongo-primary-data:
+  mongo-secondary1-data:
+  mongo-secondary2-data:
+```
+
+### Initialize Replica Set
+
+```javascript
+// init-replica-set.js
+rs.initiate({
+  _id: "rs0",
+  members: [
+    { _id: 0, host: "mongo-primary:27017", priority: 2 },
+    { _id: 1, host: "mongo-secondary1:27017", priority: 1 },
+    { _id: 2, host: "mongo-secondary2:27017", priority: 1 }
+  ]
+});
+
+// Create admin user
+use admin
+db.createUser({
+  user: "admin",
+  pwd: process.env.MONGO_PASSWORD,
+  roles: ["root"]
+});
+
+// Create application user
+use myapp
+db.createUser({
+  user: "appuser",
+  pwd: process.env.APP_PASSWORD,
+  roles: [
+    { role: "readWrite", db: "myapp" }
+  ]
+});
+```
+
+## Kubernetes Deployment
+
+### MongoDB StatefulSet
+
+```yaml
+# mongodb-statefulset.yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mongodb
+spec:
+  serviceName: mongodb
+  replicas: 3
+  selector:
+    matchLabels:
+      app: mongodb
+  template:
+    metadata:
+      labels:
+        app: mongodb
+    spec:
+      containers:
+      - name: mongodb
+        image: mongo:7
+        command:
+          - mongod
+          - "--replSet"
+          - rs0
+          - "--bind_ip_all"
+        ports:
+        - containerPort: 27017
+        volumeMounts:
+        - name: mongodb-data
+          mountPath: /data/db
+        env:
+        - name: MONGO_INITDB_ROOT_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: mongodb-secret
+              key: username
+        - name: MONGO_INITDB_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mongodb-secret
+              key: password
+  volumeClaimTemplates:
+  - metadata:
+      name: mongodb-data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 100Gi
+```
+
+### Service Configuration
+
+```yaml
+# mongodb-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb
+spec:
+  clusterIP: None
+  selector:
+    app: mongodb
+  ports:
+  - port: 27017
+    targetPort: 27017
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb-external
+spec:
+  type: LoadBalancer
+  selector:
+    app: mongodb
+  ports:
+  - port: 27017
+    targetPort: 27017
+```
+
+## Application Configuration
+
+### Environment-Based Config
+
+```javascript
+// config.js
+const config = {
+  development: {
+    mongodb: {
+      uri: 'mongodb://localhost:27017/myapp',
+      options: {
+        maxPoolSize: 10,
+        minPoolSize: 2
+      }
+    },
+    redis: {
+      host: 'localhost',
+      port: 6379
+    }
+  },
+  
+  production: {
+    mongodb: {
+      uri: process.env.MONGODB_URI,
+      options: {
+        maxPoolSize: 100,
+        minPoolSize: 10,
+        maxIdleTimeMS: 30000,
+        serverSelectionTimeoutMS: 5000,
+        tls: true,
+        tlsCAFile: '/certs/ca.pem',
+        authSource: 'admin',
+        replicaSet: 'rs0',
+        readPreference: 'secondaryPreferred',
+        writeConcern: {
+          w: 'majority',
+          j: true
+        }
+      }
+    },
+    redis: {
+      host: process.env.REDIS_HOST,
+      port: process.env.REDIS_PORT,
+      password: process.env.REDIS_PASSWORD,
+      tls: {}
+    }
+  }
+};
+
+module.exports = config[process.env.NODE_ENV || 'development'];
+```
+
+### Connection Management
+
+```javascript
+const { MongoClient } = require('mongodb');
+
+class DatabaseConnection {
+  constructor() {
+    this.client = null;
+    this.db = null;
+  }
+  
+  async connect() {
+    if (this.client) {
+      return this.db;
+    }
+    
+    const config = require('./config');
+    
+    this.client = new MongoClient(config.mongodb.uri, config.mongodb.options);
+    
+    await this.client.connect();
+    
+    this.db = this.client.db();
+    
+    // Handle connection events
+    this.client.on('serverHeartbeatFailed', (event) => {
+      console.error('Heartbeat failed:', event);
+    });
+    
+    this.client.on('topologyDescriptionChanged', (event) => {
+      console.log('Topology changed:', event.newDescription.type);
+    });
+    
+    return this.db;
+  }
+  
+  async close() {
+    if (this.client) {
+      await this.client.close();
+      this.client = null;
+      this.db = null;
+    }
+  }
+}
+
+// Singleton instance
+const dbConnection = new DatabaseConnection();
+
+// Graceful shutdown
+process.on('SIGINT', async () => {
+  await dbConnection.close();
+  process.exit(0);
+});
+
+module.exports = dbConnection;
+```
+
+## Health Checks
+
+### Kubernetes Probes
+
+```yaml
+# deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myapp
+spec:
+  replicas: 3
+  template:
+    spec:
+      containers:
+      - name: myapp
+        image: myapp:latest
+        ports:
+        - containerPort: 3000
+        livenessProbe:
+          httpGet:
+            path: /health/live
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: 3000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+```
+
+### Health Check Endpoints
+
+```javascript
+// health.js
+const express = require('express');
+const router = express.Router();
+
+router.get('/health/live', (req, res) => {
+  res.json({ status: 'ok' });
+});
+
+router.get('/health/ready', async (req, res) => {
+  try {
+    // Check MongoDB
+    await db.admin().ping();
+    
+    // Check Redis
+    await redisClient.ping();
+    
+    res.json({
+      status: 'ready',
+      mongodb: 'connected',
+      redis: 'connected'
+    });
+  } catch (error) {
+    res.status(503).json({
+      status: 'not ready',
+      error: error.message
+    });
+  }
+});
+
+module.exports = router;
+```
+
+## Zero-Downtime Deployment
+
+### Blue-Green Deployment
+
+```javascript
+// Deploy new version (green)
+// 1. Deploy green environment
+// 2. Run smoke tests
+// 3. Switch traffic to green
+// 4. Keep blue for rollback
+
+const deploymentStrategy = {
+  blueGreen: {
+    steps: [
+      'Deploy green environment',
+      'Warm up connections',
+      'Run health checks',
+      'Switch load balancer to green',
+      'Monitor for errors',
+      'Decommission blue (after verification)'
+    ]
+  }
+};
+```
+
+### Rolling Update
+
+```yaml
+# deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myapp
+spec:
+  replicas: 6
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 2
+      maxUnavailable: 1
+  template:
+    spec:
+      containers:
+      - name: myapp
+        image: myapp:v2
+```
+
+## Database Migration in Production
+
+```javascript
+class ProductionMigration {
+  async migrate() {
+    console.log('Starting production migration...');
+    
+    // 1. Create backup
+    await this.createBackup();
+    
+    // 2. Run migration in transaction
+    const session = client.startSession();
+    
+    try {
+      await session.withTransaction(async () => {
+        await this.runMigration(session);
+      });
+      
+      console.log('Migration completed successfully');
+    } catch (error) {
+      console.error('Migration failed:', error);
+      await this.rollback();
+      throw error;
+    } finally {
+      await session.endSession();
+    }
+  }
+  
+  async runMigration(session) {
+    // Add new field with default value
+    await db.collection('users').updateMany(
+      { version: { $exists: false } },
+      {
+        $set: {
+          status: 'active',
+          version: 2
+        }
+      },
+      { session }
+    );
+    
+    // Create new index
+    await db.collection('users').createIndex(
+      { status: 1 },
+      { session }
+    );
+  }
+}
+```
+
+## Monitoring in Production
+
+```javascript
+// Prometheus metrics
+const client = require('prom-client');
+const register = new client.Registry();
+
+// Database metrics
+const dbConnectionGauge = new client.Gauge({
+  name: 'mongodb_connections_current',
+  help: 'Current MongoDB connections',
+  registers: [register]
+});
+
+const queryDurationHistogram = new client.Histogram({
+  name: 'mongodb_query_duration_seconds',
+  help: 'MongoDB query duration',
+  labelNames: ['operation', 'collection'],
+  registers: [register]
+});
+
+// Collect metrics
+setInterval(async () => {
+  const status = await db.adminCommand({ serverStatus: 1 });
+  dbConnectionGauge.set(status.connections.current);
+}, 10000);
+
+// Expose metrics
+app.get('/metrics', async (req, res) => {
+  res.set('Content-Type', register.contentType);
+  res.end(await register.metrics());
+});
+```
+
+## Secrets Management
+
+```javascript
+// Using AWS Secrets Manager
+const { SecretsManagerClient, GetSecretValueCommand } = require('@aws-sdk/client-secrets-manager');
+
+async function getMongoDBCredentials() {
+  const client = new SecretsManagerClient({ region: 'us-east-1' });
+  
+  const command = new GetSecretValueCommand({
+    SecretId: 'prod/mongodb/credentials'
+  });
+  
+  const response = await client.send(command);
+  return JSON.parse(response.SecretString);
+}
+
+// Using Kubernetes Secrets
+// kubectl create secret generic mongodb-secret \
+//   --from-literal=username=admin \
+//   --from-literal=password=securepassword
+```
+
+## .NET Production Deployment
+
+```csharp
+using MongoDB.Driver;
+using Microsoft.Extensions.Options;
+
+public class MongoDbService
+{
+    private readonly IMongoClient _client;
+    private readonly IMongoDatabase _database;
+    
+    public MongoDbService(IOptions<MongoDbSettings> settings)
+    {
+        var mongoSettings = MongoClientSettings.FromConnectionString(
+            settings.Value.ConnectionString
+        );
+        
+        // Production settings
+        mongoSettings.MaxConnectionPoolSize = 100;
+        mongoSettings.MinConnectionPoolSize = 10;
+        mongoSettings.ServerSelectionTimeout = TimeSpan.FromSeconds(5);
+        mongoSettings.ConnectTimeout = TimeSpan.FromSeconds(10);
+        mongoSettings.SocketTimeout = TimeSpan.FromSeconds(30);
+        
+        // TLS
+        mongoSettings.UseTls = true;
+        
+        // Write concern
+        mongoSettings.WriteConcern = WriteConcern.WMajority;
+        
+        // Read preference
+        mongoSettings.ReadPreference = ReadPreference.SecondaryPreferred;
+        
+        _client = new MongoClient(mongoSettings);
+        _database = _client.GetDatabase(settings.Value.DatabaseName);
+    }
+}
+
+// appsettings.Production.json
+{
+  "MongoDb": {
+    "ConnectionString": "mongodb://user:pass@mongo1,mongo2,mongo3/myapp?replicaSet=rs0",
+    "DatabaseName": "myapp"
+  }
+}
+```
+
+## Deployment Best Practices
+
+```javascript
+const deploymentBestPractices = [
+  'Use replica sets (minimum 3 nodes)',
+  'Enable authentication and TLS',
+  'Configure connection pooling',
+  'Set up monitoring and alerting',
+  'Implement automated backups',
+  'Use secrets management',
+  'Test disaster recovery',
+  'Document runbooks',
+  'Implement health checks',
+  'Use rolling updates',
+  'Monitor performance metrics',
+  'Set up log aggregation',
+  'Plan for scaling',
+  'Test failover scenarios'
+];
+```
+
+## Interview Tips
+
+- **Explain replica sets**: High availability setup
+- **Show Kubernetes**: StatefulSets, services
+- **Demonstrate health checks**: Liveness, readiness probes
+- **Discuss deployment strategies**: Blue-green, rolling
+- **Mention monitoring**: Prometheus, metrics
+- **Show configuration**: Environment-based settings
+
+## Summary
+
+Deploy NoSQL databases in production with replica sets for high availability. Use Kubernetes StatefulSets for orchestration. Configure connection pooling, TLS, and authentication. Implement health checks for liveness and readiness. Use blue-green or rolling deployment strategies for zero downtime. Monitor with Prometheus metrics. Manage secrets securely with AWS Secrets Manager or Kubernetes Secrets. Automate backups and test disaster recovery. Document runbooks for operations. Essential for reliable production NoSQL deployments.

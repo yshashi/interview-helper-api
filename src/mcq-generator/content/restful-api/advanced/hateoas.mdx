@@ -1,0 +1,303 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: HATEOAS
+---
+
+# HATEOAS
+
+## What is HATEOAS?
+
+**HATEOAS (Hypermedia as the Engine of Application State)** is a constraint of REST where the API provides links to related resources and actions, allowing clients to navigate the API dynamically.
+
+## Basic Example
+
+```json
+{
+  "id": "123",
+  "name": "John Doe",
+  "email": "john@example.com",
+  "links": {
+    "self": "/api/users/123",
+    "orders": "/api/users/123/orders",
+    "update": "/api/users/123",
+    "delete": "/api/users/123"
+  }
+}
+```
+
+## Node.js Implementation
+
+```javascript
+// Helper function to generate links
+function generateUserLinks(userId, baseUrl) {
+  return {
+    self: `${baseUrl}/api/users/${userId}`,
+    orders: `${baseUrl}/api/users/${userId}/orders`,
+    update: `${baseUrl}/api/users/${userId}`,
+    delete: `${baseUrl}/api/users/${userId}`
+  };
+}
+
+app.get('/api/users/:id', async (req, res) => {
+  const user = await User.findById(req.params.id);
+  const baseUrl = `${req.protocol}://${req.get('host')}`;
+  
+  res.json({
+    ...user.toJSON(),
+    _links: generateUserLinks(user._id, baseUrl)
+  });
+});
+
+// Collection with links
+app.get('/api/users', async (req, res) => {
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 10;
+  const skip = (page - 1) * limit;
+  
+  const users = await User.find().skip(skip).limit(limit);
+  const total = await User.countDocuments();
+  const baseUrl = `${req.protocol}://${req.get('host')}`;
+  
+  res.json({
+    data: users.map(user => ({
+      ...user.toJSON(),
+      _links: generateUserLinks(user._id, baseUrl)
+    })),
+    _links: {
+      self: `${baseUrl}/api/users?page=${page}&limit=${limit}`,
+      first: `${baseUrl}/api/users?page=1&limit=${limit}`,
+      last: `${baseUrl}/api/users?page=${Math.ceil(total / limit)}&limit=${limit}`,
+      ...(page > 1 && { prev: `${baseUrl}/api/users?page=${page - 1}&limit=${limit}` }),
+      ...(page < Math.ceil(total / limit) && { next: `${baseUrl}/api/users?page=${page + 1}&limit=${limit}` })
+    }
+  });
+});
+```
+
+## .NET Implementation
+
+```csharp
+public class UserDto
+{
+    public int Id { get; set; }
+    public string Name { get; set; }
+    public string Email { get; set; }
+    public Dictionary<string, string> Links { get; set; }
+}
+
+[HttpGet("{id}")]
+public async Task<ActionResult<UserDto>> GetUser(int id)
+{
+    var user = await _context.Users.FindAsync(id);
+    if (user == null) return NotFound();
+    
+    var userDto = new UserDto
+    {
+        Id = user.Id,
+        Name = user.Name,
+        Email = user.Email,
+        Links = GenerateUserLinks(id)
+    };
+    
+    return Ok(userDto);
+}
+
+private Dictionary<string, string> GenerateUserLinks(int userId)
+{
+    return new Dictionary<string, string>
+    {
+        { "self", Url.Action(nameof(GetUser), new { id = userId }) },
+        { "orders", Url.Action("GetOrders", "Orders", new { userId }) },
+        { "update", Url.Action(nameof(UpdateUser), new { id = userId }) },
+        { "delete", Url.Action(nameof(DeleteUser), new { id = userId }) }
+    };
+}
+```
+
+## HAL (Hypertext Application Language)
+
+```json
+{
+  "_links": {
+    "self": { "href": "/api/users/123" },
+    "orders": { "href": "/api/users/123/orders" },
+    "update": { "href": "/api/users/123", "method": "PUT" },
+    "delete": { "href": "/api/users/123", "method": "DELETE" }
+  },
+  "id": "123",
+  "name": "John Doe",
+  "email": "john@example.com",
+  "_embedded": {
+    "orders": [
+      {
+        "_links": {
+          "self": { "href": "/api/orders/789" }
+        },
+        "id": "789",
+        "total": 99.99
+      }
+    ]
+  }
+}
+```
+
+## JSON:API Format
+
+```json
+{
+  "data": {
+    "type": "users",
+    "id": "123",
+    "attributes": {
+      "name": "John Doe",
+      "email": "john@example.com"
+    },
+    "relationships": {
+      "orders": {
+        "links": {
+          "related": "/api/users/123/orders"
+        }
+      }
+    },
+    "links": {
+      "self": "/api/users/123"
+    }
+  }
+}
+```
+
+## State-Based Links
+
+```javascript
+// Links change based on resource state
+app.get('/api/orders/:id', async (req, res) => {
+  const order = await Order.findById(req.params.id);
+  const baseUrl = `${req.protocol}://${req.get('host')}`;
+  
+  const links = {
+    self: `${baseUrl}/api/orders/${order._id}`
+  };
+  
+  // Add state-specific actions
+  if (order.status === 'pending') {
+    links.cancel = `${baseUrl}/api/orders/${order._id}/cancel`;
+    links.confirm = `${baseUrl}/api/orders/${order._id}/confirm`;
+  } else if (order.status === 'confirmed') {
+    links.ship = `${baseUrl}/api/orders/${order._id}/ship`;
+    links.cancel = `${baseUrl}/api/orders/${order._id}/cancel`;
+  } else if (order.status === 'shipped') {
+    links.deliver = `${baseUrl}/api/orders/${order._id}/deliver`;
+  } else if (order.status === 'delivered') {
+    links.return = `${baseUrl}/api/orders/${order._id}/return`;
+  }
+  
+  res.json({
+    ...order.toJSON(),
+    _links: links
+  });
+});
+```
+
+## Angular Client
+
+```typescript
+interface HateoasResource {
+  _links: {
+    [key: string]: string | { href: string; method?: string };
+  };
+}
+
+interface User extends HateoasResource {
+  id: string;
+  name: string;
+  email: string;
+}
+
+@Injectable()
+export class UserService {
+  getUser(id: string): Observable<User> {
+    return this.http.get<User>(`${this.apiUrl}/users/${id}`);
+  }
+  
+  // Follow link dynamically
+  followLink(resource: HateoasResource, linkName: string): Observable<any> {
+    const link = resource._links[linkName];
+    const href = typeof link === 'string' ? link : link.href;
+    
+    return this.http.get(href);
+  }
+  
+  // Execute action
+  executeAction(resource: HateoasResource, actionName: string, data?: any): Observable<any> {
+    const link = resource._links[actionName];
+    const href = typeof link === 'string' ? link : link.href;
+    const method = typeof link === 'object' ? link.method : 'GET';
+    
+    switch (method) {
+      case 'POST':
+        return this.http.post(href, data);
+      case 'PUT':
+        return this.http.put(href, data);
+      case 'DELETE':
+        return this.http.delete(href);
+      default:
+        return this.http.get(href);
+    }
+  }
+}
+
+// Component usage
+this.userService.getUser('123').subscribe(user => {
+  this.user = user;
+  
+  // Follow orders link
+  if (user._links.orders) {
+    this.userService.followLink(user, 'orders').subscribe(orders => {
+      this.orders = orders;
+    });
+  }
+});
+```
+
+## Link Relations
+
+```json
+{
+  "_links": {
+    "self": { "href": "/api/users/123" },
+    "collection": { "href": "/api/users" },
+    "next": { "href": "/api/users/124" },
+    "prev": { "href": "/api/users/122" },
+    "related": { "href": "/api/users/123/orders" },
+    "edit": { "href": "/api/users/123", "method": "PUT" },
+    "delete": { "href": "/api/users/123", "method": "DELETE" }
+  }
+}
+```
+
+## Benefits
+
+1. **Discoverability**: Clients discover API capabilities
+2. **Loose coupling**: Clients don't hardcode URLs
+3. **Evolvability**: API can change without breaking clients
+4. **Self-documentation**: Links show available actions
+
+## Challenges
+
+1. **Complexity**: More data in responses
+2. **Client support**: Clients must understand hypermedia
+3. **Caching**: Links may change frequently
+4. **Overhead**: Extra data in every response
+
+## Interview Tips
+
+- **Explain HATEOAS**: Hypermedia-driven API navigation
+- **Show implementation**: Node.js, .NET examples
+- **Demonstrate state-based**: Links change with state
+- **Discuss formats**: HAL, JSON:API
+- **Mention benefits**: Discoverability, loose coupling
+- **Show client**: Angular following links
+
+## Summary
+
+HATEOAS provides links to related resources and available actions in API responses. Clients navigate API dynamically without hardcoded URLs. Links change based on resource state. Common formats include HAL and JSON:API. Enables API discoverability and evolution. Adds complexity but improves loose coupling. Essential for mature REST APIs.

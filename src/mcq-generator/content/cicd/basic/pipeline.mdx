@@ -1,0 +1,325 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: CI/CD Pipeline
+---
+
+# CI/CD Pipeline
+
+## What is a CI/CD Pipeline?
+
+A **CI/CD Pipeline** is an automated sequence of steps that code goes through from commit to production deployment.
+
+## Pipeline Stages
+
+```
+┌─────────┐   ┌─────────┐   ┌─────────┐   ┌─────────┐   ┌─────────┐
+│ Source  │ → │  Build  │ → │  Test   │ → │ Deploy  │ → │ Monitor │
+└─────────┘   └─────────┘   └─────────┘   └─────────┘   └─────────┘
+```
+
+## Complete Pipeline Example
+
+```yaml
+name: Complete CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # Stage 1: Source & Build
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Setup environment
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Build application
+        run: npm run build
+      
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: build
+          path: dist/
+  
+  # Stage 2: Test
+  test:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Unit tests
+        run: npm run test:unit
+      
+      - name: Integration tests
+        run: npm run test:integration
+      
+      - name: E2E tests
+        run: npm run test:e2e
+      
+      - name: Code coverage
+        run: npm run coverage
+  
+  # Stage 3: Security & Quality
+  security:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Security scan
+        run: npm audit
+      
+      - name: Dependency check
+        run: npm run check-dependencies
+      
+      - name: SAST scan
+        run: npm run security:scan
+  
+  # Stage 4: Deploy to Staging
+  deploy-staging:
+    needs: [test, security]
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/download-artifact@v3
+      
+      - name: Deploy to staging
+        run: |
+          echo "Deploying to staging..."
+          kubectl apply -f k8s/staging/
+  
+  # Stage 5: Deploy to Production
+  deploy-production:
+    needs: deploy-staging
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/download-artifact@v3
+      
+      - name: Deploy to production
+        run: |
+          echo "Deploying to production..."
+          kubectl apply -f k8s/production/
+      
+      - name: Smoke tests
+        run: npm run test:smoke
+      
+      - name: Notify team
+        run: |
+          curl -X POST ${{ secrets.SLACK_WEBHOOK }} \
+            -d '{"text":"Deployed to production successfully"}'
+```
+
+## Multi-Stack Pipelines
+
+### Angular Pipeline
+
+```yaml
+name: Angular Pipeline
+
+jobs:
+  build:
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
+      - run: npm ci
+      - run: ng build --configuration production
+      - run: ng test --watch=false --code-coverage
+      - run: ng lint
+      - uses: actions/upload-artifact@v3
+        with:
+          name: angular-app
+          path: dist/
+```
+
+### .NET Pipeline
+
+```yaml
+name: .NET Pipeline
+
+jobs:
+  build:
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-dotnet@v3
+        with:
+          dotnet-version: '8.0.x'
+      - run: dotnet restore
+      - run: dotnet build --configuration Release
+      - run: dotnet test --configuration Release
+      - run: dotnet publish -c Release -o ./publish
+      - uses: actions/upload-artifact@v3
+        with:
+          name: dotnet-app
+          path: ./publish
+```
+
+### Node.js Pipeline
+
+```yaml
+name: Node.js Pipeline
+
+jobs:
+  build:
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+      - run: npm run lint
+      - run: docker build -t myapp:${{ github.sha }} .
+      - run: docker push myapp:${{ github.sha }}
+```
+
+## Database Pipeline
+
+```yaml
+name: Database Pipeline
+
+jobs:
+  migrate:
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Run migrations
+        run: |
+          npm run migrate:up
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test
+      
+      - name: Seed test data
+        run: npm run seed
+      
+      - name: Run database tests
+        run: npm run test:db
+      
+      - name: Backup schema
+        run: pg_dump > schema.sql
+```
+
+## Pipeline Best Practices
+
+### 1. Fail Fast
+
+```yaml
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - run: npm run lint
+  
+  test:
+    needs: lint  # Don't test if lint fails
+    runs-on: ubuntu-latest
+    steps:
+      - run: npm test
+```
+
+### 2. Parallel Execution
+
+```yaml
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - run: npm run test:unit
+  
+  integration-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - run: npm run test:integration
+  
+  e2e-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - run: npm run test:e2e
+```
+
+### 3. Caching
+
+```yaml
+steps:
+  - uses: actions/cache@v3
+    with:
+      path: ~/.npm
+      key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+  
+  - run: npm ci
+```
+
+### 4. Matrix Builds
+
+```yaml
+jobs:
+  test:
+    strategy:
+      matrix:
+        node: [16, 18, 20]
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/setup-node@v3
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm test
+```
+
+## Pipeline Monitoring
+
+```yaml
+jobs:
+  deploy:
+    steps:
+      - name: Deploy
+        run: kubectl apply -f k8s/
+      
+      - name: Wait for rollout
+        run: kubectl rollout status deployment/myapp
+      
+      - name: Check health
+        run: |
+          curl -f http://myapp/health || exit 1
+      
+      - name: Monitor metrics
+        run: |
+          # Check error rate
+          ERROR_RATE=$(curl -s http://prometheus/api/v1/query?query=error_rate)
+          if [ $ERROR_RATE -gt 0.01 ]; then
+            echo "High error rate detected"
+            exit 1
+          fi
+```
+
+## Interview Tips
+
+- **Explain stages**: Source, build, test, deploy, monitor
+- **Show complete pipeline**: All stages with code
+- **Demonstrate multi-stack**: Angular, .NET, Node.js
+- **Discuss best practices**: Fail fast, parallel, caching
+- **Mention monitoring**: Health checks, metrics
+- **Show database**: Migration and testing
+
+## Summary
+
+CI/CD Pipeline automates the journey from code commit to production. Includes stages for building, testing, security scanning, and deployment. Use parallel execution for speed. Implement caching for efficiency. Monitor deployments with health checks. Works across all tech stacks and databases.

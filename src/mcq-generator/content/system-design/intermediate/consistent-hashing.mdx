@@ -1,0 +1,371 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Consistent Hashing
+---
+
+# Consistent Hashing
+
+## What is Consistent Hashing?
+
+Consistent hashing is a distributed hashing technique that minimizes data movement when nodes are added or removed from a system. It's essential for building scalable distributed systems like caches, databases, and load balancers.
+
+## The Problem with Traditional Hashing
+
+**Traditional Approach:** `server = hash(key) % server_count`
+
+**Example with 3 servers:**
+- key "user-123" → hash = 456 → 456 % 3 = 0 → Server 0
+- key "user-456" → hash = 789 → 789 % 3 = 0 → Server 0
+- key "user-789" → hash = 234 → 234 % 3 = 0 → Server 0
+
+**Problem:** When you add or remove a server, almost all keys get remapped!
+
+**Adding 4th server:**
+- key "user-123" → 456 % 4 = 0 → Server 0 (same)
+- key "user-456" → 789 % 4 = 1 → Server 1 (moved!)
+- key "user-789" → 234 % 4 = 2 → Server 2 (moved!)
+
+**Result:** ~75% of keys need to be moved = massive cache invalidation
+
+## How Consistent Hashing Works
+
+**Concept:** Arrange servers and keys on a virtual ring (0 to 2^32-1)
+
+**Process:**
+1. Hash each server to a position on the ring
+2. Hash each key to a position on the ring
+3. Key is stored on the first server clockwise from its position
+
+**Example Ring:**
+```
+         0
+    Server C
+       /  \
+      /    \
+Key A      Key B
+    /        \
+   /          \
+Server A    Server B
+   \          /
+    \        /
+     Key C
+      \  /
+    2^32-1
+```
+
+**Key Assignment:**
+- Key A (hash: 100) → First server clockwise → Server A
+- Key B (hash: 200) → First server clockwise → Server B
+- Key C (hash: 300) → First server clockwise → Server C
+
+## Adding/Removing Servers
+
+**Adding Server D (hash: 150):**
+- Only keys between Server A (100) and Server D (150) move to Server D
+- All other keys stay on their current servers
+- **Impact:** Only ~25% of keys move (1/4 servers)
+
+**Removing Server B:**
+- Only keys on Server B move to next server (Server C)
+- All other keys unaffected
+- **Impact:** Only ~25% of keys move
+
+**Benefit:** Minimal data movement compared to traditional hashing
+
+## Virtual Nodes
+
+**Problem:** With few servers, keys may not distribute evenly
+
+**Solution:** Each physical server gets multiple virtual nodes on the ring
+
+**Example:**
+- Server A gets 150 virtual nodes (A-1, A-2, ..., A-150)
+- Server B gets 150 virtual nodes (B-1, B-2, ..., B-150)
+- Server C gets 150 virtual nodes (C-1, C-2, ..., C-150)
+
+**Benefits:**
+- More even key distribution
+- When server fails, load distributed across all remaining servers
+- Can weight servers (powerful server gets more virtual nodes)
+
+## Implementation
+
+```javascript
+class ConsistentHashing {
+  constructor(nodes = [], virtualNodes = 150) {
+    this.ring = new Map();
+    this.sortedHashes = [];
+    this.virtualNodes = virtualNodes;
+    this.nodes = [];
+    
+    nodes.forEach(node => this.addNode(node));
+  }
+  
+  // Hash function
+  hash(key) {
+    let hash = 0;
+    for (let i = 0; i < key.length; i++) {
+      hash = ((hash << 5) - hash) + key.charCodeAt(i);
+      hash = hash & hash; // Convert to 32-bit integer
+    }
+    return Math.abs(hash);
+  }
+  
+  // Add server to ring
+  addNode(node) {
+    this.nodes.push(node);
+    
+    // Add virtual nodes
+    for (let i = 0; i < this.virtualNodes; i++) {
+      const virtualKey = `${node}-vnode-${i}`;
+      const hash = this.hash(virtualKey);
+      
+      this.ring.set(hash, node);
+      this.sortedHashes.push(hash);
+    }
+    
+    // Keep hashes sorted
+    this.sortedHashes.sort((a, b) => a - b);
+  }
+  
+  // Remove server from ring
+  removeNode(node) {
+    this.nodes = this.nodes.filter(n => n !== node);
+    
+    // Remove all virtual nodes
+    for (let i = 0; i < this.virtualNodes; i++) {
+      const virtualKey = `${node}-vnode-${i}`;
+      const hash = this.hash(virtualKey);
+      
+      this.ring.delete(hash);
+      const index = this.sortedHashes.indexOf(hash);
+      if (index > -1) {
+        this.sortedHashes.splice(index, 1);
+      }
+    }
+  }
+  
+  // Get server for key
+  getNode(key) {
+    if (this.ring.size === 0) {
+      return null;
+    }
+    
+    const hash = this.hash(key);
+    
+    // Find first server clockwise
+    for (const serverHash of this.sortedHashes) {
+      if (serverHash >= hash) {
+        return this.ring.get(serverHash);
+      }
+    }
+    
+    // Wrap around to first server
+    return this.ring.get(this.sortedHashes[0]);
+  }
+  
+  // Get distribution statistics
+  getDistribution(keys) {
+    const distribution = {};
+    
+    this.nodes.forEach(node => {
+      distribution[node] = 0;
+    });
+    
+    keys.forEach(key => {
+      const node = this.getNode(key);
+      distribution[node]++;
+    });
+    
+    return distribution;
+  }
+}
+
+// Usage
+const ch = new ConsistentHashing(['server1', 'server2', 'server3']);
+
+console.log(ch.getNode('user-123')); // server2
+console.log(ch.getNode('user-456')); // server1
+console.log(ch.getNode('user-789')); // server3
+
+// Add server - minimal keys move
+ch.addNode('server4');
+console.log(ch.getNode('user-123')); // might still be server2
+
+// Remove server - only its keys move
+ch.removeNode('server2');
+console.log(ch.getNode('user-123')); // moves to next server
+```
+
+## Real-World Applications
+
+### Distributed Caching (Memcached, Redis Cluster)
+
+**Without Consistent Hashing:**
+- Add cache server → all cache keys remapped → massive cache misses
+
+**With Consistent Hashing:**
+- Add cache server → only ~1/N keys remapped → minimal cache misses
+
+### Load Balancing
+
+**Use Case:** Distribute requests to servers based on session ID
+
+**Benefit:** Same user always goes to same server (session affinity)
+
+### Distributed Databases (Cassandra, DynamoDB)
+
+**Use Case:** Partition data across nodes
+
+**Benefit:** Adding nodes only moves small portion of data
+
+### Content Delivery Networks (CDN)
+
+**Use Case:** Distribute content across edge servers
+
+**Benefit:** Minimal content redistribution when adding edge locations
+
+## Weighted Consistent Hashing
+
+**Purpose:** Give more powerful servers more virtual nodes
+
+**Example:**
+- Server A (powerful): 300 virtual nodes
+- Server B (medium): 150 virtual nodes
+- Server C (weak): 50 virtual nodes
+
+**Result:** Server A handles ~60% of load, B handles ~30%, C handles ~10%
+
+```javascript
+class WeightedConsistentHashing extends ConsistentHashing {
+  addNodeWithWeight(node, weight) {
+    const virtualNodes = Math.floor(this.virtualNodes * weight);
+    
+    for (let i = 0; i < virtualNodes; i++) {
+      const virtualKey = `${node}-vnode-${i}`;
+      const hash = this.hash(virtualKey);
+      
+      this.ring.set(hash, node);
+      this.sortedHashes.push(hash);
+    }
+    
+    this.sortedHashes.sort((a, b) => a - b);
+  }
+}
+
+// Usage
+const wch = new WeightedConsistentHashing();
+wch.addNodeWithWeight('powerful-server', 2.0);
+wch.addNodeWithWeight('medium-server', 1.0);
+wch.addNodeWithWeight('weak-server', 0.5);
+```
+
+## .NET Implementation
+
+```csharp
+using System.Security.Cryptography;
+
+public class ConsistentHashing<T>
+{
+    private readonly SortedDictionary<int, T> _ring = new();
+    private readonly int _virtualNodes;
+    
+    public ConsistentHashing(int virtualNodes = 150)
+    {
+        _virtualNodes = virtualNodes;
+    }
+    
+    private int Hash(string key)
+    {
+        using var md5 = MD5.Create();
+        var hash = md5.ComputeHash(Encoding.UTF8.GetBytes(key));
+        return BitConverter.ToInt32(hash, 0);
+    }
+    
+    public void AddNode(T node)
+    {
+        for (int i = 0; i < _virtualNodes; i++)
+        {
+            var virtualKey = $"{node}-vnode-{i}";
+            var hash = Hash(virtualKey);
+            _ring[hash] = node;
+        }
+    }
+    
+    public void RemoveNode(T node)
+    {
+        for (int i = 0; i < _virtualNodes; i++)
+        {
+            var virtualKey = $"{node}-vnode-{i}";
+            var hash = Hash(virtualKey);
+            _ring.Remove(hash);
+        }
+    }
+    
+    public T GetNode(string key)
+    {
+        if (_ring.Count == 0)
+            throw new InvalidOperationException("No nodes available");
+        
+        var hash = Hash(key);
+        
+        // Find first node clockwise
+        foreach (var kvp in _ring)
+        {
+            if (kvp.Key >= hash)
+                return kvp.Value;
+        }
+        
+        // Wrap around to first node
+        return _ring.First().Value;
+    }
+}
+
+// Usage
+var ch = new ConsistentHashing<string>();
+ch.AddNode("server1");
+ch.AddNode("server2");
+ch.AddNode("server3");
+
+var server = ch.GetNode("user-123");
+Console.WriteLine($"Key assigned to: {server}");
+```
+
+## Advantages
+
+- **Minimal Data Movement:** Only K/N keys move when adding/removing nodes (K = total keys, N = nodes)
+- **Scalability:** Easy to add/remove nodes
+- **Load Distribution:** Virtual nodes ensure even distribution
+- **Fault Tolerance:** Node failure only affects its keys
+- **Flexibility:** Can weight nodes based on capacity
+
+## Disadvantages
+
+- **Complexity:** More complex than simple modulo hashing
+- **Memory Overhead:** Storing virtual nodes
+- **Hotspots:** Popular keys can overload single server
+- **Rebalancing:** May need manual rebalancing for optimal distribution
+
+## Best Practices
+
+- **Use 100-200 virtual nodes per server** - Good balance between distribution and overhead
+- **Monitor distribution** - Ensure keys distributed evenly
+- **Implement health checks** - Remove failed nodes quickly
+- **Gradual rollout** - Add nodes incrementally
+- **Test failure scenarios** - Verify system handles node failures
+- **Use consistent hash function** - Same hash for same key across all nodes
+- **Document node weights** - If using weighted hashing
+- **Plan for growth** - Design for adding nodes
+
+## Interview Tips
+
+- **Explain the problem**: Traditional hashing remaps all keys
+- **Show the solution**: Ring-based approach minimizes movement
+- **Demonstrate virtual nodes**: Improve distribution
+- **Discuss applications**: Caching, load balancing, databases
+- **Mention trade-offs**: Complexity vs minimal data movement
+- **Show implementation**: Basic algorithm
+
+## Summary
+
+Consistent hashing minimizes data movement when nodes are added or removed. Traditional hashing remaps ~100% of keys; consistent hashing only ~1/N keys. Uses virtual ring where keys and servers are hashed to positions. Key stored on first server clockwise. Virtual nodes (100-200 per server) ensure even distribution. Essential for distributed caches (Memcached, Redis), databases (Cassandra, DynamoDB), and load balancers. Enables horizontal scaling with minimal disruption. Trade complexity for scalability and minimal data movement.

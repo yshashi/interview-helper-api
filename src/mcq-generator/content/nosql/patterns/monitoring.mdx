@@ -1,0 +1,544 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Monitoring and Observability
+---
+
+# Monitoring and Observability
+
+## Key Metrics
+
+```javascript
+const keyMetrics = {
+  performance: ['Query latency', 'Throughput (ops/sec)', 'Connection count'],
+  resources: ['CPU usage', 'Memory usage', 'Disk I/O', 'Network I/O'],
+  database: ['Document count', 'Index size', 'Replication lag', 'Cache hit ratio'],
+  errors: ['Failed operations', 'Connection errors', 'Timeout errors']
+};
+```
+
+## MongoDB Monitoring
+
+### Server Status
+
+```javascript
+// Get server status
+const status = await db.adminCommand({ serverStatus: 1 });
+
+console.log({
+  connections: status.connections,
+  opcounters: status.opcounters,
+  mem: status.mem,
+  network: status.network,
+  repl: status.repl
+});
+
+// Monitor connections
+const connections = {
+  current: status.connections.current,
+  available: status.connections.available,
+  totalCreated: status.connections.totalCreated
+};
+
+if (connections.current > connections.available * 0.8) {
+  console.warn('Connection pool nearing capacity');
+}
+```
+
+### Database Stats
+
+```javascript
+// Database statistics
+const dbStats = await db.stats();
+
+console.log({
+  collections: dbStats.collections,
+  dataSize: dbStats.dataSize,
+  indexSize: dbStats.indexSize,
+  storageSize: dbStats.storageSize,
+  avgObjSize: dbStats.avgObjSize
+});
+
+// Collection statistics
+const collStats = await db.collection('users').stats();
+
+console.log({
+  count: collStats.count,
+  size: collStats.size,
+  avgObjSize: collStats.avgObjSize,
+  storageSize: collStats.storageSize,
+  totalIndexSize: collStats.totalIndexSize
+});
+```
+
+### Profiler
+
+```javascript
+// Enable profiler
+db.setProfilingLevel(2);  // Log all operations
+db.setProfilingLevel(1, { slowms: 100 });  // Log slow queries
+
+// View slow queries
+const slowQueries = await db.system.profile.find({
+  millis: { $gt: 100 }
+}).sort({ ts: -1 }).limit(10).toArray();
+
+slowQueries.forEach(query => {
+  console.log({
+    op: query.op,
+    ns: query.ns,
+    millis: query.millis,
+    query: query.command
+  });
+});
+
+// Disable profiler
+db.setProfilingLevel(0);
+```
+
+### Current Operations
+
+```javascript
+// View current operations
+const currentOps = await db.adminCommand({
+  currentOp: true,
+  $all: true
+});
+
+// Find long-running operations
+const longRunning = currentOps.inprog.filter(op => op.secs_running > 5);
+
+longRunning.forEach(op => {
+  console.log({
+    opid: op.opid,
+    op: op.op,
+    ns: op.ns,
+    secs_running: op.secs_running,
+    query: op.command
+  });
+});
+
+// Kill operation
+if (longRunning.length > 0) {
+  await db.adminCommand({ killOp: 1, op: longRunning[0].opid });
+}
+```
+
+## Prometheus Integration
+
+```javascript
+const client = require('prom-client');
+
+// Create metrics
+const register = new client.Registry();
+
+const queryDuration = new client.Histogram({
+  name: 'mongodb_query_duration_seconds',
+  help: 'MongoDB query duration in seconds',
+  labelNames: ['collection', 'operation'],
+  registers: [register]
+});
+
+const connectionCount = new client.Gauge({
+  name: 'mongodb_connections_current',
+  help: 'Current number of MongoDB connections',
+  registers: [register]
+});
+
+const errorCounter = new client.Counter({
+  name: 'mongodb_errors_total',
+  help: 'Total number of MongoDB errors',
+  labelNames: ['type'],
+  registers: [register]
+});
+
+// Instrument queries
+class MonitoredUserService {
+  async getUser(userId) {
+    const end = queryDuration.startTimer({ collection: 'users', operation: 'findOne' });
+    
+    try {
+      const user = await db.collection('users').findOne({ _id: userId });
+      end();
+      return user;
+    } catch (error) {
+      errorCounter.inc({ type: error.name });
+      throw error;
+    }
+  }
+}
+
+// Collect metrics periodically
+setInterval(async () => {
+  const status = await db.adminCommand({ serverStatus: 1 });
+  connectionCount.set(status.connections.current);
+}, 10000);
+
+// Expose metrics endpoint
+app.get('/metrics', async (req, res) => {
+  res.set('Content-Type', register.contentType);
+  res.end(await register.metrics());
+});
+```
+
+## Grafana Dashboard
+
+```javascript
+// Example Prometheus queries for Grafana
+
+const grafanaQueries = {
+  queryLatency: 'rate(mongodb_query_duration_seconds_sum[5m]) / rate(mongodb_query_duration_seconds_count[5m])',
+  
+  throughput: 'rate(mongodb_query_duration_seconds_count[5m])',
+  
+  errorRate: 'rate(mongodb_errors_total[5m])',
+  
+  connections: 'mongodb_connections_current',
+  
+  slowQueries: 'mongodb_query_duration_seconds_bucket{le="1.0"}'
+};
+```
+
+## Application Performance Monitoring
+
+```javascript
+const { MongoClient } = require('mongodb');
+
+class APMMongoClient {
+  constructor(uri) {
+    this.client = new MongoClient(uri, {
+      monitorCommands: true
+    });
+    
+    this.setupMonitoring();
+  }
+  
+  setupMonitoring() {
+    // Command started
+    this.client.on('commandStarted', (event) => {
+      console.log('Command started:', {
+        requestId: event.requestId,
+        command: event.commandName,
+        database: event.databaseName
+      });
+    });
+    
+    // Command succeeded
+    this.client.on('commandSucceeded', (event) => {
+      console.log('Command succeeded:', {
+        requestId: event.requestId,
+        duration: event.duration,
+        reply: event.reply
+      });
+    });
+    
+    // Command failed
+    this.client.on('commandFailed', (event) => {
+      console.error('Command failed:', {
+        requestId: event.requestId,
+        duration: event.duration,
+        failure: event.failure
+      });
+    });
+  }
+}
+```
+
+## Health Checks
+
+```javascript
+// Express health check endpoint
+app.get('/health', async (req, res) => {
+  try {
+    // Check MongoDB connection
+    await db.admin().ping();
+    
+    // Check replica set status
+    const replStatus = await db.adminCommand({ replSetGetStatus: 1 });
+    const primary = replStatus.members.find(m => m.state === 1);
+    
+    if (!primary) {
+      return res.status(503).json({
+        status: 'unhealthy',
+        reason: 'No primary in replica set'
+      });
+    }
+    
+    // Check replication lag
+    const lag = Date.now() - primary.optimeDate.getTime();
+    if (lag > 10000) {
+      return res.status(503).json({
+        status: 'degraded',
+        reason: 'High replication lag',
+        lag
+      });
+    }
+    
+    res.json({
+      status: 'healthy',
+      database: 'connected',
+      replication: 'ok'
+    });
+  } catch (error) {
+    res.status(503).json({
+      status: 'unhealthy',
+      error: error.message
+    });
+  }
+});
+```
+
+## Alerting
+
+```javascript
+class AlertingService {
+  async checkMetrics() {
+    const status = await db.adminCommand({ serverStatus: 1 });
+    
+    // High connection usage
+    const connUsage = status.connections.current / status.connections.available;
+    if (connUsage > 0.8) {
+      await this.sendAlert('High connection usage', {
+        current: status.connections.current,
+        available: status.connections.available,
+        usage: `${(connUsage * 100).toFixed(2)}%`
+      });
+    }
+    
+    // High memory usage
+    const memUsage = status.mem.resident / status.mem.virtual;
+    if (memUsage > 0.9) {
+      await this.sendAlert('High memory usage', {
+        resident: status.mem.resident,
+        virtual: status.mem.virtual,
+        usage: `${(memUsage * 100).toFixed(2)}%`
+      });
+    }
+    
+    // Replication lag
+    if (status.repl) {
+      const lag = status.repl.lag;
+      if (lag > 10) {
+        await this.sendAlert('High replication lag', { lag });
+      }
+    }
+  }
+  
+  async sendAlert(title, details) {
+    // Send to Slack, PagerDuty, etc.
+    console.error(`ALERT: ${title}`, details);
+    
+    // Example: Slack webhook
+    await fetch(process.env.SLACK_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text: `🚨 ${title}`,
+        attachments: [{
+          color: 'danger',
+          fields: Object.entries(details).map(([key, value]) => ({
+            title: key,
+            value: String(value),
+            short: true
+          }))
+        }]
+      })
+    });
+  }
+}
+
+// Run checks every minute
+setInterval(() => alertingService.checkMetrics(), 60000);
+```
+
+## Cassandra Monitoring
+
+```javascript
+// nodetool commands for monitoring
+const cassandraMonitoring = {
+  status: 'nodetool status',
+  info: 'nodetool info',
+  tpstats: 'nodetool tpstats',
+  cfstats: 'nodetool cfstats',
+  compactionstats: 'nodetool compactionstats',
+  proxyhistograms: 'nodetool proxyhistograms'
+};
+
+// Example: Parse nodetool output
+const { exec } = require('child_process');
+const { promisify } = require('util');
+const execPromise = promisify(exec);
+
+async function getCassandraMetrics() {
+  const { stdout } = await execPromise('nodetool tpstats');
+  
+  // Parse thread pool stats
+  const lines = stdout.split('\n');
+  const metrics = {};
+  
+  for (const line of lines) {
+    if (line.includes('ReadStage')) {
+      const parts = line.split(/\s+/);
+      metrics.readStage = {
+        active: parseInt(parts[1]),
+        pending: parseInt(parts[2]),
+        blocked: parseInt(parts[4])
+      };
+    }
+  }
+  
+  return metrics;
+}
+```
+
+## Redis Monitoring
+
+```javascript
+const redis = require('redis');
+const client = redis.createClient();
+await client.connect();
+
+// Get Redis info
+const info = await client.info();
+
+// Parse info sections
+const sections = {
+  server: info.match(/# Server([\s\S]*?)# Clients/)[1],
+  clients: info.match(/# Clients([\s\S]*?)# Memory/)[1],
+  memory: info.match(/# Memory([\s\S]*?)# Persistence/)[1],
+  stats: info.match(/# Stats([\s\S]*?)# Replication/)[1]
+};
+
+// Monitor memory usage
+const memoryInfo = await client.info('memory');
+const usedMemory = parseInt(memoryInfo.match(/used_memory:(\d+)/)[1]);
+const maxMemory = parseInt(memoryInfo.match(/maxmemory:(\d+)/)[1]);
+
+if (usedMemory > maxMemory * 0.9) {
+  console.warn('Redis memory usage high');
+}
+
+// Monitor slow log
+const slowLog = await client.slowLogGet(10);
+slowLog.forEach(entry => {
+  console.log({
+    id: entry.id,
+    timestamp: entry.timestamp,
+    duration: entry.duration,
+    command: entry.command
+  });
+});
+```
+
+## DynamoDB Monitoring
+
+```javascript
+const { CloudWatchClient, GetMetricStatisticsCommand } = require('@aws-sdk/client-cloudwatch');
+
+const cloudwatch = new CloudWatchClient({ region: 'us-east-1' });
+
+async function getDynamoDBMetrics(tableName) {
+  const endTime = new Date();
+  const startTime = new Date(endTime - 3600000);  // Last hour
+  
+  const command = new GetMetricStatisticsCommand({
+    Namespace: 'AWS/DynamoDB',
+    MetricName: 'ConsumedReadCapacityUnits',
+    Dimensions: [
+      { Name: 'TableName', Value: tableName }
+    ],
+    StartTime: startTime,
+    EndTime: endTime,
+    Period: 300,  // 5 minutes
+    Statistics: ['Sum', 'Average', 'Maximum']
+  });
+  
+  const response = await cloudwatch.send(command);
+  return response.Datapoints;
+}
+```
+
+## .NET Monitoring
+
+```csharp
+using MongoDB.Driver;
+using MongoDB.Driver.Core.Events;
+
+public class MonitoringService
+{
+    private readonly IMongoClient _client;
+    
+    public MonitoringService()
+    {
+        var settings = MongoClientSettings.FromConnectionString(connectionString);
+        
+        // Subscribe to command events
+        settings.ClusterConfigurator = cb =>
+        {
+            cb.Subscribe<CommandStartedEvent>(e =>
+            {
+                Console.WriteLine($"Command started: {e.CommandName}");
+            });
+            
+            cb.Subscribe<CommandSucceededEvent>(e =>
+            {
+                Console.WriteLine($"Command succeeded: {e.CommandName} ({e.Duration})");
+            });
+            
+            cb.Subscribe<CommandFailedEvent>(e =>
+            {
+                Console.WriteLine($"Command failed: {e.CommandName} - {e.Failure}");
+            });
+        };
+        
+        _client = new MongoClient(settings);
+    }
+    
+    public async Task<ServerStatus> GetServerStatus()
+    {
+        var database = _client.GetDatabase("admin");
+        var command = new BsonDocument("serverStatus", 1);
+        var result = await database.RunCommandAsync<BsonDocument>(command);
+        
+        return new ServerStatus
+        {
+            Connections = result["connections"]["current"].AsInt32,
+            Memory = result["mem"]["resident"].AsInt32,
+            Uptime = result["uptime"].AsInt32
+        };
+    }
+}
+```
+
+## Monitoring Best Practices
+
+```javascript
+const monitoringBestPractices = [
+  'Monitor key metrics: latency, throughput, errors',
+  'Set up alerts for anomalies',
+  'Track resource usage: CPU, memory, disk, network',
+  'Monitor replication lag',
+  'Profile slow queries',
+  'Implement health checks',
+  'Use APM tools',
+  'Create dashboards (Grafana)',
+  'Log all errors',
+  'Monitor connection pool usage',
+  'Track index usage',
+  'Set up automated alerts',
+  'Review metrics regularly',
+  'Establish baselines'
+];
+```
+
+## Interview Tips
+
+- **Explain metrics**: Latency, throughput, errors, resources
+- **Show tools**: Prometheus, Grafana, CloudWatch
+- **Demonstrate profiling**: Slow query analysis
+- **Discuss alerting**: Automated notifications
+- **Mention health checks**: Endpoint monitoring
+- **Show examples**: MongoDB, Cassandra, Redis, DynamoDB
+
+## Summary
+
+Monitor NoSQL databases with key metrics: query latency, throughput, error rates, and resource usage. Use MongoDB profiler for slow queries, serverStatus for metrics. Integrate with Prometheus and Grafana for visualization. Implement health check endpoints. Set up automated alerts for anomalies. Monitor replication lag, connection pool usage, and index efficiency. Use APM tools for application-level monitoring. Track CloudWatch metrics for DynamoDB. Essential for maintaining production database health and performance.

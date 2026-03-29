@@ -1,0 +1,356 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Caching in REST APIs
+---
+
+# Caching in REST APIs
+
+## Why Caching?
+
+- **Performance**: Faster response times
+- **Scalability**: Reduce server load
+- **Cost**: Lower infrastructure costs
+- **Availability**: Serve cached data when backend is down
+
+## HTTP Caching Headers
+
+### Cache-Control
+
+```javascript
+// Node.js/Express
+app.get('/api/users/:id', async (req, res) => {
+  const user = await User.findById(req.params.id);
+  
+  // Cache for 5 minutes
+  res.set('Cache-Control', 'public, max-age=300');
+  res.json(user);
+});
+
+// No caching
+app.post('/api/users', async (req, res) => {
+  const user = await User.create(req.body);
+  res.set('Cache-Control', 'no-store');
+  res.status(201).json(user);
+});
+
+// Private cache (browser only)
+app.get('/api/profile', authenticate, async (req, res) => {
+  const user = await User.findById(req.user.id);
+  res.set('Cache-Control', 'private, max-age=300');
+  res.json(user);
+});
+```
+
+```csharp
+// .NET
+[HttpGet("{id}")]
+[ResponseCache(Duration = 300, Location = ResponseCacheLocation.Any)]
+public async Task<ActionResult<User>> GetUser(int id)
+{
+    var user = await _context.Users.FindAsync(id);
+    return Ok(user);
+}
+
+[HttpPost]
+[ResponseCache(NoStore = true)]
+public async Task<ActionResult<User>> CreateUser(CreateUserDto dto)
+{
+    var user = await _userService.CreateAsync(dto);
+    return CreatedAtAction(nameof(GetUser), new { id = user.Id }, user);
+}
+```
+
+### ETag (Entity Tag)
+
+```javascript
+const crypto = require('crypto');
+
+function generateETag(data) {
+  return crypto
+    .createHash('md5')
+    .update(JSON.stringify(data))
+    .digest('hex');
+}
+
+app.get('/api/users/:id', async (req, res) => {
+  const user = await User.findById(req.params.id);
+  const etag = generateETag(user);
+  
+  // Check if client has current version
+  if (req.headers['if-none-match'] === etag) {
+    return res.status(304).send(); // Not Modified
+  }
+  
+  res.set('ETag', etag);
+  res.set('Cache-Control', 'public, max-age=300');
+  res.json(user);
+});
+```
+
+### Last-Modified
+
+```javascript
+app.get('/api/users/:id', async (req, res) => {
+  const user = await User.findById(req.params.id);
+  const lastModified = user.updatedAt;
+  
+  // Check if modified since client's cached version
+  if (req.headers['if-modified-since']) {
+    const clientDate = new Date(req.headers['if-modified-since']);
+    if (lastModified <= clientDate) {
+      return res.status(304).send();
+    }
+  }
+  
+  res.set('Last-Modified', lastModified.toUTCString());
+  res.set('Cache-Control', 'public, max-age=300');
+  res.json(user);
+});
+```
+
+## Redis Caching
+
+```javascript
+const redis = require('redis');
+const client = redis.createClient();
+
+// Cache middleware
+const cacheMiddleware = (duration) => async (req, res, next) => {
+  const key = `cache:${req.originalUrl}`;
+  
+  try {
+    const cached = await client.get(key);
+    if (cached) {
+      return res.json(JSON.parse(cached));
+    }
+    
+    // Store original json method
+    const originalJson = res.json.bind(res);
+    
+    // Override json method
+    res.json = (data) => {
+      client.setex(key, duration, JSON.stringify(data));
+      return originalJson(data);
+    };
+    
+    next();
+  } catch (error) {
+    next();
+  }
+};
+
+// Usage
+app.get('/api/users', cacheMiddleware(300), async (req, res) => {
+  const users = await User.find();
+  res.json(users);
+});
+```
+
+## Cache Invalidation
+
+```javascript
+// Invalidate cache on updates
+app.put('/api/users/:id', async (req, res) => {
+  const user = await User.findByIdAndUpdate(req.params.id, req.body, { new: true });
+  
+  // Invalidate caches
+  await client.del(`cache:/api/users/${req.params.id}`);
+  await client.del('cache:/api/users');
+  
+  res.json(user);
+});
+
+app.delete('/api/users/:id', async (req, res) => {
+  await User.findByIdAndDelete(req.params.id);
+  
+  // Invalidate caches
+  await client.del(`cache:/api/users/${req.params.id}`);
+  await client.del('cache:/api/users');
+  
+  res.status(204).send();
+});
+```
+
+## Cache Strategies
+
+### 1. Cache-Aside (Lazy Loading)
+
+```javascript
+async function getUser(id) {
+  const cacheKey = `user:${id}`;
+  
+  // Try cache first
+  let user = await client.get(cacheKey);
+  if (user) {
+    return JSON.parse(user);
+  }
+  
+  // Load from database
+  user = await User.findById(id);
+  
+  // Store in cache
+  await client.setex(cacheKey, 300, JSON.stringify(user));
+  
+  return user;
+}
+```
+
+### 2. Write-Through
+
+```javascript
+async function updateUser(id, data) {
+  // Update database
+  const user = await User.findByIdAndUpdate(id, data, { new: true });
+  
+  // Update cache
+  const cacheKey = `user:${id}`;
+  await client.setex(cacheKey, 300, JSON.stringify(user));
+  
+  return user;
+}
+```
+
+### 3. Write-Behind
+
+```javascript
+async function updateUser(id, data) {
+  // Update cache immediately
+  const cacheKey = `user:${id}`;
+  await client.setex(cacheKey, 300, JSON.stringify(data));
+  
+  // Queue database update
+  await queue.add('updateUser', { id, data });
+  
+  return data;
+}
+```
+
+## CDN Caching
+
+```javascript
+// Set headers for CDN
+app.get('/api/public/data', (req, res) => {
+  res.set('Cache-Control', 'public, max-age=3600, s-maxage=86400');
+  res.set('Surrogate-Control', 'max-age=86400');
+  res.json({ data: 'public data' });
+});
+
+// Purge CDN cache
+async function purgeCDNCache(urls) {
+  await fetch('https://api.cdn.com/purge', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${CDN_API_KEY}` },
+    body: JSON.stringify({ urls })
+  });
+}
+```
+
+## Angular Caching
+
+```typescript
+import { HttpInterceptor, HttpRequest, HttpResponse } from '@angular/common/http';
+import { of } from 'rxjs';
+import { tap } from 'rxjs/operators';
+
+@Injectable()
+export class CacheInterceptor implements HttpInterceptor {
+  private cache = new Map<string, HttpResponse<any>>();
+  
+  intercept(req: HttpRequest<any>, next: HttpHandler): Observable<HttpEvent<any>> {
+    // Only cache GET requests
+    if (req.method !== 'GET') {
+      return next.handle(req);
+    }
+    
+    // Check cache
+    const cachedResponse = this.cache.get(req.url);
+    if (cachedResponse) {
+      return of(cachedResponse.clone());
+    }
+    
+    // Make request and cache response
+    return next.handle(req).pipe(
+      tap(event => {
+        if (event instanceof HttpResponse) {
+          this.cache.set(req.url, event.clone());
+          
+          // Clear cache after 5 minutes
+          setTimeout(() => {
+            this.cache.delete(req.url);
+          }, 300000);
+        }
+      })
+    );
+  }
+}
+
+// Service with caching
+@Injectable()
+export class UserService {
+  private cache = new Map<string, Observable<User>>();
+  
+  getUser(id: string): Observable<User> {
+    const cacheKey = `user:${id}`;
+    
+    if (!this.cache.has(cacheKey)) {
+      const request = this.http.get<User>(`${this.apiUrl}/users/${id}`).pipe(
+        shareReplay(1)
+      );
+      this.cache.set(cacheKey, request);
+    }
+    
+    return this.cache.get(cacheKey)!;
+  }
+  
+  clearCache(id?: string) {
+    if (id) {
+      this.cache.delete(`user:${id}`);
+    } else {
+      this.cache.clear();
+    }
+  }
+}
+```
+
+## Cache Key Design
+
+```javascript
+// Good cache keys
+cache:users:123
+cache:users:list:page:1:limit:10
+cache:products:category:electronics:sort:price
+
+// Include query parameters
+function getCacheKey(req) {
+  const params = new URLSearchParams(req.query).toString();
+  return `cache:${req.path}${params ? ':' + params : ''}`;
+}
+```
+
+## Vary Header
+
+```javascript
+// Cache different versions based on headers
+app.get('/api/data', (req, res) => {
+  res.set('Vary', 'Accept-Language, Accept-Encoding');
+  res.set('Cache-Control', 'public, max-age=300');
+  
+  const lang = req.headers['accept-language'];
+  const data = getDataForLanguage(lang);
+  
+  res.json(data);
+});
+```
+
+## Interview Tips
+
+- **Explain caching**: Performance and scalability
+- **Show headers**: Cache-Control, ETag, Last-Modified
+- **Demonstrate Redis**: Server-side caching
+- **Discuss strategies**: Cache-aside, write-through
+- **Mention invalidation**: Clear stale cache
+- **Show client**: Angular caching interceptor
+
+## Summary
+
+Caching improves REST API performance and scalability. Use Cache-Control header to control caching behavior. Implement ETags for conditional requests. Use Redis for server-side caching. Apply cache-aside, write-through, or write-behind strategies. Invalidate cache on updates. Cache at multiple levels: browser, CDN, server. Essential for high-performance REST APIs.

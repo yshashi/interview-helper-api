@@ -1,0 +1,379 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Security in Microservices
+---
+
+# Security in Microservices
+
+## Authentication
+
+### JWT-Based Authentication
+
+```javascript
+const jwt = require('jsonwebtoken');
+
+// Generate token
+function generateToken(user) {
+  return jwt.sign(
+    {
+      userId: user.id,
+      email: user.email,
+      role: user.role
+    },
+    process.env.JWT_SECRET,
+    { expiresIn: '24h' }
+  );
+}
+
+// Verify token
+function verifyToken(token) {
+  try {
+    return jwt.verify(token, process.env.JWT_SECRET);
+  } catch (error) {
+    throw new Error('Invalid token');
+  }
+}
+
+// Middleware
+app.use((req, res, next) => {
+  const token = req.headers.authorization?.split(' ')[1];
+  
+  if (!token) {
+    return res.status(401).json({ error: 'No token provided' });
+  }
+  
+  try {
+    req.user = verifyToken(token);
+    next();
+  } catch (error) {
+    res.status(401).json({ error: 'Invalid token' });
+  }
+});
+```
+
+## Authorization
+
+### Role-Based Access Control (RBAC)
+
+```javascript
+function authorize(...roles) {
+  return (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    
+    if (!roles.includes(req.user.role)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    
+    next();
+  };
+}
+
+// Usage
+app.get('/admin/users',
+  authenticate,
+  authorize('admin'),
+  async (req, res) => {
+    const users = await User.find();
+    res.json(users);
+  }
+);
+
+app.post('/orders',
+  authenticate,
+  authorize('user', 'admin'),
+  async (req, res) => {
+    const order = await Order.create(req.body);
+    res.json(order);
+  }
+);
+```
+
+### Attribute-Based Access Control (ABAC)
+
+```javascript
+class PolicyEngine {
+  canAccess(user, resource, action) {
+    // Owner can access their own resources
+    if (resource.ownerId === user.id) {
+      return true;
+    }
+    
+    // Admin can access everything
+    if (user.role === 'admin') {
+      return true;
+    }
+    
+    // Manager can read team resources
+    if (user.role === 'manager' && 
+        resource.teamId === user.teamId && 
+        action === 'read') {
+      return true;
+    }
+    
+    return false;
+  }
+}
+
+const policyEngine = new PolicyEngine();
+
+app.get('/orders/:id', authenticate, async (req, res) => {
+  const order = await Order.findById(req.params.id);
+  
+  if (!policyEngine.canAccess(req.user, order, 'read')) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  
+  res.json(order);
+});
+```
+
+## Service-to-Service Authentication
+
+```javascript
+// Service token
+class ServiceAuth {
+  generateServiceToken(serviceName) {
+    return jwt.sign(
+      {
+        service: serviceName,
+        type: 'service'
+      },
+      process.env.SERVICE_SECRET,
+      { expiresIn: '1h' }
+    );
+  }
+  
+  verifyServiceToken(token) {
+    return jwt.verify(token, process.env.SERVICE_SECRET);
+  }
+}
+
+// Call another service
+async function callUserService(userId) {
+  const serviceAuth = new ServiceAuth();
+  const token = serviceAuth.generateServiceToken('order-service');
+  
+  return axios.get(`http://user-service/users/${userId}`, {
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'X-Service-Name': 'order-service'
+    }
+  });
+}
+
+// Verify service token
+app.use((req, res, next) => {
+  const token = req.headers.authorization?.split(' ')[1];
+  
+  try {
+    const decoded = serviceAuth.verifyServiceToken(token);
+    
+    if (decoded.type === 'service') {
+      req.service = decoded.service;
+    }
+    
+    next();
+  } catch (error) {
+    res.status(401).json({ error: 'Invalid service token' });
+  }
+});
+```
+
+## mTLS (Mutual TLS)
+
+```yaml
+# Istio mTLS
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: default
+spec:
+  mtls:
+    mode: STRICT
+
+# Only allow authenticated services
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: user-service-policy
+spec:
+  selector:
+    matchLabels:
+      app: user-service
+  rules:
+    - from:
+        - source:
+            principals: ["cluster.local/ns/default/sa/order-service"]
+```
+
+## Input Validation
+
+```javascript
+const Joi = require('joi');
+
+// Validation schema
+const createUserSchema = Joi.object({
+  email: Joi.string().email().required(),
+  password: Joi.string().min(8).required(),
+  name: Joi.string().min(2).max(100).required()
+});
+
+// Validation middleware
+function validate(schema) {
+  return (req, res, next) => {
+    const { error } = schema.validate(req.body);
+    
+    if (error) {
+      return res.status(400).json({
+        error: error.details[0].message
+      });
+    }
+    
+    next();
+  };
+}
+
+// Usage
+app.post('/users',
+  validate(createUserSchema),
+  async (req, res) => {
+    const user = await User.create(req.body);
+    res.json(user);
+  }
+);
+```
+
+## Rate Limiting
+
+```javascript
+const rateLimit = require('express-rate-limit');
+
+// Global rate limit
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Limit each IP to 100 requests per windowMs
+  message: 'Too many requests from this IP'
+});
+
+app.use('/api/', limiter);
+
+// Per-user rate limit
+const userLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  keyGenerator: (req) => req.user?.id || req.ip
+});
+
+app.use('/api/orders', userLimiter);
+```
+
+## CORS
+
+```javascript
+const cors = require('cors');
+
+// Configure CORS
+app.use(cors({
+  origin: ['https://example.com', 'https://app.example.com'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
+  maxAge: 86400
+}));
+```
+
+## Security Headers
+
+```javascript
+const helmet = require('helmet');
+
+// Security headers
+app.use(helmet());
+
+// Custom security headers
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Strict-Transport-Security', 'max-age=31536000');
+  next();
+});
+```
+
+## Secrets Management
+
+```javascript
+// Vault integration
+const vault = require('node-vault')({
+  endpoint: 'http://vault:8200',
+  token: process.env.VAULT_TOKEN
+});
+
+async function getSecret(path) {
+  const result = await vault.read(path);
+  return result.data;
+}
+
+// Usage
+const dbPassword = await getSecret('secret/database/password');
+const apiKey = await getSecret('secret/api/key');
+```
+
+## Encryption
+
+```javascript
+const crypto = require('crypto');
+
+// Encrypt sensitive data
+function encrypt(text, key) {
+  const iv = crypto.randomBytes(16);
+  const cipher = crypto.createCipheriv('aes-256-cbc', Buffer.from(key), iv);
+  
+  let encrypted = cipher.update(text);
+  encrypted = Buffer.concat([encrypted, cipher.final()]);
+  
+  return iv.toString('hex') + ':' + encrypted.toString('hex');
+}
+
+// Decrypt
+function decrypt(text, key) {
+  const parts = text.split(':');
+  const iv = Buffer.from(parts[0], 'hex');
+  const encrypted = Buffer.from(parts[1], 'hex');
+  
+  const decipher = crypto.createDecipheriv('aes-256-cbc', Buffer.from(key), iv);
+  
+  let decrypted = decipher.update(encrypted);
+  decrypted = Buffer.concat([decrypted, decipher.final()]);
+  
+  return decrypted.toString();
+}
+```
+
+## Best Practices
+
+1. **Use HTTPS**: Encrypt all traffic
+2. **Implement authentication**: JWT or OAuth
+3. **Apply authorization**: RBAC or ABAC
+4. **Validate input**: Prevent injection attacks
+5. **Rate limit**: Prevent abuse
+6. **Use security headers**: Helmet
+7. **Manage secrets**: Vault or similar
+8. **Enable mTLS**: Service-to-service encryption
+9. **Monitor security**: Track auth failures
+10. **Keep dependencies updated**: Security patches
+
+## Interview Tips
+
+- **Explain authentication**: JWT, OAuth
+- **Show authorization**: RBAC, ABAC
+- **Demonstrate service auth**: Service tokens, mTLS
+- **Discuss validation**: Input sanitization
+- **Mention rate limiting**: Prevent abuse
+- **Show secrets**: Vault, encryption
+
+## Summary
+
+Microservices security requires authentication (JWT), authorization (RBAC/ABAC), service-to-service authentication (mTLS), input validation, rate limiting, CORS, security headers, and secrets management. Use HTTPS for all communication. Implement proper access control. Validate and sanitize inputs. Monitor security events. Essential for protecting distributed systems.

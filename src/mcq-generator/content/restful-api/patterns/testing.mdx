@@ -1,0 +1,437 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Testing REST APIs
+---
+
+# Testing REST APIs
+
+## Testing Pyramid
+
+```
+        /\
+       /E2E\
+      /------\
+     /Integration\
+    /--------------\
+   /   Unit Tests   \
+  /------------------\
+```
+
+## Unit Tests
+
+```javascript
+// Node.js with Jest
+const { createUser, getUser } = require('./userService');
+
+describe('UserService', () => {
+  describe('createUser', () => {
+    it('should create a user with valid data', async () => {
+      const userData = {
+        name: 'John Doe',
+        email: 'john@example.com'
+      };
+      
+      const user = await createUser(userData);
+      
+      expect(user).toHaveProperty('id');
+      expect(user.name).toBe('John Doe');
+      expect(user.email).toBe('john@example.com');
+    });
+    
+    it('should throw error with invalid email', async () => {
+      const userData = {
+        name: 'John Doe',
+        email: 'invalid-email'
+      };
+      
+      await expect(createUser(userData)).rejects.toThrow('Invalid email');
+    });
+  });
+});
+```
+
+```csharp
+// .NET with xUnit
+public class UserServiceTests
+{
+    [Fact]
+    public async Task CreateUser_WithValidData_ReturnsUser()
+    {
+        // Arrange
+        var service = new UserService();
+        var userData = new CreateUserDto
+        {
+            Name = "John Doe",
+            Email = "john@example.com"
+        };
+        
+        // Act
+        var user = await service.CreateUserAsync(userData);
+        
+        // Assert
+        Assert.NotNull(user.Id);
+        Assert.Equal("John Doe", user.Name);
+        Assert.Equal("john@example.com", user.Email);
+    }
+}
+```
+
+## Integration Tests
+
+```javascript
+// Supertest for API testing
+const request = require('supertest');
+const app = require('./app');
+
+describe('User API', () => {
+  let authToken;
+  
+  beforeAll(async () => {
+    // Login to get token
+    const response = await request(app)
+      .post('/api/auth/login')
+      .send({ email: 'admin@example.com', password: 'password' });
+    
+    authToken = response.body.token;
+  });
+  
+  describe('GET /api/users', () => {
+    it('should return list of users', async () => {
+      const response = await request(app)
+        .get('/api/users')
+        .set('Authorization', `Bearer ${authToken}`)
+        .expect(200);
+      
+      expect(response.body).toHaveProperty('data');
+      expect(Array.isArray(response.body.data)).toBe(true);
+    });
+    
+    it('should return 401 without token', async () => {
+      await request(app)
+        .get('/api/users')
+        .expect(401);
+    });
+  });
+  
+  describe('POST /api/users', () => {
+    it('should create a new user', async () => {
+      const userData = {
+        name: 'Jane Doe',
+        email: 'jane@example.com',
+        password: 'securePassword123'
+      };
+      
+      const response = await request(app)
+        .post('/api/users')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send(userData)
+        .expect(201);
+      
+      expect(response.body).toHaveProperty('id');
+      expect(response.body.name).toBe('Jane Doe');
+      expect(response.body).not.toHaveProperty('password');
+    });
+    
+    it('should return 422 with invalid data', async () => {
+      const userData = {
+        name: 'J',
+        email: 'invalid-email'
+      };
+      
+      const response = await request(app)
+        .post('/api/users')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send(userData)
+        .expect(422);
+      
+      expect(response.body).toHaveProperty('error');
+    });
+  });
+});
+```
+
+## E2E Tests with Playwright
+
+```typescript
+import { test, expect } from '@playwright/test';
+
+test.describe('User Management', () => {
+  test.beforeEach(async ({ page }) => {
+    // Login
+    await page.goto('http://localhost:4200/login');
+    await page.fill('input[name="email"]', 'admin@example.com');
+    await page.fill('input[name="password"]', 'password');
+    await page.click('button[type="submit"]');
+    await page.waitForURL('**/dashboard');
+  });
+  
+  test('should create a new user', async ({ page }) => {
+    await page.goto('http://localhost:4200/users');
+    await page.click('button:has-text("Add User")');
+    
+    await page.fill('input[name="name"]', 'Test User');
+    await page.fill('input[name="email"]', 'test@example.com');
+    await page.fill('input[name="password"]', 'password123');
+    
+    await page.click('button:has-text("Create")');
+    
+    await expect(page.locator('text=User created successfully')).toBeVisible();
+    await expect(page.locator('text=Test User')).toBeVisible();
+  });
+});
+```
+
+## Mock Data
+
+```javascript
+// Mock user data
+const mockUsers = [
+  {
+    id: '1',
+    name: 'John Doe',
+    email: 'john@example.com',
+    role: 'admin'
+  },
+  {
+    id: '2',
+    name: 'Jane Smith',
+    email: 'jane@example.com',
+    role: 'user'
+  }
+];
+
+// Mock database
+jest.mock('./database', () => ({
+  User: {
+    find: jest.fn().mockResolvedValue(mockUsers),
+    findById: jest.fn((id) => 
+      Promise.resolve(mockUsers.find(u => u.id === id))
+    ),
+    create: jest.fn((data) => 
+      Promise.resolve({ id: '3', ...data })
+    )
+  }
+}));
+```
+
+## Test Database Setup
+
+```javascript
+// Setup test database
+const mongoose = require('mongoose');
+const { MongoMemoryServer } = require('mongodb-memory-server');
+
+let mongoServer;
+
+beforeAll(async () => {
+  mongoServer = await MongoMemoryServer.create();
+  const mongoUri = mongoServer.getUri();
+  await mongoose.connect(mongoUri);
+});
+
+afterAll(async () => {
+  await mongoose.disconnect();
+  await mongoServer.stop();
+});
+
+beforeEach(async () => {
+  // Clear database before each test
+  const collections = mongoose.connection.collections;
+  for (const key in collections) {
+    await collections[key].deleteMany();
+  }
+});
+```
+
+## API Contract Testing
+
+```javascript
+// Pact for contract testing
+const { Pact } = require('@pact-foundation/pact');
+const { like, eachLike } = require('@pact-foundation/pact').Matchers;
+
+const provider = new Pact({
+  consumer: 'Frontend',
+  provider: 'UserAPI'
+});
+
+describe('User API Contract', () => {
+  beforeAll(() => provider.setup());
+  afterAll(() => provider.finalize());
+  
+  describe('GET /users', () => {
+    beforeAll(() => {
+      return provider.addInteraction({
+        state: 'users exist',
+        uponReceiving: 'a request for users',
+        withRequest: {
+          method: 'GET',
+          path: '/api/users'
+        },
+        willRespondWith: {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+          body: {
+            data: eachLike({
+              id: like('1'),
+              name: like('John Doe'),
+              email: like('john@example.com')
+            })
+          }
+        }
+      });
+    });
+    
+    it('returns users', async () => {
+      const response = await fetch(`${provider.mockService.baseUrl}/api/users`);
+      const data = await response.json();
+      
+      expect(data.data).toHaveLength(1);
+      expect(data.data[0]).toHaveProperty('id');
+    });
+  });
+});
+```
+
+## Performance Testing
+
+```javascript
+// k6 load testing
+import http from 'k6/http';
+import { check, sleep } from 'k6';
+
+export const options = {
+  stages: [
+    { duration: '30s', target: 20 },
+    { duration: '1m', target: 50 },
+    { duration: '30s', target: 0 }
+  ],
+  thresholds: {
+    http_req_duration: ['p(95)<500'],
+    http_req_failed: ['rate<0.01']
+  }
+};
+
+export default function() {
+  const response = http.get('http://localhost:3000/api/users');
+  
+  check(response, {
+    'status is 200': (r) => r.status === 200,
+    'response time < 500ms': (r) => r.timings.duration < 500
+  });
+  
+  sleep(1);
+}
+```
+
+## Security Testing
+
+```javascript
+// OWASP ZAP security testing
+const ZapClient = require('zaproxy');
+
+const zapOptions = {
+  apiKey: process.env.ZAP_API_KEY,
+  proxy: {
+    host: 'localhost',
+    port: 8080
+  }
+};
+
+const zap = new ZapClient(zapOptions);
+
+describe('Security Tests', () => {
+  it('should not have SQL injection vulnerabilities', async () => {
+    await zap.spider.scan('http://localhost:3000');
+    await zap.ascan.scan('http://localhost:3000');
+    
+    const alerts = await zap.core.alerts();
+    const sqlInjectionAlerts = alerts.filter(a => a.alert === 'SQL Injection');
+    
+    expect(sqlInjectionAlerts).toHaveLength(0);
+  });
+});
+```
+
+## Test Coverage
+
+```javascript
+// Jest coverage configuration
+module.exports = {
+  collectCoverage: true,
+  coverageDirectory: 'coverage',
+  coverageReporters: ['text', 'lcov', 'html'],
+  coverageThreshold: {
+    global: {
+      branches: 80,
+      functions: 80,
+      lines: 80,
+      statements: 80
+    }
+  },
+  collectCoverageFrom: [
+    'src/**/*.js',
+    '!src/**/*.test.js',
+    '!src/index.js'
+  ]
+};
+```
+
+## Continuous Integration
+
+```yaml
+# GitHub Actions
+name: Test
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Run unit tests
+        run: npm run test:unit
+      
+      - name: Run integration tests
+        run: npm run test:integration
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test
+      
+      - name: Upload coverage
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./coverage/lcov.info
+```
+
+## Interview Tips
+
+- **Explain pyramid**: Unit, integration, E2E tests
+- **Show examples**: Jest, Supertest, Playwright
+- **Demonstrate mocking**: Mock data and dependencies
+- **Discuss coverage**: Aim for 80%+ coverage
+- **Mention performance**: Load testing with k6
+- **Show CI/CD**: Automated testing in pipeline
+
+## Summary
+
+Test REST APIs at multiple levels: unit tests for business logic, integration tests for API endpoints, E2E tests for user flows. Use Jest for unit tests, Supertest for integration tests, Playwright for E2E tests. Mock external dependencies. Set up test databases. Implement contract testing with Pact. Perform load testing with k6. Run security scans. Maintain 80%+ code coverage. Automate tests in CI/CD pipeline. Essential for reliable REST APIs.

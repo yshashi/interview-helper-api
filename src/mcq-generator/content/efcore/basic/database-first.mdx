@@ -1,0 +1,371 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Database First Approach in EF Core
+---
+
+# Database First Approach in EF Core
+
+## What is Database First?
+
+**Database First** is an approach where you start with an existing database and generate entity classes and DbContext from it. EF Core scaffolds the code based on the database schema.
+
+## When to Use Database First
+
+- Working with existing databases
+- Database designed by DBAs
+- Legacy system integration
+- Database-centric development
+- Multiple applications sharing same database
+
+## Scaffolding Command
+
+### .NET CLI
+
+```bash
+# Basic scaffolding
+dotnet ef dbcontext scaffold "Server=.;Database=MyDb;Trusted_Connection=true;" Microsoft.EntityFrameworkCore.SqlServer
+
+# With options
+dotnet ef dbcontext scaffold "connection-string" Microsoft.EntityFrameworkCore.SqlServer \
+  --output-dir Models \
+  --context-dir Data \
+  --context ApplicationDbContext \
+  --data-annotations \
+  --force
+
+# Scaffold specific tables
+dotnet ef dbcontext scaffold "connection-string" Microsoft.EntityFrameworkCore.SqlServer \
+  --table Products \
+  --table Categories \
+  --table Orders
+```
+
+### Package Manager Console
+
+```powershell
+Scaffold-DbContext "Server=.;Database=MyDb;Trusted_Connection=true;" Microsoft.EntityFrameworkCore.SqlServer -OutputDir Models -Context ApplicationDbContext -DataAnnotations -Force
+```
+
+## Generated Code Example
+
+### Generated Entity
+
+```csharp
+public partial class Product
+{
+    public int ProductId { get; set; }
+    public string ProductName { get; set; }
+    public decimal? UnitPrice { get; set; }
+    public int? CategoryId { get; set; }
+    public bool Discontinued { get; set; }
+
+    public virtual Category Category { get; set; }
+    public virtual ICollection<OrderDetail> OrderDetails { get; set; }
+}
+```
+
+### Generated DbContext
+
+```csharp
+public partial class NorthwindContext : DbContext
+{
+    public NorthwindContext()
+    {
+    }
+
+    public NorthwindContext(DbContextOptions<NorthwindContext> options)
+        : base(options)
+    {
+    }
+
+    public virtual DbSet<Category> Categories { get; set; }
+    public virtual DbSet<Product> Products { get; set; }
+    public virtual DbSet<Order> Orders { get; set; }
+
+    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+    {
+        if (!optionsBuilder.IsConfigured)
+        {
+            optionsBuilder.UseSqlServer("Server=.;Database=Northwind;Trusted_Connection=true;");
+        }
+    }
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<Product>(entity =>
+        {
+            entity.Property(e => e.ProductName)
+                .IsRequired()
+                .HasMaxLength(40);
+
+            entity.Property(e => e.UnitPrice).HasColumnType("money");
+
+            entity.HasOne(d => d.Category)
+                .WithMany(p => p.Products)
+                .HasForeignKey(d => d.CategoryId);
+        });
+
+        OnModelCreatingPartial(modelBuilder);
+    }
+
+    partial void OnModelCreatingPartial(ModelBuilder modelBuilder);
+}
+```
+
+## Customizing Generated Code
+
+### Using Partial Classes
+
+```csharp
+// Generated file: Product.cs
+public partial class Product
+{
+    public int ProductId { get; set; }
+    public string ProductName { get; set; }
+    public decimal? UnitPrice { get; set; }
+}
+
+// Custom file: Product.Custom.cs
+public partial class Product
+{
+    // Add custom properties
+    [NotMapped]
+    public string DisplayName => $"{ProductName} - ${UnitPrice}";
+    
+    // Add custom methods
+    public void ApplyDiscount(decimal percentage)
+    {
+        UnitPrice = UnitPrice * (1 - percentage / 100);
+    }
+    
+    // Add validation
+    public bool IsValid()
+    {
+        return !string.IsNullOrEmpty(ProductName) && UnitPrice > 0;
+    }
+}
+```
+
+### Extending DbContext
+
+```csharp
+// Generated: NorthwindContext.cs
+public partial class NorthwindContext : DbContext
+{
+    // Generated code...
+    
+    partial void OnModelCreatingPartial(ModelBuilder modelBuilder);
+}
+
+// Custom: NorthwindContext.Custom.cs
+public partial class NorthwindContext
+{
+    partial void OnModelCreatingPartial(ModelBuilder modelBuilder)
+    {
+        // Add custom configurations
+        modelBuilder.Entity<Product>()
+            .HasQueryFilter(p => !p.Discontinued);
+        
+        // Add indexes
+        modelBuilder.Entity<Product>()
+            .HasIndex(p => p.ProductName);
+    }
+    
+    // Override SaveChanges for auditing
+    public override int SaveChanges()
+    {
+        AddTimestamps();
+        return base.SaveChanges();
+    }
+    
+    private void AddTimestamps()
+    {
+        var entities = ChangeTracker.Entries()
+            .Where(x => x.Entity is IAuditable && 
+                   (x.State == EntityState.Added || x.State == EntityState.Modified));
+
+        foreach (var entity in entities)
+        {
+            var auditable = (IAuditable)entity.Entity;
+            
+            if (entity.State == EntityState.Added)
+            {
+                auditable.CreatedAt = DateTime.UtcNow;
+            }
+            
+            auditable.UpdatedAt = DateTime.UtcNow;
+        }
+    }
+}
+```
+
+## Scaffold Options
+
+### Common Options
+
+```bash
+# Output directory for entities
+--output-dir Models
+
+# Context directory
+--context-dir Data
+
+# Context name
+--context MyDbContext
+
+# Use data annotations
+--data-annotations
+
+# Force overwrite
+--force
+
+# No OnConfiguring method
+--no-onconfiguring
+
+# No pluralization
+--no-pluralize
+
+# Specific schema
+--schema dbo
+
+# Specific tables
+--table Products --table Categories
+
+# Namespace
+--namespace MyApp.Data.Models
+```
+
+### Complete Example
+
+```bash
+dotnet ef dbcontext scaffold \
+  "Server=localhost;Database=MyApp;User Id=sa;Password=Pass123;" \
+  Microsoft.EntityFrameworkCore.SqlServer \
+  --output-dir Models/Entities \
+  --context-dir Data \
+  --context MyAppContext \
+  --data-annotations \
+  --force \
+  --no-onconfiguring \
+  --namespace MyApp.Data \
+  --table Products \
+  --table Categories \
+  --table Orders \
+  --table OrderItems
+```
+
+## Configuration in ASP.NET Core
+
+```csharp
+// appsettings.json
+{
+  "ConnectionStrings": {
+    "DefaultConnection": "Server=.;Database=MyDb;Trusted_Connection=true;"
+  }
+}
+
+// Program.cs
+builder.Services.AddDbContext<NorthwindContext>(options =>
+    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+```
+
+## Handling Database Changes
+
+### Re-scaffolding
+
+```bash
+# When database schema changes, re-scaffold
+dotnet ef dbcontext scaffold "connection-string" \
+  Microsoft.EntityFrameworkCore.SqlServer \
+  --force \
+  --output-dir Models
+
+# This will overwrite generated files
+# Custom partial classes remain intact
+```
+
+### Migration Strategy
+
+```csharp
+// After scaffolding, you can use migrations for future changes
+dotnet ef migrations add AddProductDescription
+dotnet ef database update
+```
+
+## Best Practices
+
+### 1. Separate Generated and Custom Code
+
+```
+/Models
+  /Generated
+    Product.cs
+    Category.cs
+    NorthwindContext.cs
+  /Custom
+    Product.Custom.cs
+    Category.Custom.cs
+    NorthwindContext.Custom.cs
+```
+
+### 2. Use Partial Classes
+
+```csharp
+// Always extend using partial classes
+public partial class Product
+{
+    // Custom code here
+}
+```
+
+### 3. Store Connection String Securely
+
+```csharp
+// Don't hardcode in OnConfiguring
+protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+{
+    if (!optionsBuilder.IsConfigured)
+    {
+        // Use configuration instead
+        optionsBuilder.UseSqlServer(Configuration.GetConnectionString("Default"));
+    }
+}
+```
+
+### 4. Version Control
+
+```gitignore
+# .gitignore
+# Don't commit generated files if they can be re-scaffolded
+Models/Generated/
+```
+
+## Advantages of Database First
+
+1. **Work with existing databases**
+2. **Database designed by DBAs**
+3. **Quick start with legacy systems**
+4. **Database-centric approach**
+5. **Automatic code generation**
+
+## Disadvantages
+
+1. **Less control over entity design**
+2. **Re-scaffolding overwrites changes**
+3. **Generated code may not follow conventions**
+4. **Harder to version control**
+5. **Dependency on database structure**
+
+## Interview Tips
+
+- **Explain Database First**: Start with database, generate code
+- **Show scaffolding command**: dotnet ef dbcontext scaffold
+- **Demonstrate customization**: Partial classes for extensions
+- **Discuss use cases**: Existing databases, legacy systems
+- **Mention re-scaffolding**: Handling database changes
+- **Compare with Code First**: Different starting points
+- **Show best practices**: Separate generated/custom code
+
+## Summary
+
+Database First approach in EF Core allows you to generate entity classes and DbContext from an existing database using scaffolding commands. It's ideal for working with existing databases or when the database is designed separately. Use partial classes to extend generated code and maintain customizations when re-scaffolding.

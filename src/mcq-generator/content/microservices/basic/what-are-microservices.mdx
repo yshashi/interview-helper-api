@@ -1,0 +1,211 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: What are Microservices?
+---
+
+# What are Microservices?
+
+## Definition
+
+**Microservices** is an architectural style that structures an application as a collection of small, autonomous services modeled around a business domain. Each service is self-contained and implements a single business capability.
+
+## Key Characteristics
+
+### 1. Independent Deployment
+Each service can be deployed independently without affecting other services.
+
+### 2. Loosely Coupled
+Services are independent and communicate through well-defined APIs.
+
+### 3. Organized Around Business Capabilities
+Each service represents a specific business function.
+
+### 4. Decentralized Data Management
+Each service manages its own database.
+
+### 5. Technology Diversity
+Different services can use different technologies.
+
+## Simple Example
+
+```javascript
+// User Service
+const express = require('express');
+const app = express();
+
+app.get('/users/:id', async (req, res) => {
+  const user = await User.findById(req.params.id);
+  res.json(user);
+});
+
+app.listen(3001);
+
+// Order Service
+const express = require('express');
+const app = express();
+
+app.post('/orders', async (req, res) => {
+  const order = await Order.create(req.body);
+  res.json(order);
+});
+
+app.listen(3002);
+
+// Product Service
+const express = require('express');
+const app = express();
+
+app.get('/products/:id', async (req, res) => {
+  const product = await Product.findById(req.params.id);
+  res.json(product);
+});
+
+app.listen(3003);
+```
+
+## Architecture Diagram
+
+```
+┌─────────────┐
+│   Client    │
+└──────┬──────┘
+       │
+┌──────▼──────────┐
+│   API Gateway   │
+└──────┬──────────┘
+       │
+   ────┼────────────────
+   │   │   │          │
+┌──▼───▼───▼──┐  ┌───▼────┐
+│ User Service│  │ Order  │
+│   (Port     │  │Service │
+│    3001)    │  │(3002)  │
+└─────────────┘  └────────┘
+```
+
+## Core Principles
+
+### Single Responsibility
+Each service should do one thing well.
+
+```javascript
+// Good - Focused service
+class UserAuthService {
+  async login(credentials) { }
+  async logout(token) { }
+  async validateToken(token) { }
+}
+
+// Bad - Too many responsibilities
+class UserService {
+  async login() { }
+  async getOrders() { }
+  async processPayment() { }
+  async sendEmail() { }
+}
+```
+
+### Autonomy
+Services should be independent and self-sufficient.
+
+```javascript
+// Each service has its own database
+// User Service
+const userDB = mongoose.connect('mongodb://localhost/users');
+
+// Order Service
+const orderDB = mongoose.connect('mongodb://localhost/orders');
+```
+
+## Communication Patterns
+
+### Synchronous (HTTP/REST)
+
+```javascript
+// Order Service calling User Service
+const axios = require('axios');
+
+async function createOrder(orderData) {
+  // Call User Service
+  const user = await axios.get(`http://user-service:3001/users/${orderData.userId}`);
+  
+  if (!user.data) {
+    throw new Error('User not found');
+  }
+  
+  const order = await Order.create(orderData);
+  return order;
+}
+```
+
+### Asynchronous (Message Queue)
+
+```javascript
+// Publishing event
+const amqp = require('amqplib');
+
+async function publishOrderCreated(order) {
+  const connection = await amqp.connect('amqp://localhost');
+  const channel = await connection.createChannel();
+  
+  await channel.assertQueue('order.created');
+  channel.sendToQueue('order.created', Buffer.from(JSON.stringify(order)));
+}
+
+// Consuming event
+async function consumeOrderCreated() {
+  const connection = await amqp.connect('amqp://localhost');
+  const channel = await connection.createChannel();
+  
+  await channel.assertQueue('order.created');
+  channel.consume('order.created', (msg) => {
+    const order = JSON.parse(msg.content.toString());
+    console.log('Order created:', order);
+    channel.ack(msg);
+  });
+}
+```
+
+## Benefits
+
+1. **Scalability**: Scale individual services independently
+2. **Flexibility**: Use different technologies per service
+3. **Resilience**: Failure in one service doesn't crash entire system
+4. **Faster Development**: Teams work independently
+5. **Easy Deployment**: Deploy services separately
+
+## Challenges
+
+1. **Complexity**: Distributed system complexity
+2. **Data Consistency**: Managing data across services
+3. **Network Latency**: Inter-service communication overhead
+4. **Testing**: Integration testing is harder
+5. **Monitoring**: Need distributed tracing
+
+## When to Use Microservices
+
+### Good Fit
+- Large, complex applications
+- Multiple teams working independently
+- Need for different technologies
+- High scalability requirements
+- Frequent deployments
+
+### Not Recommended
+- Small applications
+- Simple business logic
+- Limited team size
+- Tight coupling requirements
+
+## Interview Tips
+
+- **Explain definition**: Collection of small, autonomous services
+- **Show characteristics**: Independence, loose coupling, business-focused
+- **Demonstrate communication**: Sync vs async patterns
+- **Discuss benefits**: Scalability, flexibility, resilience
+- **Mention challenges**: Complexity, data consistency, testing
+- **Compare with monolith**: When to use each approach
+
+## Summary
+
+Microservices architecture structures applications as collections of small, independent services. Each service is self-contained, focused on a single business capability, and can be deployed independently. Benefits include scalability and flexibility, but challenges include increased complexity and distributed system management.

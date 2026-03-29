@@ -1,0 +1,286 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: HTTP Status Codes
+---
+
+# HTTP Status Codes
+
+## Status Code Categories
+
+| Range | Category | Meaning |
+|-------|----------|---------|
+| **1xx** | Informational | Request received, continuing |
+| **2xx** | Success | Request successfully received |
+| **3xx** | Redirection | Further action needed |
+| **4xx** | Client Error | Request contains bad syntax |
+| **5xx** | Server Error | Server failed to fulfill request |
+
+## Common Status Codes
+
+### 2xx Success
+
+```javascript
+// 200 OK - Request succeeded
+app.get('/api/users/:id', async (req, res) => {
+  const user = await User.findById(req.params.id);
+  res.status(200).json(user);
+});
+
+// 201 Created - Resource created
+app.post('/api/users', async (req, res) => {
+  const user = await User.create(req.body);
+  res.status(201).json(user);
+});
+
+// 204 No Content - Success with no response body
+app.delete('/api/users/:id', async (req, res) => {
+  await User.findByIdAndDelete(req.params.id);
+  res.status(204).send();
+});
+```
+
+### 3xx Redirection
+
+```javascript
+// 301 Moved Permanently
+app.get('/old-api/users', (req, res) => {
+  res.redirect(301, '/api/v2/users');
+});
+
+// 304 Not Modified - Use cached version
+app.get('/api/users/:id', async (req, res) => {
+  const user = await User.findById(req.params.id);
+  const etag = generateETag(user);
+  
+  if (req.headers['if-none-match'] === etag) {
+    return res.status(304).send();
+  }
+  
+  res.set('ETag', etag);
+  res.json(user);
+});
+```
+
+### 4xx Client Errors
+
+```javascript
+// 400 Bad Request - Invalid input
+app.post('/api/users', async (req, res) => {
+  if (!req.body.email) {
+    return res.status(400).json({
+      error: 'Email is required'
+    });
+  }
+  // Process request
+});
+
+// 401 Unauthorized - Authentication required
+app.get('/api/profile', (req, res) => {
+  if (!req.headers.authorization) {
+    return res.status(401).json({
+      error: 'Authentication required'
+    });
+  }
+  // Return profile
+});
+
+// 403 Forbidden - Authenticated but not authorized
+app.delete('/api/users/:id', async (req, res) => {
+  if (req.user.role !== 'admin') {
+    return res.status(403).json({
+      error: 'Admin access required'
+    });
+  }
+  // Delete user
+});
+
+// 404 Not Found - Resource doesn't exist
+app.get('/api/users/:id', async (req, res) => {
+  const user = await User.findById(req.params.id);
+  if (!user) {
+    return res.status(404).json({
+      error: 'User not found'
+    });
+  }
+  res.json(user);
+});
+
+// 409 Conflict - Resource conflict
+app.post('/api/users', async (req, res) => {
+  const exists = await User.findOne({ email: req.body.email });
+  if (exists) {
+    return res.status(409).json({
+      error: 'Email already exists'
+    });
+  }
+  // Create user
+});
+
+// 422 Unprocessable Entity - Validation error
+app.post('/api/users', async (req, res) => {
+  const errors = validateUser(req.body);
+  if (errors.length > 0) {
+    return res.status(422).json({ errors });
+  }
+  // Create user
+});
+
+// 429 Too Many Requests - Rate limit exceeded
+app.use('/api', rateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  handler: (req, res) => {
+    res.status(429).json({
+      error: 'Too many requests, please try again later'
+    });
+  }
+}));
+```
+
+### 5xx Server Errors
+
+```javascript
+// 500 Internal Server Error
+app.get('/api/users', async (req, res) => {
+  try {
+    const users = await User.find();
+    res.json(users);
+  } catch (error) {
+    res.status(500).json({
+      error: 'Internal server error'
+    });
+  }
+});
+
+// 503 Service Unavailable
+app.get('/api/users', async (req, res) => {
+  if (!dbConnection.isConnected()) {
+    return res.status(503).json({
+      error: 'Service temporarily unavailable'
+    });
+  }
+  // Process request
+});
+```
+
+## .NET Examples
+
+```csharp
+[ApiController]
+[Route("api/[controller]")]
+public class UsersController : ControllerBase
+{
+    // 200 OK
+    [HttpGet]
+    public async Task<ActionResult<IEnumerable<User>>> GetUsers()
+    {
+        var users = await _context.Users.ToListAsync();
+        return Ok(users);
+    }
+    
+    // 201 Created
+    [HttpPost]
+    public async Task<ActionResult<User>> CreateUser(CreateUserDto dto)
+    {
+        var user = new User { Name = dto.Name };
+        _context.Users.Add(user);
+        await _context.SaveChangesAsync();
+        
+        return CreatedAtAction(nameof(GetUser), new { id = user.Id }, user);
+    }
+    
+    // 204 No Content
+    [HttpDelete("{id}")]
+    public async Task<IActionResult> DeleteUser(int id)
+    {
+        var user = await _context.Users.FindAsync(id);
+        if (user == null) return NotFound();
+        
+        _context.Users.Remove(user);
+        await _context.SaveChangesAsync();
+        
+        return NoContent();
+    }
+    
+    // 400 Bad Request
+    [HttpPost]
+    public async Task<ActionResult<User>> CreateUser(CreateUserDto dto)
+    {
+        if (!ModelState.IsValid)
+        {
+            return BadRequest(ModelState);
+        }
+        // Create user
+    }
+    
+    // 404 Not Found
+    [HttpGet("{id}")]
+    public async Task<ActionResult<User>> GetUser(int id)
+    {
+        var user = await _context.Users.FindAsync(id);
+        if (user == null)
+        {
+            return NotFound();
+        }
+        return Ok(user);
+    }
+}
+```
+
+## Angular Error Handling
+
+```typescript
+import { HttpErrorResponse } from '@angular/common/http';
+import { catchError } from 'rxjs/operators';
+import { throwError } from 'rxjs';
+
+@Injectable()
+export class UserService {
+  getUser(id: string): Observable<User> {
+    return this.http.get<User>(`${this.apiUrl}/users/${id}`).pipe(
+      catchError(this.handleError)
+    );
+  }
+  
+  private handleError(error: HttpErrorResponse) {
+    if (error.status === 404) {
+      return throwError(() => new Error('User not found'));
+    } else if (error.status === 401) {
+      return throwError(() => new Error('Unauthorized'));
+    } else if (error.status === 500) {
+      return throwError(() => new Error('Server error'));
+    }
+    return throwError(() => new Error('An error occurred'));
+  }
+}
+```
+
+## Status Code Selection Guide
+
+```
+Success → 200 OK
+Created → 201 Created
+Updated → 200 OK or 204 No Content
+Deleted → 204 No Content
+Invalid input → 400 Bad Request
+Not authenticated → 401 Unauthorized
+Not authorized → 403 Forbidden
+Not found → 404 Not Found
+Conflict → 409 Conflict
+Validation error → 422 Unprocessable Entity
+Rate limited → 429 Too Many Requests
+Server error → 500 Internal Server Error
+```
+
+## Interview Tips
+
+- **Explain categories**: 2xx success, 4xx client, 5xx server
+- **Show common codes**: 200, 201, 400, 404, 500
+- **Demonstrate usage**: Node.js, .NET examples
+- **Discuss 401 vs 403**: Authentication vs authorization
+- **Mention best practices**: Appropriate codes for actions
+- **Show error handling**: Angular error interceptor
+
+## Summary
+
+HTTP status codes indicate request outcome. 2xx for success, 4xx for client errors, 5xx for server errors. Use 200 for successful GET, 201 for created resources, 204 for successful DELETE, 400 for bad input, 404 for not found, 500 for server errors. Essential for proper REST API communication.

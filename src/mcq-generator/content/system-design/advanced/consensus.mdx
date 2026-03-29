@@ -1,0 +1,454 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Consensus Algorithms
+---
+
+# Consensus Algorithms
+
+## What is Consensus?
+
+Consensus is the process of getting multiple nodes in a distributed system to agree on a single value or state, even in the presence of failures. It's fundamental for building reliable distributed systems.
+
+## Why Consensus Matters
+
+**Leader Election:** Nodes must agree on which node is the leader
+
+**Configuration Management:** All nodes must have consistent configuration
+
+**Distributed Locks:** Ensure only one node holds a lock
+
+**Transaction Commit:** All nodes agree to commit or rollback
+
+**State Machine Replication:** Keep replicas in sync
+
+## The Challenge
+
+**Network Partitions:** Nodes may not be able to communicate
+
+**Node Failures:** Nodes can crash or become unresponsive
+
+**Message Loss:** Network messages can be lost or delayed
+
+**Byzantine Failures:** Nodes may behave maliciously (less common)
+
+## Raft Consensus Algorithm
+
+**Purpose:** Easier to understand alternative to Paxos
+
+**Key Concepts:**
+
+### Leader Election
+
+**States:** Each node is in one of three states:
+- **Follower:** Passive, receives updates from leader
+- **Candidate:** Attempting to become leader
+- **Leader:** Handles all client requests, replicates to followers
+
+**Election Process:**
+1. Follower doesn't hear from leader (timeout)
+2. Follower becomes candidate, votes for itself
+3. Candidate requests votes from other nodes
+4. If receives majority votes, becomes leader
+5. If another node becomes leader, becomes follower
+6. If election timeout, starts new election
+
+**Terms:** Logical clock, increments with each election
+
+### Log Replication
+
+**Process:**
+1. Client sends command to leader
+2. Leader appends to its log
+3. Leader sends entries to followers
+4. Followers append to their logs
+5. Once majority acknowledges, leader commits
+6. Leader notifies followers to commit
+7. Leader responds to client
+
+**Log Structure:**
+```
+Index: 1    2    3    4    5
+Term:  1    1    2    2    3
+Cmd:   x=1  y=2  x=3  z=4  y=5
+```
+
+**Safety:** If entry committed at index N, all future leaders will have that entry
+
+### Example Scenario
+
+```
+Initial State (3 nodes):
+Node A (Leader, Term 1): [x=1, y=2]
+Node B (Follower): [x=1, y=2]
+Node C (Follower): [x=1, y=2]
+
+Client Request: z=3
+
+Step 1: Leader appends to log
+Node A: [x=1, y=2, z=3] (uncommitted)
+
+Step 2: Leader replicates to followers
+Node B: [x=1, y=2, z=3] (uncommitted)
+Node C: [x=1, y=2, z=3] (uncommitted)
+
+Step 3: Majority acknowledges (A, B)
+Node A commits z=3
+
+Step 4: Leader notifies followers
+All nodes: [x=1, y=2, z=3] (committed)
+
+Step 5: Leader responds to client
+"z=3 committed successfully"
+```
+
+## Paxos Algorithm
+
+**Purpose:** Original consensus algorithm, proven correct but complex
+
+**Roles:**
+- **Proposers:** Propose values
+- **Acceptors:** Vote on proposals
+- **Learners:** Learn chosen value
+
+**Phases:**
+
+**Phase 1 (Prepare):**
+1. Proposer sends prepare(n) to acceptors
+2. Acceptors promise not to accept proposals < n
+3. Acceptors return highest accepted proposal
+
+**Phase 2 (Accept):**
+1. If majority promises, proposer sends accept(n, value)
+2. Acceptors accept if no higher prepare received
+3. If majority accepts, value is chosen
+
+**Characteristics:**
+- More flexible than Raft
+- Harder to understand and implement
+- Used in Google Chubby, Apache ZooKeeper
+
+## ZooKeeper Atomic Broadcast (ZAB)
+
+**Purpose:** Consensus protocol used by Apache ZooKeeper
+
+**Similar to Raft but:**
+- Optimized for ZooKeeper's use case
+- Focuses on ordered broadcast
+- Guarantees total order of messages
+
+**Use Cases:**
+- Configuration management
+- Distributed coordination
+- Leader election
+- Distributed locks
+
+**Example Usage:**
+
+```javascript
+const zookeeper = require('node-zookeeper-client');
+
+const client = zookeeper.createClient('localhost:2181');
+
+client.once('connected', async () => {
+  // Leader election
+  const path = '/election';
+  
+  // Create ephemeral sequential node
+  const myNode = await client.create(
+    `${path}/node-`,
+    Buffer.from('data'),
+    zookeeper.CreateMode.EPHEMERAL_SEQUENTIAL
+  );
+  
+  // Get all nodes
+  const children = await client.getChildren(path);
+  children.sort();
+  
+  // If my node is first, I'm the leader
+  if (children[0] === myNode.split('/').pop()) {
+    console.log('I am the leader!');
+  } else {
+    console.log('I am a follower');
+    // Watch the node before me
+    const watchNode = children[children.indexOf(myNode.split('/').pop()) - 1];
+    client.exists(`${path}/${watchNode}`, (event) => {
+      // Previous node deleted, check if I'm leader now
+      checkLeadership();
+    });
+  }
+});
+
+client.connect();
+```
+
+## Quorum-Based Systems
+
+**Quorum:** Minimum number of nodes that must agree
+
+**Read/Write Quorums:**
+- W = write quorum (nodes that must acknowledge write)
+- R = read quorum (nodes that must respond to read)
+- N = total nodes
+
+**Rule:** W + R > N (ensures overlap)
+
+**Examples:**
+
+**Strong Consistency:** W = N, R = 1
+- All nodes must acknowledge write
+- Can read from any single node
+- Slow writes, fast reads
+
+**Eventual Consistency:** W = 1, R = 1
+- Single node acknowledges write
+- Read from single node
+- Fast but may be inconsistent
+
+**Balanced:** W = (N/2) + 1, R = (N/2) + 1
+- Majority for both reads and writes
+- Balance between consistency and performance
+
+```javascript
+class QuorumSystem {
+  constructor(nodes, writeQuorum, readQuorum) {
+    this.nodes = nodes;
+    this.W = writeQuorum;
+    this.R = readQuorum;
+    this.N = nodes.length;
+    
+    if (this.W + this.R <= this.N) {
+      throw new Error('W + R must be > N for consistency');
+    }
+  }
+  
+  async write(key, value) {
+    const promises = this.nodes.map(node => 
+      node.write(key, value).catch(() => null)
+    );
+    
+    const results = await Promise.all(promises);
+    const successful = results.filter(r => r !== null).length;
+    
+    if (successful >= this.W) {
+      return { success: true };
+    } else {
+      throw new Error(`Write failed: only ${successful}/${this.W} nodes acknowledged`);
+    }
+  }
+  
+  async read(key) {
+    const promises = this.nodes.map(node => 
+      node.read(key).catch(() => null)
+    );
+    
+    const results = await Promise.all(promises);
+    const successful = results.filter(r => r !== null);
+    
+    if (successful.length >= this.R) {
+      // Return most recent version (highest timestamp)
+      return successful.reduce((latest, current) => 
+        current.timestamp > latest.timestamp ? current : latest
+      );
+    } else {
+      throw new Error(`Read failed: only ${successful.length}/${this.R} nodes responded`);
+    }
+  }
+}
+```
+
+## Split-Brain Problem
+
+**Problem:** Network partition creates two groups, each thinking they're the majority
+
+**Example:**
+```
+5 nodes: A, B, C, D, E
+
+Network partition:
+Group 1: A, B (thinks C, D, E are down)
+Group 2: C, D, E (thinks A, B are down)
+
+Both groups have 2-3 nodes, both think they have majority!
+```
+
+**Solution:** Use odd number of nodes and require strict majority
+
+```
+5 nodes, need 3 for majority:
+Group 1: A, B (2 nodes, NOT majority, cannot elect leader)
+Group 2: C, D, E (3 nodes, IS majority, can elect leader)
+
+Only one group can have majority
+```
+
+## Distributed Locks with Consensus
+
+**Redlock Algorithm (Redis):**
+
+```javascript
+class Redlock {
+  constructor(redisClients) {
+    this.clients = redisClients;
+    this.quorum = Math.floor(redisClients.length / 2) + 1;
+  }
+  
+  async lock(resource, ttl) {
+    const value = generateUniqueId();
+    const startTime = Date.now();
+    
+    let locksAcquired = 0;
+    
+    // Try to acquire lock on all instances
+    for (const client of this.clients) {
+      try {
+        const result = await client.set(
+          resource,
+          value,
+          'PX', ttl,
+          'NX' // Only set if not exists
+        );
+        
+        if (result === 'OK') {
+          locksAcquired++;
+        }
+      } catch (error) {
+        // Instance unavailable
+      }
+    }
+    
+    const elapsed = Date.now() - startTime;
+    const validity = ttl - elapsed;
+    
+    // Check if we got majority and still have time
+    if (locksAcquired >= this.quorum && validity > 0) {
+      return { locked: true, value, validity };
+    } else {
+      // Release locks if we didn't get majority
+      await this.unlock(resource, value);
+      return { locked: false };
+    }
+  }
+  
+  async unlock(resource, value) {
+    // Release lock on all instances
+    for (const client of this.clients) {
+      try {
+        // Only delete if value matches (we own the lock)
+        await client.eval(
+          `if redis.call("get", KEYS[1]) == ARGV[1] then
+             return redis.call("del", KEYS[1])
+           else
+             return 0
+           end`,
+          1,
+          resource,
+          value
+        );
+      } catch (error) {
+        // Instance unavailable
+      }
+    }
+  }
+}
+```
+
+## .NET Consensus Example
+
+```csharp
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+
+public class RaftNode
+{
+    public enum NodeState { Follower, Candidate, Leader }
+    
+    private NodeState _state = NodeState.Follower;
+    private int _currentTerm = 0;
+    private string _votedFor = null;
+    private List<LogEntry> _log = new();
+    private readonly List<RaftNode> _peers;
+    
+    public async Task<bool> RequestVote(int term, string candidateId)
+    {
+        if (term < _currentTerm)
+        {
+            return false; // Reject old term
+        }
+        
+        if (term > _currentTerm)
+        {
+            _currentTerm = term;
+            _state = NodeState.Follower;
+            _votedFor = null;
+        }
+        
+        if (_votedFor == null || _votedFor == candidateId)
+        {
+            _votedFor = candidateId;
+            return true; // Grant vote
+        }
+        
+        return false; // Already voted for someone else
+    }
+    
+    public async Task<bool> StartElection()
+    {
+        _state = NodeState.Candidate;
+        _currentTerm++;
+        _votedFor = this.Id;
+        
+        int votesReceived = 1; // Vote for self
+        int majority = (_peers.Count + 1) / 2 + 1;
+        
+        // Request votes from all peers
+        var voteTasks = _peers.Select(peer => 
+            peer.RequestVote(_currentTerm, this.Id)
+        );
+        
+        var votes = await Task.WhenAll(voteTasks);
+        votesReceived += votes.Count(v => v);
+        
+        if (votesReceived >= majority)
+        {
+            _state = NodeState.Leader;
+            return true;
+        }
+        
+        _state = NodeState.Follower;
+        return false;
+    }
+    
+    public string Id { get; set; }
+}
+
+public class LogEntry
+{
+    public int Term { get; set; }
+    public string Command { get; set; }
+}
+```
+
+## Best Practices
+
+- **Use odd number of nodes** - Prevents split-brain
+- **Implement proper timeouts** - Detect failures quickly
+- **Monitor consensus health** - Track leader elections
+- **Test partition scenarios** - Chaos engineering
+- **Use proven implementations** - Don't build from scratch
+- **Understand trade-offs** - Consistency vs availability
+- **Plan for network issues** - Partitions will happen
+- **Log everything** - Essential for debugging
+
+## Interview Tips
+
+- **Explain consensus purpose**: Agreement in distributed systems
+- **Show Raft basics**: Leader election, log replication
+- **Demonstrate quorums**: W + R > N for consistency
+- **Discuss split-brain**: Why odd nodes matter
+- **Mention real systems**: ZooKeeper, etcd, Consul
+- **Show use cases**: Leader election, distributed locks
+
+## Summary
+
+Consensus algorithms enable distributed nodes to agree on values despite failures. Raft uses leader election and log replication with majority votes. Paxos is more flexible but complex. ZAB optimizes for ordered broadcast. Quorum systems require W + R > N for consistency. Use odd number of nodes to prevent split-brain. Implement proper timeouts for failure detection. Common uses: leader election, distributed locks, configuration management. Real implementations: ZooKeeper (ZAB), etcd (Raft), Consul (Raft). Essential for building reliable distributed systems with strong consistency guarantees.

@@ -1,0 +1,360 @@
+---
+layout: ../../../layouts/QuizLayout.astro
+title: Container Orchestration in Microservices
+---
+
+# Container Orchestration in Microservices
+
+## What is Container Orchestration?
+
+**Container Orchestration** automates the deployment, scaling, networking, and management of containerized applications across clusters of hosts.
+
+## Why Container Orchestration?
+
+```bash
+# Manual container management (difficult)
+docker run -d user-service
+docker run -d order-service
+docker run -d product-service
+
+# Problems:
+# - Manual scaling
+# - No load balancing
+# - No health checks
+# - No automatic recovery
+# - No service discovery
+```
+
+## Kubernetes (K8s)
+
+The most popular container orchestration platform.
+
+### Basic Deployment
+
+```yaml
+# user-service-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-service
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: user-service
+  template:
+    metadata:
+      labels:
+        app: user-service
+    spec:
+      containers:
+        - name: user-service
+          image: user-service:latest
+          ports:
+            - containerPort: 3001
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: db-secret
+                  key: url
+```
+
+### Service Definition
+
+```yaml
+# user-service-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: user-service
+spec:
+  selector:
+    app: user-service
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 3001
+  type: LoadBalancer
+```
+
+### Auto-Scaling
+
+```yaml
+# Horizontal Pod Autoscaler
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: user-service-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: user-service
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+```
+
+## Key Features
+
+### 1. Self-Healing
+
+```yaml
+# Liveness and readiness probes
+spec:
+  containers:
+    - name: user-service
+      livenessProbe:
+        httpGet:
+          path: /health
+          port: 3001
+        initialDelaySeconds: 30
+        periodSeconds: 10
+      readinessProbe:
+        httpGet:
+          path: /ready
+          port: 3001
+        initialDelaySeconds: 5
+        periodSeconds: 5
+```
+
+### 2. Load Balancing
+
+```yaml
+# Service automatically load balances
+apiVersion: v1
+kind: Service
+metadata:
+  name: order-service
+spec:
+  selector:
+    app: order-service
+  ports:
+    - port: 80
+      targetPort: 3002
+```
+
+### 3. Rolling Updates
+
+```yaml
+# Zero-downtime deployment
+spec:
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+```
+
+```bash
+# Update deployment
+kubectl set image deployment/user-service \
+  user-service=user-service:v2
+
+# Rollback if needed
+kubectl rollout undo deployment/user-service
+```
+
+### 4. Service Discovery
+
+```yaml
+# Services discoverable via DNS
+# user-service.default.svc.cluster.local
+```
+
+```javascript
+// Access other services
+const response = await axios.get('http://order-service/orders');
+```
+
+### 5. Configuration Management
+
+```yaml
+# ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+data:
+  API_URL: "https://api.example.com"
+  LOG_LEVEL: "info"
+
+# Secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: db-secret
+type: Opaque
+data:
+  password: cGFzc3dvcmQxMjM=  # base64 encoded
+```
+
+### 6. Resource Management
+
+```yaml
+spec:
+  containers:
+    - name: user-service
+      resources:
+        requests:
+          memory: "256Mi"
+          cpu: "500m"
+        limits:
+          memory: "512Mi"
+          cpu: "1000m"
+```
+
+## Docker Swarm
+
+Simpler alternative to Kubernetes.
+
+```yaml
+# docker-compose.yml
+version: '3.8'
+
+services:
+  user-service:
+    image: user-service:latest
+    deploy:
+      replicas: 3
+      update_config:
+        parallelism: 1
+        delay: 10s
+      restart_policy:
+        condition: on-failure
+    ports:
+      - "3001:3001"
+    networks:
+      - microservices
+
+networks:
+  microservices:
+    driver: overlay
+```
+
+```bash
+# Deploy stack
+docker stack deploy -c docker-compose.yml myapp
+
+# Scale service
+docker service scale myapp_user-service=5
+```
+
+## Complete Example
+
+```yaml
+# Complete microservices deployment
+---
+# User Service Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-service
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: user-service
+  template:
+    metadata:
+      labels:
+        app: user-service
+    spec:
+      containers:
+        - name: user-service
+          image: user-service:v1
+          ports:
+            - containerPort: 3001
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: db-secret
+                  key: url
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "500m"
+            limits:
+              memory: "512Mi"
+              cpu: "1000m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3001
+            initialDelaySeconds: 30
+            periodSeconds: 10
+
+---
+# User Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: user-service
+spec:
+  selector:
+    app: user-service
+  ports:
+    - port: 80
+      targetPort: 3001
+  type: ClusterIP
+
+---
+# HPA
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: user-service-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: user-service
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+```
+
+## Benefits
+
+1. **Automated Deployment**: Deploy with single command
+2. **Self-Healing**: Automatic container restart
+3. **Scaling**: Horizontal and vertical scaling
+4. **Load Balancing**: Built-in service load balancing
+5. **Rolling Updates**: Zero-downtime deployments
+6. **Service Discovery**: Automatic DNS-based discovery
+
+## Best Practices
+
+1. **Use Health Checks**: Liveness and readiness probes
+2. **Set Resource Limits**: Prevent resource exhaustion
+3. **Implement Auto-Scaling**: Handle traffic spikes
+4. **Use ConfigMaps/Secrets**: Externalize configuration
+5. **Enable Monitoring**: Track metrics and logs
+6. **Implement RBAC**: Secure cluster access
+
+## Interview Tips
+
+- **Explain purpose**: Automate container management
+- **Show Kubernetes**: Deployments, Services, HPA
+- **Demonstrate features**: Self-healing, scaling, load balancing
+- **Discuss alternatives**: Docker Swarm, ECS
+- **Mention benefits**: Automation, reliability, scalability
+- **Show best practices**: Health checks, resource limits
+
+## Summary
+
+Container Orchestration automates deployment, scaling, and management of containerized microservices. Kubernetes is the most popular platform, providing self-healing, load balancing, rolling updates, and auto-scaling. Use Deployments for applications, Services for networking, and HPA for automatic scaling. Essential for production microservices deployments.
