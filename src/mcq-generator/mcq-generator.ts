@@ -28,6 +28,7 @@ const SYSTEM_PROMPT = `You are an expert technical interview question generator.
 Rules:
 - Each question must have exactly 4 options labeled A, B, C, D
 - Exactly one option must be correct
+- IMPORTANT: Distribute the correct answer EVENLY across A, B, C, and D. Do NOT favor any single letter. Roughly 25% of answers should be A, 25% B, 25% C, 25% D.
 - Questions should test real understanding, not trivial recall
 - Include a mix of conceptual, practical, and scenario-based questions
 - Distractors (wrong options) should be plausible but clearly incorrect to someone with good knowledge
@@ -59,6 +60,31 @@ ${text}`;
 
 async function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Shuffle the four options of a question into a random order,
+ * updating correct_answer to match the new position.
+ * This eliminates any positional bias from the LLM (e.g. always putting the answer in B).
+ */
+function shuffleOptions(q: z.infer<typeof QuestionSchema>): z.infer<typeof QuestionSchema> {
+  const keys: Array<'A' | 'B' | 'C' | 'D'> = ['A', 'B', 'C', 'D'];
+  // Fisher-Yates shuffle of the key order
+  for (let i = keys.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [keys[i], keys[j]] = [keys[j], keys[i]];
+  }
+  const labels: Array<'A' | 'B' | 'C' | 'D'> = ['A', 'B', 'C', 'D'];
+  const oldOptions = q.options;
+  const newOptions = {} as Record<'A' | 'B' | 'C' | 'D', string>;
+  let newCorrect: 'A' | 'B' | 'C' | 'D' = 'A';
+  for (let i = 0; i < 4; i++) {
+    newOptions[labels[i]] = oldOptions[keys[i]];
+    if (keys[i] === q.correct_answer) {
+      newCorrect = labels[i];
+    }
+  }
+  return { question: q.question, options: newOptions, correct_answer: newCorrect };
 }
 
 export class McqGenerator {
@@ -102,7 +128,7 @@ export class McqGenerator {
         const validated = McqResponseSchema.parse(parsed);
 
         return validated.questions.map((q, i) => ({
-          ...q,
+          ...shuffleOptions(q),
           question_id: i + 1,
           source_file: sourceFile,
         }));
