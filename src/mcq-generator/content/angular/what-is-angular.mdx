@@ -1,23 +1,21 @@
 ---
 layout: ../../layouts/QuizLayout.astro
-title: What is Angular, and how is it different from AngularJS?
+title: What is Angular? A Complete Overview of the Modern Framework
 ---
 
-# What is Angular, and how is it different from AngularJS?
+# What is Angular? A Complete Overview of the Modern Framework
 
 ## Introduction
 
-Angular is a modern, powerful TypeScript-based web application framework developed and maintained by Google. To understand Angular better and its differences from AngularJS, let's dive deep into both frameworks.
+Angular is a TypeScript-based web application framework developed and maintained by Google. It provides a comprehensive solution for building scalable single-page applications (SPAs) with a component-based architecture, powerful CLI tooling, and a rich ecosystem of official libraries for routing, forms, HTTP communication, and testing.
 
-## Angular (2+)
+## Core Concepts
 
-Angular (version 2 and above) is a complete rewrite of AngularJS, introducing many modern web development concepts and best practices.
+### 1. Component-Based Architecture
 
-### Key Features of Angular:
+Everything in Angular revolves around components — self-contained, reusable building blocks that control a portion of the UI.
 
-1. **Component-Based Architecture**
 ```typescript
-// Example of an Angular component
 @Component({
   selector: 'app-user-profile',
   template: `
@@ -26,12 +24,12 @@ Angular (version 2 and above) is a complete rewrite of AngularJS, introducing ma
       <p>{{ user.email }}</p>
       <button (click)="updateProfile()">Update Profile</button>
     </div>
-  `
+  `,
 })
 export class UserProfileComponent {
   user = {
     name: 'John Doe',
-    email: 'john@example.com'
+    email: 'john@example.com',
   };
 
   updateProfile() {
@@ -40,12 +38,11 @@ export class UserProfileComponent {
 }
 ```
 
-2. **TypeScript Support**
-- Strong typing
-- Object-oriented features
-- Better tooling and IDE support
+### 2. TypeScript-First
+
+Angular is built with TypeScript, offering strong typing, interfaces, decorators, and excellent IDE support out of the box.
+
 ```typescript
-// Interface example
 interface User {
   id: number;
   name: string;
@@ -53,76 +50,58 @@ interface User {
   role: 'admin' | 'user';
 }
 
-// Service with TypeScript
-@Injectable({
-  providedIn: 'root'
-})
+@Injectable({ providedIn: 'root' })
 export class UserService {
+  private http = inject(HttpClient);
+
   getUser(id: number): Observable<User> {
     return this.http.get<User>(`/api/users/${id}`);
   }
 }
 ```
 
-3. **Dependency Injection**
-```typescript
-// Service definition
-@Injectable({
-  providedIn: 'root'
-})
-export class LoggerService {
-  log(message: string) {
-    console.log(`[${new Date().toISOString()}]: ${message}`);
-  }
-}
+### 3. Signals (Angular 16+)
 
-// Component using the service
+Signals are Angular's modern reactive primitive for fine-grained reactivity and improved change detection performance.
+
+```typescript
 @Component({
-  selector: 'app-example'
+  selector: 'app-counter',
+  template: `
+    <p>Count: {{ count() }}</p>
+    <p>Double: {{ doubleCount() }}</p>
+    <button (click)="increment()">Increment</button>
+  `,
 })
-export class ExampleComponent {
-  constructor(private logger: LoggerService) {
-    this.logger.log('Component initialized');
+export class CounterComponent {
+  count = signal(0);
+  doubleCount = computed(() => this.count() * 2);
+
+  increment() {
+    this.count.update((value) => value + 1);
   }
 }
 ```
 
-4. **Modules**
-```typescript
-@NgModule({
-  declarations: [
-    AppComponent,
-    UserProfileComponent
-  ],
-  imports: [
-    BrowserModule,
-    FormsModule,
-    HttpClientModule
-  ],
-  providers: [UserService],
-  bootstrap: [AppComponent]
-})
-export class AppModule { }
-```
+### 4. Standalone Components (Default since Angular 17)
 
-5. **Standalone Components (Angular 15+)**
-Angular now supports standalone components, enabling a module-free architecture while maintaining compatibility with existing modules.
+Standalone components eliminate the need for NgModules, simplifying the application architecture and improving tree-shaking.
+
 ```typescript
-// Standalone component example
 @Component({
   standalone: true,
   selector: 'app-profile-editor',
-  imports: [CommonModule, ReactiveFormsModule],
+  imports: [ReactiveFormsModule],
   template: `
     <form [formGroup]="profileForm">
-      <input formControlName="username">
+      <input formControlName="username" />
       <button (click)="save()">Save</button>
     </form>
-  `
+  `,
 })
 export class ProfileEditorComponent {
   profileForm = new FormGroup({
-    username: new FormControl('')
+    username: new FormControl(''),
   });
 
   save() {
@@ -131,116 +110,142 @@ export class ProfileEditorComponent {
 }
 ```
 
-6. **Module-Free Architecture**
+### 5. Dependency Injection
 
-Modern Angular applications can bootstrap without modules using standalone components and direct provider configuration.
+Angular's hierarchical dependency injection system allows services to be shared across components with flexible scoping.
+
 ```typescript
-// main.ts with standalone bootstrap
+@Injectable({ providedIn: 'root' })
+export class LoggerService {
+  log(message: string) {
+    console.log(`[${new Date().toISOString()}]: ${message}`);
+  }
+}
+
+// Using inject() function (modern approach)
+@Component({
+  selector: 'app-example',
+  template: `<p>Check console for logs</p>`,
+})
+export class ExampleComponent {
+  private logger = inject(LoggerService);
+
+  constructor() {
+    this.logger.log('Component initialized');
+  }
+}
+```
+
+### 6. Control Flow Syntax (Angular 17+)
+
+Angular's built-in control flow replaces structural directives with a cleaner, more performant template syntax.
+
+```html
+@if (user) {
+<h2>Welcome, {{ user.name }}!</h2>
+} @else {
+<p>Please log in.</p>
+} @for (item of items; track item.id) {
+<app-item-card [item]="item" />
+} @empty {
+<p>No items found.</p>
+} @switch (status) { @case ('loading') { <app-spinner /> } @case ('error') {
+<p>Something went wrong.</p>
+} @default { <app-content /> } }
+```
+
+### 7. Deferrable Views (Angular 17+)
+
+Lazy-load parts of a template declaratively to improve initial load performance.
+
+```html
+@defer (on viewport) {
+<app-heavy-chart [data]="chartData" />
+} @loading (minimum 200ms) {
+<app-skeleton />
+} @placeholder {
+<p>Chart will load when scrolled into view</p>
+}
+```
+
+### 8. Application Bootstrap
+
+Modern Angular apps bootstrap using `bootstrapApplication` with provider functions — no AppModule required.
+
+```typescript
 import { bootstrapApplication } from '@angular/platform-browser';
 import { provideRouter } from '@angular/router';
+import { provideHttpClient, withInterceptors } from '@angular/common/http';
 import { AppComponent } from './app/app.component';
 import { routes } from './app/routes';
+import { authInterceptor } from './app/interceptors/auth';
 
 bootstrapApplication(AppComponent, {
-  providers: [
-    provideRouter(routes),
-    { provide: API_BASE_URL, useValue: 'https://api.example.com' }
-  ]
+  providers: [provideRouter(routes), provideHttpClient(withInterceptors([authInterceptor]))],
 });
 ```
 
-## AngularJS (1.x)
+## Key Features at a Glance
 
-AngularJS, also known as Angular 1.x, was the original framework released in 2010.
+| Feature          | Description                                                   |
+| ---------------- | ------------------------------------------------------------- |
+| **Language**     | TypeScript with decorators and static typing                  |
+| **Architecture** | Component-based with standalone components                    |
+| **Reactivity**   | Signals for fine-grained change detection                     |
+| **Templating**   | Built-in control flow (`@if`, `@for`, `@switch`)              |
+| **Lazy Loading** | Deferrable views and route-level code splitting               |
+| **CLI**          | `ng` CLI for scaffolding, building, testing, and deploying    |
+| **Forms**        | Template-driven and reactive forms with validation            |
+| **HTTP**         | `HttpClient` with typed responses and functional interceptors |
+| **Routing**      | Feature-rich router with guards, resolvers, and lazy loading  |
+| **Testing**      | Built-in support for unit and e2e testing                     |
+| **SSR**          | Server-side rendering and hydration via `@angular/ssr`        |
+| **Mobile**       | Optimized for mobile performance with small bundle sizes      |
 
-### Key Features of AngularJS:
+## Angular CLI
 
-1. **Scope and Controllers**
-```javascript
-// AngularJS controller example
-angular.module('myApp', [])
-  .controller('UserController', function($scope) {
-    $scope.user = {
-      name: 'John Doe',
-      email: 'john@example.com'
-    };
-    
-    $scope.updateUser = function() {
-      // Update logic here
-    };
-  });
+The Angular CLI is a powerful command-line tool that streamlines development workflows.
+
+```bash
+# Create a new project
+ng new my-app
+
+# Generate components, services, pipes, etc.
+ng generate component user-profile
+ng generate service auth
+ng generate pipe format-date
+
+# Development server with hot reload
+ng serve
+
+# Production build with optimizations
+ng build --configuration production
+
+# Run unit tests
+ng test
 ```
 
-2. **Two-way Data Binding**
-```html
-<!-- AngularJS two-way binding -->
-<input type="text" ng-model="user.name">
-<p>Hello, {{user.name}}!</p>
-```
+## Performance Optimizations
 
-## Key Differences
+Angular provides several mechanisms for building high-performance applications:
 
-1. **Architecture**
-   - **Angular**: Component-based architecture
-   - **AngularJS**: MVC (Model-View-Controller) architecture
-
-2. **Language**
-   - **Angular**: TypeScript (with decorators and static typing)
-   - **AngularJS**: JavaScript (ES5, with no type checking)
-
-3. **Mobile Support**
-   - **Angular**: Built with mobile in mind, better performance
-   - **AngularJS**: Limited mobile support
-
-4. **Performance**
-   - **Angular**: Improved performance with Zone.js and Ivy renderer
-   - **AngularJS**: Slower due to digest cycle and watchers
-
-5. **Dependency Injection**
-```typescript
-// Angular (Modern)
-@Injectable({
-  providedIn: 'root'
-})
-class MyService {}
-
-// AngularJS (Old)
-angular.module('myApp').service('myService', function() {});
-```
-
-6. **Data Binding**
-```typescript
-// Angular (One-way by default)
-@Component({
-  template: '<div>{{name}}</div>'
-})
-class MyComponent {
-  name = 'John';
-}
-
-// AngularJS (Two-way by default)
-$scope.name = 'John';
-```
+1. **Signals and Zoneless Change Detection** — Fine-grained reactivity without Zone.js overhead
+2. **Deferrable Views** — Lazy-load template sections based on triggers (viewport, interaction, timer)
+3. **Route-Level Code Splitting** — Automatic lazy loading of feature routes
+4. **Tree-Shaking** — Unused code is eliminated during the build
+5. **Server-Side Rendering (SSR)** — Full SSR with incremental hydration support
+6. **Image Optimization** — `NgOptimizedImage` directive for automatic image best practices
 
 ## Interview Tips
 
-When answering this question in an interview:
+When answering "What is Angular?" in an interview:
 
-1. **Highlight the Evolution**:
-   - Explain how Angular evolved from AngularJS
-   - Mention the complete rewrite and why it was necessary
+1. **Define it clearly**: Angular is a TypeScript-based framework by Google for building scalable SPAs with a component-based architecture.
 
-2. **Focus on Modern Features**:
-   - Emphasize TypeScript benefits
-   - Discuss component-based architecture
-   - Mention performance improvements
+2. **Highlight modern features**: Focus on signals, standalone components, built-in control flow, and deferrable views — these reflect current Angular development.
 
-3. **Real-world Context**:
-   - Share experience with both versions if applicable
-   - Discuss migration scenarios
-   - Explain why companies choose Angular over AngularJS
+3. **Mention the ecosystem**: CLI tooling, official libraries for routing/forms/HTTP, and built-in SSR support distinguish Angular from lighter libraries.
 
-4. **Performance Implications**:
-   - Discuss the improved change detection
-   - Mention tree-shaking and better bundle sizes
-   - Highlight mobile performance benefits
+4. **Discuss performance**: Talk about signals replacing Zone.js, tree-shaking, code splitting, and deferrable views for optimized loading.
+
+5. **Know the developer experience**: Mention the `ng` CLI, strong typing with TypeScript, and excellent IDE support as productivity advantages.

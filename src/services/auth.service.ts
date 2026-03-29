@@ -74,6 +74,23 @@ const sanitizeUser = (user: User): Omit<User, 'password'> => {
   return sanitizedUser;
 };
 
+// Emails that should always have ADMIN role
+const ADMIN_EMAILS = ['yshashi30@gmail.com'];
+
+/**
+ * Ensure the user has the correct role (e.g. enforce ADMIN for specific emails).
+ * Updates the DB and returns the updated user if the role changed.
+ */
+const enforceRole = async (user: User): Promise<User> => {
+  if (ADMIN_EMAILS.includes(user.email.toLowerCase()) && user.role !== 'ADMIN') {
+    return prisma.user.update({
+      where: { id: user.id },
+      data: { role: 'ADMIN' },
+    });
+  }
+  return user;
+};
+
 // Auth service functions
 export const registerUser = async (userData: RegisterUserInput): Promise<AuthResult> => {
   try {
@@ -108,25 +125,30 @@ export const registerUser = async (userData: RegisterUserInput): Promise<AuthRes
       },
     });
 
+    // Enforce admin role for specific emails
+    const userWithRole = await enforceRole(newUser);
+
     // Generate tokens
-    const { accessToken, refreshToken } = generateTokens(newUser);
+    const { accessToken, refreshToken } = generateTokens(userWithRole);
 
     // Create session
     await prisma.session.create({
       data: {
         token: refreshToken,
-        userId: newUser.id,
+        userId: userWithRole.id,
         expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
       },
     });
 
     return {
-      user: sanitizeUser(newUser),
+      user: sanitizeUser(userWithRole),
       accessToken,
       refreshToken,
     };
   } catch (error) {
-    log.error('Error registering user', { error: error instanceof Error ? error.message : String(error) });
+    log.error('Error registering user', {
+      error: error instanceof Error ? error.message : String(error),
+    });
     throw error;
   }
 };
@@ -147,23 +169,28 @@ export const loginUser = async (loginData: LoginUserInput): Promise<AuthResult> 
       throw new Error('Invalid credentials');
     }
 
-    const { accessToken, refreshToken } = generateTokens(user);
+    // Enforce admin role for specific emails
+    const userWithRole = await enforceRole(user);
+
+    const { accessToken, refreshToken } = generateTokens(userWithRole);
 
     await prisma.session.create({
       data: {
         token: refreshToken,
-        userId: user.id,
+        userId: userWithRole.id,
         expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
       },
     });
 
     return {
-      user: sanitizeUser(user),
+      user: sanitizeUser(userWithRole),
       accessToken,
       refreshToken,
     };
   } catch (error) {
-    log.error('Error logging in user', { error: error instanceof Error ? error.message : String(error) });
+    log.error('Error logging in user', {
+      error: error instanceof Error ? error.message : String(error),
+    });
     throw error;
   }
 };
@@ -233,6 +260,9 @@ export const socialLogin = async (socialData: SocialLoginInput): Promise<AuthRes
       }
     }
 
+    // Enforce admin role for specific emails
+    user = await enforceRole(user);
+
     const { accessToken, refreshToken } = generateTokens(user);
 
     await prisma.session.create({
@@ -249,12 +279,16 @@ export const socialLogin = async (socialData: SocialLoginInput): Promise<AuthRes
       refreshToken,
     };
   } catch (error) {
-    log.error('Error with social login', { error: error instanceof Error ? error.message : String(error) });
+    log.error('Error with social login', {
+      error: error instanceof Error ? error.message : String(error),
+    });
     throw error;
   }
 };
 
-export const refreshToken = async (token: string): Promise<{ accessToken: string; refreshToken: string }> => {
+export const refreshToken = async (
+  token: string,
+): Promise<{ accessToken: string; refreshToken: string }> => {
   try {
     const session = await prisma.session.findUnique({
       where: { token },
@@ -280,7 +314,9 @@ export const refreshToken = async (token: string): Promise<{ accessToken: string
       refreshToken: newRefreshToken,
     };
   } catch (error) {
-    log.error('Error refreshing token', { error: error instanceof Error ? error.message : String(error) });
+    log.error('Error refreshing token', {
+      error: error instanceof Error ? error.message : String(error),
+    });
     throw error;
   }
 };
@@ -291,7 +327,9 @@ export const logoutUser = async (token: string): Promise<void> => {
       where: { token },
     });
   } catch (error) {
-    log.error('Error logging out user', { error: error instanceof Error ? error.message : String(error) });
+    log.error('Error logging out user', {
+      error: error instanceof Error ? error.message : String(error),
+    });
     throw error;
   }
 };
