@@ -67,7 +67,7 @@ router.get('/topics', authenticate, authorize(['ADMIN']), getTopics);
  *       500:
  *         description: Internal server error
  */
-router.post('/generate', generate);
+router.post('/generate', authenticate, authorize(['ADMIN']), generate);
 
 /**
  * @swagger
@@ -105,6 +105,6 @@ router.post('/generate', generate);
  *       500:
  *         description: Internal server error
  */
-router.post('/refresh', refresh);
+router.post('/refresh', authenticate, authorize(['ADMIN']), refresh);
 
 export default router;
